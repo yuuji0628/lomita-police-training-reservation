@@ -14,3 +14,4 @@ https://あなたのWorkerURL/admin
 game1234
 
 ※ ADMIN_PASSWORD をCloudflare側に設定している場合は、その値が優先されます。
+Cloudflare deploy enabled
