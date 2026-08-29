@@ -114,10 +114,17 @@ const ADMIN_BODY = `
    <div class="title" style="font-size:16px">ファイルをGitHubへ送信</div>
    <div class="sub" style="margin:6px 0 12px">選択したファイルをリポジトリの main ブランチへ直接コミットします。</div>
    <div id="gitMsg"></div>
-   <div class="field"><label>アップロードするファイル *</label><input id="gitFile" type="file"></div>
-   <div class="field"><label>GitHub上の保存先</label><input id="gitPath" placeholder="例：worker.js（空欄ならファイル名を使用）"></div>
-   <div class="field"><label>コミットメッセージ</label><input id="gitCommit" value="admin upload: update file" maxlength="120"></div>
-   <button class="btn primary" id="gitUploadBtn" style="width:100%" onclick="uploadToGitHub()">GitHubへアップロード</button>
+   <div class="field"><label>アップロードするファイル *（複数選択可）</label><input id="gitFile" type="file" multiple><div class="sub" id="gitFileInfo" style="margin-top:6px">ファイル未選択</div></div>
+   <div class="field"><label>GitHub上の保存先フォルダ</label><input id="gitPath" placeholder="例：updates/（空欄ならルート直下）"><div class="sub" style="margin-top:6px">選択した各ファイルは元のファイル名のまま保存します。</div></div>
+   <div class="field"><label>コミットメッセージ</label><input id="gitCommit" value="admin upload: update files" maxlength="120"></div>
+   <button class="btn primary" id="gitUploadBtn" style="width:100%" onclick="uploadToGitHub()">GitHubへまとめてアップロード</button>
+ </div>
+
+ <div class="section">Cloudflareビルド状況</div>
+ <div class="card">
+   <div class="between"><div><div class="title" style="font-size:16px">最新ビルド</div><div class="sub" id="buildCommit">GitHubの最新コミットを確認します</div></div><button class="btn small" id="buildRefreshBtn" onclick="loadBuildStatus(true)">更新</button></div>
+   <div id="buildStatus" class="notice" style="margin-top:12px">未確認</div>
+   <div class="sub" id="buildChecks" style="line-height:1.7"></div>
  </div>
 
  <div class="section">研修一覧</div><div id="adminList"></div>
@@ -139,7 +146,7 @@ const labels={pending:'承認待ち',reserved:'予約確定',completed:'受講�
 function esc(s){return String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 function auth(){return {'content-type':'application/json','x-admin-password':adminPassword}}
 function msg(t,c){const e=document.getElementById('msg');e.innerHTML='<div class="notice '+c+'">'+esc(t)+'</div>';setTimeout(()=>e.innerHTML='',3500)}
-async function login(){adminPassword=document.getElementById('password').value;const r=await fetch('/api/admin/check',{headers:{'x-admin-password':adminPassword}});if(!r.ok){document.getElementById('loginMsg').innerHTML='<div class="notice error">パスワードが違います</div>';return}showAdmin();loadAdmin()}
+async function login(){adminPassword=document.getElementById('password').value;const r=await fetch('/api/admin/check',{headers:{'x-admin-password':adminPassword}});if(!r.ok){document.getElementById('loginMsg').innerHTML='<div class="notice error">パスワードが違います</div>';return}showAdmin();loadAdmin();setTimeout(()=>loadBuildStatus(),250)}
 function logout(){adminPassword='';location.href='/'}
 function showAdmin(){document.getElementById('loginView').style.display='none';document.getElementById('adminView').style.display='block'}
 function fmt(d){return new Date(d+'T00:00:00').toLocaleDateString('ja-JP',{month:'numeric',day:'numeric',weekday:'short'})}
@@ -166,30 +173,60 @@ async function loadReservations(){const r=await fetch('/api/admin/trainings/'+ac
 }
 async function setStatus(id,status){const r=await fetch('/api/admin/reservations/'+id,{method:'PATCH',headers:auth(),body:JSON.stringify({status})});if(r.ok){await loadReservations();loadAdmin()}}
 
+let buildTimer=null;
+function updateFileInfo(){
+  const files=[...document.getElementById('gitFile').files];
+  const el=document.getElementById('gitFileInfo');
+  if(!files.length){el.textContent='ファイル未選択';return}
+  const total=files.reduce((n,f)=>n+f.size,0);
+  el.textContent=files.length+'個選択 ・ 合計 '+(total/1024).toFixed(total>1024?0:1)+' KB';
+}
 async function uploadToGitHub(){
-  const file=document.getElementById('gitFile').files[0];
+  const files=[...document.getElementById('gitFile').files];
   const out=document.getElementById('gitMsg');
   const btn=document.getElementById('gitUploadBtn');
-  if(!file){out.innerHTML='<div class="notice error">ファイルを選択してください</div>';return}
-  if(file.size>5*1024*1024){out.innerHTML='<div class="notice error">5MB以下のファイルを選択してください</div>';return}
+  if(!files.length){out.innerHTML='<div class="notice error">ファイルを選択してください</div>';return}
+  if(files.some(f=>f.size>5*1024*1024)){out.innerHTML='<div class="notice error">1ファイル5MB以下にしてください</div>';return}
+  if(files.reduce((n,f)=>n+f.size,0)>12*1024*1024){out.innerHTML='<div class="notice error">合計12MB以下にしてください</div>';return}
   const form=new FormData();
-  form.append('file',file);
-  form.append('path',document.getElementById('gitPath').value.trim()||file.name);
-  form.append('message',document.getElementById('gitCommit').value.trim()||('admin upload: '+file.name));
-  btn.disabled=true; btn.textContent='アップロード中...';
-  out.innerHTML='<div class="notice">GitHubへ送信しています...</div>';
+  files.forEach(file=>form.append('files',file,file.name));
+  form.append('path',document.getElementById('gitPath').value.trim());
+  form.append('message',document.getElementById('gitCommit').value.trim()||('admin upload: '+files.length+' files'));
+  btn.disabled=true; btn.textContent=files.length+'個をアップロード中...';
+  out.innerHTML='<div class="notice">'+files.length+'個のファイルを1回のコミットでGitHubへ送信しています...</div>';
   try{
     const r=await fetch('/api/admin/github/upload',{method:'POST',headers:{'x-admin-password':adminPassword},body:form});
     const d=await r.json();
     if(!r.ok) throw new Error(d.error||'アップロードに失敗しました');
-    out.innerHTML='<div class="notice success">GitHubへアップロードしました。Cloudflareの自動ビルドを待ってください。</div>';
-    document.getElementById('gitFile').value='';
+    out.innerHTML='<div class="notice success">'+d.count+'個のファイルをGitHubへアップロードしました。ビルド状況を自動確認します。</div>';
+    document.getElementById('gitFile').value=''; updateFileInfo();
+    startBuildWatch();
   }catch(e){
     out.innerHTML='<div class="notice error">'+esc(e.message)+'</div>';
   }finally{
-    btn.disabled=false; btn.textContent='GitHubへアップロード';
+    btn.disabled=false; btn.textContent='GitHubへまとめてアップロード';
   }
 }
+function buildLabel(s){return {waiting:'⏳ ビルド待機中',building:'🔄 ビルド中',success:'✅ ビルド成功',failure:'❌ ビルド失敗'}[s]||'ℹ️ 状況不明'}
+async function loadBuildStatus(manual=false){
+  const box=document.getElementById('buildStatus'), details=document.getElementById('buildChecks'), commit=document.getElementById('buildCommit'), btn=document.getElementById('buildRefreshBtn');
+  if(!box)return; if(manual){btn.disabled=true;btn.textContent='確認中...'}
+  try{
+    const r=await fetch('/api/admin/github/build-status',{headers:{'x-admin-password':adminPassword}}); const d=await r.json();
+    if(!r.ok)throw new Error(d.error||'取得できませんでした');
+    const klass=d.state==='success'?'success':d.state==='failure'?'error':'';
+    box.className='notice '+klass; box.textContent=buildLabel(d.state)+(d.summary?' — '+d.summary:'');
+    commit.textContent=(d.sha?d.sha.slice(0,7)+' ・ ':'')+(d.message||'')+(d.updated_at?' ・ '+new Date(d.updated_at).toLocaleString('ja-JP'):'');
+    details.innerHTML=(d.checks||[]).map(x=>'• '+esc(x.name)+'：'+esc(x.label)).join('<br>') || 'Cloudflareのチェック結果を待っています。';
+    if((d.state==='success'||d.state==='failure') && buildTimer){clearInterval(buildTimer);buildTimer=null}
+  }catch(e){box.className='notice error';box.textContent='ビルド状況を取得できません：'+e.message}
+  finally{if(manual){btn.disabled=false;btn.textContent='更新'}}
+}
+function startBuildWatch(){
+  if(buildTimer)clearInterval(buildTimer); loadBuildStatus();
+  buildTimer=setInterval(loadBuildStatus,5000); setTimeout(()=>{if(buildTimer){clearInterval(buildTimer);buildTimer=null}},120000);
+}
+document.getElementById('gitFile')?.addEventListener('change',updateFileInfo);
 `;
 
 async function handle(request, env) {
@@ -275,49 +312,72 @@ async function handle(request, env) {
  if(path==="/api/admin/github/upload" && method==="POST"){
    if(!env.GITHUB_TOKEN) return json({error:"Cloudflareに GITHUB_TOKEN が設定されていません"},500);
    const form=await request.formData();
-   const file=form.get("file");
-   let target=String(form.get("path")||"").trim();
+   const files=form.getAll("files").filter(f=>f && typeof f.arrayBuffer==="function");
+   let folder=String(form.get("path")||"").trim().replace(/^\/+|\/+$/g,"");
    const message=String(form.get("message")||"admin upload").trim();
-   if(!file || typeof file.arrayBuffer!=="function") return json({error:"ファイルがありません"},400);
-   if(file.size>5*1024*1024) return json({error:"ファイルは5MB以下にしてください"},413);
-   if(!target) target=file.name;
-   target=target.replace(/^\/+/,"");
-   if(target.includes("..")) return json({error:"保存先パスが不正です"},400);
-
+   if(!files.length) return json({error:"ファイルがありません"},400);
+   if(files.length>20) return json({error:"一度に選択できるのは20ファイルまでです"},400);
+   if(files.some(f=>f.size>5*1024*1024)) return json({error:"1ファイル5MB以下にしてください"},413);
+   if(files.reduce((n,f)=>n+f.size,0)>12*1024*1024) return json({error:"合計12MB以下にしてください"},413);
+   if(folder.includes("..")) return json({error:"保存先フォルダが不正です"},400);
    const repo=env.GITHUB_REPO || "yuuji0628/lomita-police-training-reservation";
    const branch=env.GITHUB_BRANCH || "main";
-   const api="https://api.github.com/repos/"+repo+"/contents/"+target.split("/").map(encodeURIComponent).join("/");
-   const headers={
-     "authorization":"Bearer "+env.GITHUB_TOKEN,
-     "accept":"application/vnd.github+json",
-     "x-github-api-version":"2022-11-28",
-     "user-agent":"lomita-training-admin"
-   };
-
-   let sha;
-   const existing=await fetch(api+"?ref="+encodeURIComponent(branch),{headers});
-   if(existing.ok){
-     const cur=await existing.json();
-     sha=cur.sha;
-   }else if(existing.status!==404){
-     const err=await existing.text();
-     return json({error:"GitHub確認エラー: "+err.slice(0,300)},502);
+   const base="https://api.github.com/repos/"+repo;
+   const headers={"authorization":"Bearer "+env.GITHUB_TOKEN,"accept":"application/vnd.github+json","x-github-api-version":"2022-11-28","user-agent":"lomita-training-admin","content-type":"application/json"};
+   const refRes=await fetch(base+"/git/ref/heads/"+encodeURIComponent(branch),{headers});
+   const ref=await refRes.json().catch(()=>({}));
+   if(!refRes.ok) return json({error:ref.message||"GitHubブランチ情報を取得できません"},refRes.status);
+   const parentSha=ref.object.sha;
+   const commitRes=await fetch(base+"/git/commits/"+parentSha,{headers});
+   const parent=await commitRes.json().catch(()=>({}));
+   if(!commitRes.ok) return json({error:parent.message||"GitHubコミット情報を取得できません"},commitRes.status);
+   const tree=[];
+   for(const file of files){
+     const cleanName=String(file.name||"file").replace(/^\/+/,'');
+     if(cleanName.includes("..")) return json({error:"ファイル名が不正です: "+cleanName},400);
+     const bytes=new Uint8Array(await file.arrayBuffer()); let binary=""; const chunk=0x8000;
+     for(let i=0;i<bytes.length;i+=chunk) binary+=String.fromCharCode(...bytes.subarray(i,i+chunk));
+     const blobRes=await fetch(base+"/git/blobs",{method:"POST",headers,body:JSON.stringify({content:btoa(binary),encoding:"base64"})});
+     const blob=await blobRes.json().catch(()=>({}));
+     if(!blobRes.ok) return json({error:blob.message||("GitHubへ "+cleanName+" を送信できません")},blobRes.status);
+     tree.push({path:(folder?folder+"/":"")+cleanName,mode:"100644",type:"blob",sha:blob.sha});
    }
+   const treeRes=await fetch(base+"/git/trees",{method:"POST",headers,body:JSON.stringify({base_tree:parent.tree.sha,tree})});
+   const newTree=await treeRes.json().catch(()=>({}));
+   if(!treeRes.ok) return json({error:newTree.message||"GitHubツリーを作成できません"},treeRes.status);
+   const newCommitRes=await fetch(base+"/git/commits",{method:"POST",headers,body:JSON.stringify({message,tree:newTree.sha,parents:[parentSha]})});
+   const newCommit=await newCommitRes.json().catch(()=>({}));
+   if(!newCommitRes.ok) return json({error:newCommit.message||"GitHubコミットを作成できません"},newCommitRes.status);
+   const updateRes=await fetch(base+"/git/refs/heads/"+encodeURIComponent(branch),{method:"PATCH",headers,body:JSON.stringify({sha:newCommit.sha,force:false})});
+   const updated=await updateRes.json().catch(()=>({}));
+   if(!updateRes.ok) return json({error:updated.message||"GitHubブランチを更新できません"},updateRes.status);
+   return json({ok:true,count:files.length,commit:newCommit.sha,paths:tree.map(x=>x.path)});
+ }
 
-   const bytes=new Uint8Array(await file.arrayBuffer());
-   let binary="";
-   const chunk=0x8000;
-   for(let i=0;i<bytes.length;i+=chunk){
-     binary+=String.fromCharCode(...bytes.subarray(i,i+chunk));
-   }
-   const content=btoa(binary);
-   const body={message,content,branch};
-   if(sha) body.sha=sha;
-
-   const put=await fetch(api,{method:"PUT",headers:{...headers,"content-type":"application/json"},body:JSON.stringify(body)});
-   const result=await put.json().catch(()=>({}));
-   if(!put.ok) return json({error:result.message||"GitHubへのアップロードに失敗しました"},put.status);
-   return json({ok:true,path:target,commit:result.commit?.sha||null});
+ if(path==="/api/admin/github/build-status" && method==="GET"){
+   const repo=env.GITHUB_REPO || "yuuji0628/lomita-police-training-reservation";
+   const branch=env.GITHUB_BRANCH || "main";
+   const base="https://api.github.com/repos/"+repo;
+   const publicHeaders={"accept":"application/vnd.github+json","x-github-api-version":"2022-11-28","user-agent":"lomita-training-admin"};
+   const latestRes=await fetch(base+"/commits/"+encodeURIComponent(branch),{headers:publicHeaders});
+   const latest=await latestRes.json().catch(()=>({}));
+   if(!latestRes.ok)return json({error:latest.message||"最新コミットを取得できません"},latestRes.status);
+   const sha=latest.sha;
+   const [checksRes,statusRes]=await Promise.all([
+     fetch(base+"/commits/"+sha+"/check-runs?per_page=30",{headers:publicHeaders}),
+     fetch(base+"/commits/"+sha+"/status",{headers:publicHeaders})
+   ]);
+   const checksData=checksRes.ok?await checksRes.json():{check_runs:[]};
+   const statusData=statusRes.ok?await statusRes.json():{state:"pending",statuses:[]};
+   const checks=(checksData.check_runs||[]).map(c=>({name:c.name||"Check",status:c.status,conclusion:c.conclusion,label:c.status!=="completed"?"処理中":({success:"成功",neutral:"成功",skipped:"スキップ",failure:"失敗",cancelled:"キャンセル",timed_out:"タイムアウト",action_required:"要確認"}[c.conclusion]||"完了")}));
+   const statuses=(statusData.statuses||[]).map(s=>({name:s.context||"Status",status:s.state,conclusion:s.state,label:({success:"成功",pending:"処理中",failure:"失敗",error:"エラー"}[s.state]||s.state)}));
+   const all=[...checks,...statuses];
+   const bad=all.some(x=>["failure","cancelled","timed_out","action_required","error"].includes(x.conclusion));
+   const running=all.some(x=>x.status!=="completed" && !["success","failure","error"].includes(x.status));
+   const good=all.length>0 && all.every(x=>["success","neutral","skipped"].includes(x.conclusion)||x.status==="success");
+   const state=bad?"failure":running?"building":good?"success":"waiting";
+   const summary=state==="waiting"?"Cloudflareのチェック開始待ち":state==="building"?"自動デプロイを実行中":state==="success"?"最新コミットのチェック完了":"最新コミットのチェックでエラー";
+   return json({state,summary,sha,message:(latest.commit?.message||"").split("\n")[0],updated_at:latest.commit?.committer?.date||null,checks:all});
  }
 
  return new Response("Not Found",{status:404});
