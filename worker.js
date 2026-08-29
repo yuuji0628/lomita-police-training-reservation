@@ -458,7 +458,8 @@ const ADMIN_BODY = `
  <button id="trainingSaveBtn" type="button" class="btn primary" style="width:100%">保存する</button>
 </div></div>
 
-<div id="resModal" class="modal"><div class="sheet"><button class="btn small" style="float:right" onclick="closeReservations()">閉じる</button><div class="title" id="resTitle">参加者管理</div><div id="resList"></div></div></div>
+<div id="resModal" class="modal"><div class="sheet"><button class="btn small" style="float:right" onclick="closeReservations()">閉じる</button><div class="title" id="resTitle">参加者管理</div><div id="resActionMsg"></div>
+  <div id="resList"></div></div></div>
 <div id="traineeModal" class="modal"><div class="sheet">
  <button class="btn small" style="float:right" onclick="closeTraineeDetail()">閉じる</button>
  <span class="badge">TRAINEE</span><div class="title" id="traineeDetailTitle">研修生詳細</div>
@@ -695,7 +696,9 @@ async function saveTraining(){
 async function deleteTraining(id){if(!confirm('この研修と関連予約を削除しますか？'))return;const r=await fetch('/api/admin/trainings/'+id,{method:'DELETE',headers:auth()});if(r.ok){msg('削除しました','success');loadAdmin()}}
 async function openReservations(id,title){activeTrainingId=id;document.getElementById('resTitle').textContent=title+' / 参加者管理';document.getElementById('resModal').classList.add('open');await loadReservations()}
 function closeReservations(){document.getElementById('resModal').classList.remove('open')}
-async function loadReservations(){const r=await fetch('/api/admin/trainings/'+activeTrainingId+'/reservations',{headers:auth()});const data=await r.json();const e=document.getElementById('resList');if(!data.length){e.innerHTML='<div class="empty">申請者はいません。</div>';return}
+async function loadReservations(){
+ const sheet=document.querySelector('#resModal .sheet');
+ const oldScroll=sheet?sheet.scrollTop:0;const r=await fetch('/api/admin/trainings/'+activeTrainingId+'/reservations',{headers:auth()});const data=await r.json();const e=document.getElementById('resList');if(!data.length){e.innerHTML='<div class="empty">申請者はいません。</div>';return}
  e.innerHTML=data.map(x=>'<div class="res"><div class="between"><div><b>'+esc(x.player_name)+'</b> <span class="pill '+esc(x.status)+'">'+esc(labels[x.status]||x.status)+'</span><div class="sub">Discord：'+esc(x.discord_id||'未登録')+'</div><div class="sub">'+esc(x.affiliation||'所属未入力')+'</div></div></div>'+(x.note?'<div class="sub" style="margin-top:6px">備考：'+esc(x.note)+'</div>':'')+'<div class="field" style="margin:10px 0"><label>担当教官</label><select id="reservationInstructor_'+x.id+'"><option value="">担当教官を選択</option>'+instructorRows.map(i=>'<option value="'+esc(i.name)+'" '+(x.assigned_instructor===i.name?'selected':'')+'>'+esc(i.name)+'</option>').join('')+'</select></div><div class="statusButtons">'+(x.status==='pending'?'<button class="btn primary small statusBtn" data-id="'+x.id+'" data-status="reserved">担当を決めて承認</button>':'')+'<button class="btn small statusBtn" data-id="'+x.id+'" data-status="completed">受講済み</button><button class="btn small statusBtn" data-id="'+x.id+'" data-status="absent">欠席</button><button class="btn danger small statusBtn" data-id="'+x.id+'" data-status="cancelled">取消</button></div></div>').join('');
  document.querySelectorAll('.statusBtn').forEach(btn=>btn.addEventListener('click',()=>setStatus(Number(btn.dataset.id),btn.dataset.status)));
 }
@@ -706,14 +709,40 @@ async function setStatus(id,status){
    assigned_instructor=sel?sel.value.trim():'';
    if(!assigned_instructor){alert('担当教官を選択してから承認してください。');return}
  }
- const r=await fetch('/api/admin/reservations/'+id,{
-   method:'PATCH',
-   headers:auth(),
-   body:JSON.stringify({status,assigned_instructor})
- });
- const d=await r.json().catch(()=>({}));
- if(!r.ok){alert((d.error||'更新できませんでした')+(d.detail?'\n'+d.detail:''));return}
- await loadAdmin();
+
+ const buttons=[...document.querySelectorAll('.statusBtn[data-id="'+id+'"]')];
+ buttons.forEach(b=>b.disabled=true);
+
+ try{
+   const r=await fetch('/api/admin/reservations/'+id,{
+     method:'PATCH',
+     headers:auth(),
+     body:JSON.stringify({status,assigned_instructor})
+   });
+   const d=await r.json().catch(()=>({}));
+   if(!r.ok){
+     alert((d.error||'更新できませんでした')+(d.detail?'\n'+d.detail:''));
+     return;
+   }
+
+   // 参加者管理モーダルを閉じず、その場で最新状態へ更新
+   await loadReservations();
+
+   // 背景の研修一覧にある人数・状態も同時更新
+   await loadAdmin();
+
+   // モーダルが再描画されても、同じ研修を開いたまま維持
+   if(activeTrainingId){
+     const t=trainings.find(x=>Number(x.id)===Number(activeTrainingId));
+     if(t){
+       document.getElementById('resTitle').textContent=t.title+' / 参加者管理';
+     }
+   }
+ }catch(e){
+   alert('通信エラーで更新できませんでした。');
+ }finally{
+   buttons.forEach(b=>b.disabled=false);
+ }
 }
 async function uploadAsWorker(){
  const input=document.getElementById('workerFile');
