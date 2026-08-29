@@ -323,7 +323,7 @@ const ADMIN_BODY = `
    <div class="section">研修プログラム</div>
    <div class="card">
      <div class="title" style="font-size:16px">新しいプログラムを作成</div>
-     <div class="sub" style="margin:6px 0 12px">研修を順番に並べると、前の研修が「受講済み」になった研修生だけ次の研修が表示されます。</div>
+     <div class="sub" style="margin:6px 0 12px">プログラムの中で研修を直接作成できます。前の研修が「受講済み」になると次のSTEPが自動で表示されます。</div>
      <div class="field"><label>プログラム名 *</label><input id="programName" maxlength="80" placeholder="例：新人警察官 基礎研修プログラム"></div>
      <div class="field"><label>説明</label><textarea id="programDescription" maxlength="500" placeholder="任意"></textarea></div>
      <button id="createProgramBtn" class="btn primary" type="button" style="width:100%">プログラムを作成</button>
@@ -483,6 +483,10 @@ async function deleteInstructor(id){
 
 let programRows=[];
 async function loadPrograms(){
+ if(!instructorRows.length){
+   const ir=await fetch('/api/admin/instructors',{headers:auth()});
+   if(ir.ok)instructorRows=await ir.json().catch(()=>[]);
+ }
  const r=await fetch('/api/admin/programs',{headers:auth()});
  if(r.status===401)return logout();
  const d=await r.json().catch(()=>[]);
@@ -493,12 +497,11 @@ function renderPrograms(){
  const e=document.getElementById('programList');
  if(!programRows.length){e.innerHTML='<div class="empty">まだ研修プログラムはありません。</div>';return}
  e.innerHTML=programRows.map(p=>{
-   const used=new Set(p.steps.map(s=>Number(s.training_id)));
-   const options=trainings.filter(t=>!used.has(Number(t.id))).map(t=>'<option value="'+t.id+'">'+esc(t.title)+'</option>').join('');
-   const steps=p.steps.length?p.steps.map((s,i)=>'<div class="res"><div class="between"><div><span class="pill">STEP '+(i+1)+'</span><b style="margin-left:8px">'+esc(s.title)+'</b><div class="sub" style="margin-top:4px">'+esc(s.training_date)+' '+esc(s.start_time)+'</div></div><div class="row"><button class="btn small" data-move-step="'+s.id+'" data-dir="-1" '+(i===0?'disabled':'')+'>↑</button><button class="btn small" data-move-step="'+s.id+'" data-dir="1" '+(i===p.steps.length-1?'disabled':'')+'>↓</button><button class="btn small danger" data-remove-step="'+s.id+'">削除</button></div></div></div>').join(''):'<div class="empty" style="padding:18px">研修を追加してください。</div>';
-   return '<div class="card"><div class="between"><div><div class="title">'+esc(p.name)+'</div>'+(p.description?'<div class="sub" style="margin-top:4px">'+esc(p.description)+'</div>':'')+'</div><button class="btn small danger" data-delete-program="'+p.id+'">プログラム削除</button></div><div style="margin-top:12px">'+steps+'</div><div class="formgrid" style="margin-top:12px"><select id="programAdd_'+p.id+'"><option value="">追加する研修を選択</option>'+options+'</select><button class="btn primary" data-add-program-step="'+p.id+'" '+(!options?'disabled':'')+'>この研修を次に追加</button></div></div>';
+   const steps=p.steps.length?p.steps.map((s,i)=>'<div class="res"><div class="between"><div><span class="pill">STEP '+(i+1)+'</span><b style="margin-left:8px">'+esc(s.title)+'</b>'+(s.instructor?'<div class="sub" style="margin-top:4px">担当：'+esc(s.instructor)+'</div>':'')+(s.description?'<div class="sub" style="margin-top:4px;white-space:pre-wrap">'+esc(s.description)+'</div>':'')+'</div><div class="row"><button class="btn small" data-move-step="'+s.id+'" data-dir="-1" '+(i===0?'disabled':'')+'>↑</button><button class="btn small" data-move-step="'+s.id+'" data-dir="1" '+(i===p.steps.length-1?'disabled':'')+'>↓</button><button class="btn small danger" data-remove-step="'+s.id+'">削除</button></div></div></div>').join(''):'<div class="empty" style="padding:18px">まだ研修がありません。下からSTEP1を作成してください。</div>';
+   const instructorOptions='<option value="">担当者なし</option>'+instructorRows.map(x=>'<option value="'+esc(x.name)+'">'+esc(x.name)+'</option>').join('');
+   return '<div class="card"><div class="between"><div><div class="title">'+esc(p.name)+'</div>'+(p.description?'<div class="sub" style="margin-top:4px">'+esc(p.description)+'</div>':'')+'</div><button class="btn small danger" data-delete-program="'+p.id+'">プログラム削除</button></div><div style="margin-top:12px">'+steps+'</div><div class="card" style="background:#f8fafc;margin-top:14px"><div class="title" style="font-size:15px">次の研修を作成</div><div class="sub" style="margin:4px 0 10px">作成すると自動で STEP '+(p.steps.length+1)+' に追加されます。</div><div class="field"><label>研修名 *</label><input id="programTrainingTitle_'+p.id+'" maxlength="80" placeholder="例：無線基礎"></div><div class="field"><label>フリー記入欄</label><textarea id="programTrainingDescription_'+p.id+'" maxlength="1000" placeholder="内容・注意事項など"></textarea></div><div class="field"><label>担当教官</label><select id="programTrainingInstructor_'+p.id+'">'+instructorOptions+'</select></div><button class="btn primary" style="width:100%" data-create-program-training="'+p.id+'">STEP '+(p.steps.length+1)+' として作成</button><div id="programTrainingMsg_'+p.id+'"></div></div></div>';
  }).join('');
- document.querySelectorAll('[data-add-program-step]').forEach(b=>b.addEventListener('click',()=>addProgramStep(Number(b.dataset.addProgramStep))));
+ document.querySelectorAll('[data-create-program-training]').forEach(b=>b.addEventListener('click',()=>createProgramTraining(Number(b.dataset.createProgramTraining),b)));
  document.querySelectorAll('[data-remove-step]').forEach(b=>b.addEventListener('click',()=>removeProgramStep(Number(b.dataset.removeStep))));
  document.querySelectorAll('[data-move-step]').forEach(b=>b.addEventListener('click',()=>moveProgramStep(Number(b.dataset.moveStep),Number(b.dataset.dir))));
  document.querySelectorAll('[data-delete-program]').forEach(b=>b.addEventListener('click',()=>deleteProgram(Number(b.dataset.deleteProgram))));
@@ -517,14 +520,31 @@ async function createProgram(){
  }finally{btn.disabled=false;btn.textContent='プログラムを作成'}
 }
 function noticeInAdmin(id,t,c){document.getElementById(id).innerHTML='<div class="notice '+(c||'')+'">'+esc(t)+'</div>'}
-async function addProgramStep(programId){
- const sel=document.getElementById('programAdd_'+programId);
- const training_id=Number(sel.value);
- if(!training_id)return;
- const r=await fetch('/api/admin/programs/'+programId+'/steps',{method:'POST',headers:auth(),body:JSON.stringify({training_id})});
- const d=await r.json().catch(()=>({}));
- if(!r.ok){alert(d.error||'追加できませんでした');return}
- await loadPrograms();
+async function createProgramTraining(programId,btn){
+ const title=document.getElementById('programTrainingTitle_'+programId).value.trim();
+ const description=document.getElementById('programTrainingDescription_'+programId).value.trim();
+ const instructor=document.getElementById('programTrainingInstructor_'+programId).value.trim();
+ const msgEl=document.getElementById('programTrainingMsg_'+programId);
+ if(!title){msgEl.innerHTML='<div class="notice error">研修名を入力してください。</div>';return}
+ const old=btn.textContent;btn.disabled=true;btn.textContent='作成中...';
+ msgEl.innerHTML='<div class="notice">研修を作成しています...</div>';
+ try{
+   const r=await fetch('/api/admin/programs/'+programId+'/create-training',{
+     method:'POST',
+     headers:auth(),
+     body:JSON.stringify({title,description,instructor})
+   });
+   const d=await r.json().catch(()=>({}));
+   if(!r.ok){msgEl.innerHTML='<div class="notice error">'+esc(d.error||'研修を作成できませんでした')+'</div>';return}
+   msg('研修を作成し、プログラムへ追加しました','success');
+   await loadAdmin();
+   await loadInstructors();
+   await loadPrograms();
+ }catch(e){
+   msgEl.innerHTML='<div class="notice error">通信エラーで作成できませんでした。</div>';
+ }finally{
+   btn.disabled=false;btn.textContent=old;
+ }
 }
 async function removeProgramStep(stepId){
  if(!confirm('この研修をプログラムから外しますか？'))return;
@@ -1011,7 +1031,7 @@ async function handle(request, env) {
    await ensureTrainingPrograms(env);
    const {results:programs}=await env.DB.prepare("SELECT * FROM training_programs ORDER BY id DESC").all();
    const {results:steps}=await env.DB.prepare(`
-     SELECT ps.id,ps.program_id,ps.training_id,ps.step_order,t.title,t.training_date,t.start_time
+     SELECT ps.id,ps.program_id,ps.training_id,ps.step_order,t.title,t.description,t.instructor
      FROM training_program_steps ps JOIN trainings t ON t.id=ps.training_id
      ORDER BY ps.program_id,ps.step_order,ps.id
    `).all();
@@ -1033,6 +1053,50 @@ async function handle(request, env) {
    await env.DB.prepare("DELETE FROM training_program_steps WHERE program_id=?").bind(Number(pm[1])).run();
    await env.DB.prepare("DELETE FROM training_programs WHERE id=?").bind(Number(pm[1])).run();
    return json({ok:true});
+ }
+
+ pm=path.match(/^\/api\/admin\/programs\/(\d+)\/create-training$/);
+ if(pm && method==="POST"){
+   await ensureTrainingPrograms(env);
+   await ensureInstructors(env);
+   const programId=Number(pm[1]);
+   const program=await env.DB.prepare("SELECT id FROM training_programs WHERE id=?").bind(programId).first();
+   if(!program)return json({error:"研修プログラムが見つかりません"},404);
+
+   const b=await request.json().catch(()=>({}));
+   const title=String(b.title||"").trim();
+   const description=String(b.description||"").trim();
+   const instructor=String(b.instructor||"").trim();
+   if(!title)return json({error:"研修名は必須です"},400);
+
+   if(instructor){
+     const validInstructor=await env.DB.prepare("SELECT id FROM instructors WHERE lower(trim(name))=lower(trim(?))").bind(instructor).first();
+     if(!validInstructor)return json({error:"選択した教官が登録されていません"},400);
+   }
+
+   const max=await env.DB.prepare("SELECT COALESCE(MAX(step_order),0) n FROM training_program_steps WHERE program_id=?").bind(programId).first();
+   const nextOrder=Number(max?.n||0)+1;
+
+   // Existing trainings schema has required date/time/capacity, but UI no longer uses them.
+   const insert=await env.DB.prepare(`
+     INSERT INTO trainings(category,title,description,training_date,start_time,end_time,capacity,instructor,location)
+     VALUES(?,?,?,?,?,?,?,?,?)
+   `).bind(
+     "一般研修",title,description,"2099-12-31","00:00","",999,instructor,""
+   ).run();
+
+   const trainingId=Number(insert.meta?.last_row_id||0);
+   if(!trainingId)return json({error:"研修の作成に失敗しました"},500);
+
+   try{
+     await env.DB.prepare("INSERT INTO training_program_steps(program_id,training_id,step_order) VALUES(?,?,?)")
+       .bind(programId,trainingId,nextOrder).run();
+   }catch(e){
+     await env.DB.prepare("DELETE FROM trainings WHERE id=?").bind(trainingId).run();
+     return json({error:"プログラムへの追加に失敗しました",detail:String(e?.message||e)},500);
+   }
+
+   return json({ok:true,training_id:trainingId,step_order:nextOrder},201);
  }
 
  pm=path.match(/^\/api\/admin\/programs\/(\d+)\/steps$/);
