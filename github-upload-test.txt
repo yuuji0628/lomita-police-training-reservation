@@ -1,0 +1,3 @@
+Lomita Police 研修管理システム
+GitHub upload test
+このファイルがGitHubに追加されれば、管理画面からのアップロードは成功です。
