@@ -105,10 +105,17 @@ const ADMIN_BODY = `
  <a href="/" class="btn" style="display:block;text-align:center;margin-top:8px">トップへ戻る</a>
 </div></div>
 <div id="adminView" style="display:none"><div class="wrap">
- <div class="header"><div class="between"><div><span class="badge">LOMITA POLICE</span><div class="brand">研修管理本部</div><div class="sub">研修・参加申請・受講状況を一括管理</div></div><div class="row"><button class="btn small" onclick="logout()">ログアウト</button><button class="btn primary small" onclick="openTraining()">＋研修追加</button></div></div></div>
+ <div class="header"><div class="between"><div><span class="badge">LOMITA POLICE</span><div class="brand">研修管理本部</div><div class="sub">研修・参加申請・受講状況を一括管理</div></div><div class="row"><button class="btn small" onclick="logout()">ログアウト</button><button class="btn small" onclick="openManageMenu()">⚙ 管理メニュー</button><button class="btn primary small" onclick="openTraining()">＋研修追加</button></div></div></div>
  <div id="msg"></div>
  <div class="grid"><div class="stat"><span class="sub">今後の研修</span><b id="sTrain">0</b></div><div class="stat"><span class="sub">承認待ち</span><b id="sPending">0</b></div><div class="stat"><span class="sub">予約確定</span><b id="sReserved">0</b></div><div class="stat"><span class="sub">受講済み</span><b id="sCompleted">0</b></div></div>
 
+ <div class="section">研修一覧</div><div id="adminList"></div>
+</div><div class="footerNav"><a href="/">トップ</a><a class="active" href="/admin">管理画面</a></div></div>
+
+<div id="manageModal" class="modal"><div class="sheet">
+ <button class="btn small" style="float:right" onclick="closeManageMenu()">閉じる</button>
+ <span class="badge">ADMIN TOOLS</span><div class="title" style="font-size:24px">管理メニュー</div>
+ <div class="sub" style="margin:5px 0 16px">システム更新・ビルド確認などの管理機能</div>
  <div class="section">GitHubアップロード</div>
  <div class="card">
    <div class="title" style="font-size:16px">ファイルをGitHubへ送信</div>
@@ -127,8 +134,8 @@ const ADMIN_BODY = `
    <div class="sub" id="buildChecks" style="line-height:1.7"></div>
  </div>
 
- <div class="section">研修一覧</div><div id="adminList"></div>
-</div><div class="footerNav"><a href="/">トップ</a><a class="active" href="/admin">管理画面</a></div></div>
+
+</div></div>
 <div id="trainingModal" class="modal"><div class="sheet">
  <button class="btn small" style="float:right" onclick="closeTraining()">閉じる</button><div class="title" id="trainingModalTitle">研修を追加</div>
  <div id="trainingMsg"></div>
@@ -147,9 +154,11 @@ const labels={pending:'承認待ち',reserved:'予約確定',completed:'受講�
 function esc(s){return String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 function auth(){return {'content-type':'application/json','x-admin-password':adminPassword}}
 function msg(t,c){const e=document.getElementById('msg');e.innerHTML='<div class="notice '+c+'">'+esc(t)+'</div>';setTimeout(()=>e.innerHTML='',3500)}
-async function login(){adminPassword=document.getElementById('password').value;const r=await fetch('/api/admin/check',{headers:{'x-admin-password':adminPassword}});if(!r.ok){document.getElementById('loginMsg').innerHTML='<div class="notice error">パスワードが違います</div>';return}showAdmin();loadAdmin();setTimeout(()=>loadBuildStatus(),250)}
+async function login(){adminPassword=document.getElementById('password').value;const r=await fetch('/api/admin/check',{headers:{'x-admin-password':adminPassword}});if(!r.ok){document.getElementById('loginMsg').innerHTML='<div class="notice error">パスワードが違います</div>';return}showAdmin();loadAdmin()}
 function logout(){adminPassword='';location.href='/'}
 function showAdmin(){document.getElementById('loginView').style.display='none';document.getElementById('adminView').style.display='block'}
+function openManageMenu(){document.getElementById('manageModal').classList.add('open');setTimeout(()=>loadBuildStatus(),150)}
+function closeManageMenu(){document.getElementById('manageModal').classList.remove('open')}
 function fmt(d){return new Date(d+'T00:00:00').toLocaleDateString('ja-JP',{month:'numeric',day:'numeric',weekday:'short'})}
 async function loadAdmin(){
  const r=await fetch('/api/admin/trainings',{headers:auth()}); if(r.status===401)return logout(); trainings=await r.json(); render();
