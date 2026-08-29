@@ -466,7 +466,7 @@ const ADMIN_BODY = `
 </div></div>`;
 
 const ADMIN_SCRIPT = String.raw`
-let adminPassword='', trainings=[], activeTrainingId=null;
+let adminPassword='', trainings=[], activeTrainingId=null, buildTimer=null;
 const labels={pending:'承認待ち',reserved:'予約確定',completed:'受講済み',absent:'欠席',cancelled:'キャンセル'};
 function esc(s){return String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 function auth(){const h={'content-type':'application/json'};if(adminPassword)h['x-admin-password']=adminPassword;return h}
@@ -729,10 +729,14 @@ async function uploadAsWorker(){
    const r=await fetch('/api/admin/github/upload-worker',{method:'POST',headers:adminPassword?{'x-admin-password':adminPassword}:{},body:fd});
    const d=await r.json().catch(()=>({}));
    if(!r.ok){msgEl.innerHTML='<div class="notice error">'+esc(d.error||'アップロードに失敗しました')+'</div>';return}
-   msgEl.innerHTML='<div class="notice success">worker.jsを更新しました。Cloudflareの自動ビルドを待ってください。</div>';
+   msgEl.innerHTML='<div class="notice success">worker.jsをGitHubへ更新しました。Cloudflareのビルド状況を確認します。</div>';
    input.value='';
+   try{startBuildWatch()}catch(watchError){
+     console.error('build watch error',watchError);
+     msgEl.innerHTML+='<div class="notice">GitHubへの更新は成功しました。ビルド状況は手動更新でも確認できます。</div>';
+   }
  }catch(e){
-   msgEl.innerHTML='<div class="notice error">通信エラーでアップロードできませんでした。</div>';
+   msgEl.innerHTML='<div class="notice error">'+esc(e?.message||'通信エラーでアップロードできませんでした。')+'</div>';
  }finally{
    btn.disabled=false;btn.textContent='worker.jsとして更新';
  }
@@ -768,7 +772,10 @@ async function uploadToGitHub(){
     if(!r.ok) throw new Error(d.error||'アップロードに失敗しました');
     out.innerHTML='<div class="notice success">'+d.count+'個のファイルをGitHubへアップロードしました。ビルド状況を自動確認します。</div>';
     document.getElementById('gitFile').value=''; updateFileInfo();
-    startBuildWatch();
+    try{startBuildWatch()}catch(watchError){
+      console.error('build watch error',watchError);
+      out.innerHTML+='<div class="notice">GitHubへのアップロードは成功しました。ビルド状況は上の「更新」ボタンで確認できます。</div>';
+    }
   }catch(e){
     out.innerHTML='<div class="notice error">'+esc(e.message)+'</div>';
   }finally{
@@ -791,8 +798,10 @@ async function loadBuildStatus(manual=false){
   finally{if(manual){btn.disabled=false;btn.textContent='更新'}}
 }
 function startBuildWatch(){
-  if(buildTimer)clearInterval(buildTimer); loadBuildStatus();
-  buildTimer=setInterval(loadBuildStatus,5000); setTimeout(()=>{if(buildTimer){clearInterval(buildTimer);buildTimer=null}},120000);
+  if(buildTimer){clearInterval(buildTimer);buildTimer=null}
+  loadBuildStatus().catch?.(()=>{});
+  buildTimer=setInterval(()=>{loadBuildStatus().catch?.(()=>{})},5000);
+  setTimeout(()=>{if(buildTimer){clearInterval(buildTimer);buildTimer=null}},120000);
 }
 document.getElementById('workerUploadBtn')?.addEventListener('click',uploadAsWorker);
 document.getElementById('gitFile')?.addEventListener('change',updateFileInfo);
