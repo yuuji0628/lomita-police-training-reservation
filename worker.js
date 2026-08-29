@@ -231,13 +231,13 @@ function fmt(d){return new Date(d+'T00:00:00').toLocaleDateString('ja-JP',{month
 function noticeIn(id,t,c){document.getElementById(id).innerHTML='<div class="notice '+(c||'')+'">'+esc(t)+'</div>'}
 function profileAffiliation(p){return [p.affiliation,p.rank].filter(Boolean).join(' / ')}
 async function load(discordId){
- const r=await fetch('/api/trainings');
+ const r=await fetch('/api/trainings'+(discordId?'?discord_id='+encodeURIComponent(discordId):''));
  const data=await r.json().catch(()=>[]);
  const el=document.getElementById('list');
  if(!r.ok){el.innerHTML='<div class="notice error">'+esc((data.error||'研修を取得できませんでした')+(data.detail?'：'+data.detail:''))+'</div>';return}
  if(!data.length){el.innerHTML='<div class="empty">現在、受付中の研修はありません。</div>';return}
- el.innerHTML=data.map(t=>'<div class="card"><div class="title">'+esc(t.title)+'</div>'+(t.description?'<div class="sub" style="margin:10px 0 12px;white-space:pre-wrap">'+esc(t.description)+'</div>':'')+'<div class="between"><span class="sub">申請後、管理者が担当教官を選んで承認します。</span><button class="btn primary bookingBtn" data-id="'+t.id+'" data-title="'+encodeURIComponent(t.title)+'">申請する</button></div></div>').join('');
- document.querySelectorAll('.bookingBtn').forEach(btn=>btn.addEventListener('click',()=>openBooking(Number(btn.dataset.id),decodeURIComponent(btn.dataset.title))));
+ el.innerHTML=data.map(t=>'<div class="card"><div class="title">'+esc(t.title)+'</div>'+(t.description?'<div class="sub" style="margin:10px 0 12px;white-space:pre-wrap">'+esc(t.description)+'</div>':'')+'<div class="between"><span class="sub">'+(t.current_status==='pending'?'現在、承認待ちです。':t.current_status==='reserved'?'承認済みです。受講完了後に次の研修が開放されます。':'申請後、管理者が担当教官を選んで承認します。')+'</span><button class="btn primary bookingBtn" data-id="'+t.id+'" data-title="'+encodeURIComponent(t.title)+'" '+(t.already_applied?'disabled':'')+'>'+(t.current_status==='pending'?'承認待ち':t.current_status==='reserved'?'受講待ち':'申請する')+'</button></div></div>').join('');
+ document.querySelectorAll('.bookingBtn:not([disabled])').forEach(btn=>btn.addEventListener('click',()=>openBooking(Number(btn.dataset.id),decodeURIComponent(btn.dataset.title))));
 }
 function openRegister(){document.getElementById('registerMsg').innerHTML='';document.getElementById('registerModal').classList.add('open')}
 function closeRegister(){document.getElementById('registerModal').classList.remove('open')}
@@ -785,13 +785,60 @@ async function handle(request, env) {
  if(path==="/api/trainings" && method==="GET"){
    try{
      await ensureTrainingPrograms(env);
-     const {results}=await env.DB.prepare(`
-       SELECT training_id AS id,name AS title,description
+     const discordId=(url.searchParams.get("discord_id")||"").trim();
+
+     const {results:programs}=await env.DB.prepare(`
+       SELECT id,training_id,name AS title,description
        FROM training_programs
        WHERE active=1 AND training_id IS NOT NULL
        ORDER BY id
      `).all();
-     return json(results || []);
+
+     // Before opening a mypage we don't know who the trainee is.
+     // Show only the first training instead of exposing every program at once.
+     if(!discordId){
+       return json((programs||[]).slice(0,1).map(p=>({
+         id:p.training_id,title:p.title,description:p.description
+       })));
+     }
+
+     const {results:history}=await env.DB.prepare(`
+       SELECT training_id,status
+       FROM reservations
+       WHERE lower(trim(COALESCE(discord_id,'')))=lower(trim(?))
+       ORDER BY id DESC
+     `).bind(discordId).all();
+
+     const latestByTraining=new Map();
+     for(const h of (history||[])){
+       const tid=Number(h.training_id);
+       if(!latestByTraining.has(tid)) latestByTraining.set(tid,String(h.status||""));
+     }
+
+     // Sequential rule:
+     // completed => unlock next
+     // pending/reserved => keep only that current training visible
+     // cancelled/absent/no history => that training is available again/current
+     for(const p of (programs||[])){
+       const tid=Number(p.training_id);
+       const status=latestByTraining.get(tid)||"";
+       if(status==="completed") continue;
+
+       if(status==="pending" || status==="reserved"){
+         return json([{
+           id:tid,title:p.title,description:p.description,
+           current_status:status,already_applied:true
+         }]);
+       }
+
+       return json([{
+         id:tid,title:p.title,description:p.description,
+         current_status:status,already_applied:false
+       }]);
+     }
+
+     // Everything is completed.
+     return json([]);
    }catch(e){
      return json({error:"研修を取得できませんでした",detail:String(e?.message||e)},500);
    }
