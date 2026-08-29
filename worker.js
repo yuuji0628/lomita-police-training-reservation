@@ -208,6 +208,7 @@ body:before{
   height:6px;
   background:linear-gradient(90deg,var(--gold),#fff0,var(--gold));
   z-index:100;
+  pointer-events:none;
 }
 a{color:inherit;text-decoration:none}
 .wrap{max-width:900px;margin:auto;padding:18px 14px 100px}
@@ -233,6 +234,17 @@ a{color:inherit;text-decoration:none}
   letter-spacing:.08em;
   color:#ffffff08;
   transform:rotate(-3deg);
+  pointer-events:none;
+  z-index:0;
+}
+.header > *{
+  position:relative;
+  z-index:2;
+}
+.header a,.header button{
+  position:relative;
+  z-index:3;
+  pointer-events:auto;
 }
 .header .brand{font-size:25px;font-weight:950;letter-spacing:.03em}
 .header .sub{color:#d6e3f2}
@@ -497,7 +509,7 @@ const PUBLIC_BODY = `
   <div class="header">
     <div class="between">
       <div><span class="badge">TRAINEE PORTAL</span><div class="brand">研修生ポータル</div><div class="sub">研修申請・承認状況・受講履歴</div></div>
-      <a class="btn small" href="/">トップへ</a>
+      <a class="btn small" href="/" onclick="window.location.href='/';return false">トップへ</a>
     </div>
   </div>
 
