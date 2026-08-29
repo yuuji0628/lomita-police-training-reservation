@@ -35,6 +35,49 @@ async function ensureTraineeProfiles(env) {
       updated_at TEXT DEFAULT CURRENT_TIMESTAMP
     )
   `).run();
+
+  const info = await env.DB.prepare("PRAGMA table_info(trainee_profiles)").all();
+  const cols = (info.results || []).map(x => String(x.name || "").toLowerCase());
+  if (!cols.includes("login_name")) {
+    try { await env.DB.prepare("ALTER TABLE trainee_profiles ADD COLUMN login_name TEXT DEFAULT ''").run(); } catch (_) {}
+  }
+  if (!cols.includes("password_hash")) {
+    try { await env.DB.prepare("ALTER TABLE trainee_profiles ADD COLUMN password_hash TEXT DEFAULT ''").run(); } catch (_) {}
+  }
+  if (!cols.includes("password_salt")) {
+    try { await env.DB.prepare("ALTER TABLE trainee_profiles ADD COLUMN password_salt TEXT DEFAULT ''").run(); } catch (_) {}
+  }
+}
+
+function randomToken(bytes=16){
+  const a=new Uint8Array(bytes);crypto.getRandomValues(a);return b64url(a);
+}
+async function traineePasswordHash(password,salt){
+  const data=new TextEncoder().encode("lomita-trainee:"+salt+":"+password);
+  return b64url(await crypto.subtle.digest("SHA-256",data));
+}
+async function traineeSessionSignature(secret,id,expires){
+  const data=new TextEncoder().encode("lomita-trainee-session:"+id+":"+expires+":"+secret);
+  return b64url(await crypto.subtle.digest("SHA-256",data));
+}
+async function createTraineeSessionCookie(env,profileId){
+  const expires=Date.now()+12*60*60*1000;
+  const secret=env.TRAINEE_SESSION_SECRET||env.ADMIN_PASSWORD||"lomita-trainee-session";
+  const sig=await traineeSessionSignature(secret,String(profileId),String(expires));
+  return `lomita_trainee=${profileId}.${expires}.${sig}; Max-Age=43200; HttpOnly; Secure; SameSite=Strict; Path=/`;
+}
+async function getTraineeSession(request,env){
+  await ensureTraineeProfiles(env);
+  const cookie=request.headers.get("cookie")||"";
+  const m=cookie.match(/(?:^|;\s*)lomita_trainee=([^;]+)/);
+  if(!m)return null;
+  const [idRaw,expiresRaw,sig]=decodeURIComponent(m[1]).split(".");
+  const id=Number(idRaw),expires=Number(expiresRaw);
+  if(!id||!expires||expires<Date.now()||!sig)return null;
+  const secret=env.TRAINEE_SESSION_SECRET||env.ADMIN_PASSWORD||"lomita-trainee-session";
+  const expected=await traineeSessionSignature(secret,idRaw,expiresRaw);
+  if(sig!==expected)return null;
+  return await env.DB.prepare("SELECT id,player_name,login_name,discord_id,affiliation,rank FROM trainee_profiles WHERE id=?").bind(id).first();
 }
 
 async function ensureReservationInstructor(env) {
@@ -162,162 +205,147 @@ const PUBLIC_BODY = `
 <div class="wrap">
   <div class="header">
     <div class="between">
-      <div><span class="badge">TRAINEE</span><div class="brand">研修生ページ</div><div class="sub">登録・参加申請・受講履歴をまとめて確認</div></div>
+      <div><span class="badge">TRAINEE</span><div class="brand">研修生ページ</div><div class="sub">研修申請・承認状況・受講履歴</div></div>
       <a class="btn small" href="/">トップへ</a>
     </div>
   </div>
 
-  <div class="card" style="margin-top:0">
-    <div class="title">研修生メニュー</div>
-    <div class="sub" style="margin:6px 0 14px">初めて利用する方は研修生登録をしてください。</div>
-    <div class="formgrid">
-      <button id="openRegisterBtn" type="button" class="btn primary" style="width:100%">＋ 初めての方・研修生登録</button>
-      <button id="focusMyPageBtn" type="button" class="btn dark" style="width:100%">登録済み・マイページ</button>
+  <div id="authView">
+    <div class="card">
+      <div class="title">研修生ログイン</div>
+      <div class="sub" style="margin:6px 0 12px">名前とパスワードでログインしてください。</div>
+      <div class="notice">ログイン後、この端末では12時間パスワード入力なしで表示できます。</div>
+      <div id="loginMsg"></div>
+      <div class="field"><label>名前</label><input id="loginName" maxlength="40" autocomplete="username" placeholder="登録した名前"></div>
+      <div class="field"><label>パスワード</label><input id="loginPassword" type="password" maxlength="100" autocomplete="current-password" placeholder="パスワード"></div>
+      <button id="traineeLoginBtn" class="btn dark" type="button" style="width:100%">ログイン</button>
+      <button id="openRegisterBtn" class="btn primary" type="button" style="width:100%;margin-top:10px">初めての方・研修生登録</button>
     </div>
   </div>
 
-  <div id="myPageLogin" class="card">
-    <div class="title" style="font-size:16px">マイページを開く</div>
-    <div class="sub" style="margin:6px 0 12px">登録したDiscord ID / ユーザー名を入力してください。</div>
-    <div class="field"><label>Discord ID / ユーザー名</label><input id="myDiscordId" maxlength="60" placeholder="Discord ID / ユーザー名"></div>
-    <button id="myPageBtn" type="button" class="btn dark" style="width:100%">自分の研修情報を見る</button>
-    <div id="myMsg"></div>
-  </div>
-
-  <div id="myPage" style="display:none">
-    <div class="section">自分の研修状況</div>
+  <div id="loggedInView" style="display:none">
+    <div class="between">
+      <div class="section" style="margin-top:8px">自分の研修状況</div>
+      <button id="traineeLogoutBtn" class="btn small" type="button">ログアウト</button>
+    </div>
     <div id="mySummary"></div>
     <div class="section">申請・受講履歴</div>
     <div id="myHistory"></div>
+    <div id="msg"></div>
+    <div class="section">現在の研修</div>
+    <div id="list"><div class="empty">読み込み中...</div></div>
   </div>
-
-  <div id="msg"></div>
-  <div class="section">受付中の研修</div>
-  <div id="list"><div class="empty">読み込み中...</div></div>
 </div>
 
 <div id="registerModal" class="modal"><div class="sheet">
   <button class="btn small" style="float:right" onclick="closeRegister()">閉じる</button>
   <span class="badge">NEW TRAINEE</span>
   <div class="title">研修生登録</div>
-  <div class="sub" style="margin:5px 0 12px">一度登録するとDiscord IDでマイページを開けます。</div>
+  <div class="sub" style="margin:5px 0 12px">名前とパスワードを登録します。</div>
   <div id="registerMsg"></div>
-  <div class="field"><label>プレイヤー名 *</label><input id="regPlayerName" maxlength="40" placeholder="プレイヤー名"></div>
-  <div class="field"><label>Discord ID / ユーザー名 *</label><input id="regDiscordId" maxlength="60" placeholder="Discord ID / ユーザー名"></div>
-  <div class="formgrid">
-    <div class="field"><label>所属</label><input id="regAffiliation" maxlength="60" placeholder="例：Lomita Police"></div>
-    <div class="field"><label>階級</label><input id="regRank" maxlength="60" placeholder="例：Officer"></div>
-  </div>
-  <button id="registerSubmitBtn" type="button" class="btn primary" style="width:100%">研修生として登録する</button>
+  <div class="field"><label>名前 *</label><input id="regPlayerName" maxlength="40" autocomplete="username" placeholder="名前"></div>
+  <div class="field"><label>パスワード *</label><input id="regPassword" type="password" maxlength="100" autocomplete="new-password" placeholder="6文字以上"></div>
+  <div class="field"><label>パスワード確認 *</label><input id="regPassword2" type="password" maxlength="100" autocomplete="new-password" placeholder="もう一度入力"></div>
+  <button id="registerSubmitBtn" type="button" class="btn primary" style="width:100%">登録してログイン</button>
 </div></div>
 
 <div id="booking" class="modal"><div class="sheet">
   <button class="btn small" style="float:right" onclick="closeBooking()">閉じる</button>
-  <div class="title" id="bookTitle">研修予約</div>
-  <div class="sub" style="margin-top:4px">申請後、管理者の承認で予約確定になります。</div>
+  <div class="title" id="bookTitle">研修申請</div>
+  <div class="sub" style="margin-top:4px">申請後、管理者が担当教官を選んで承認します。</div>
   <div id="bookingMsg"></div>
-  <div class="field"><label>プレイヤー名 *</label><input id="playerName" maxlength="40"></div>
-  <div class="field"><label>Discord ID / ユーザー名 *</label><input id="discordId" maxlength="60"></div>
-  <div class="field"><label>所属・階級</label><input id="affiliation" maxlength="120"></div>
-  <div class="field"><label>備考</label><textarea id="note" maxlength="250"></textarea></div>
-  <button id="bookingSubmitBtn" type="button" class="btn primary" style="width:100%">参加申請する</button>
+  <div class="field"><label>備考</label><textarea id="note" maxlength="250" placeholder="必要な場合のみ入力"></textarea></div>
+  <button id="bookingSubmitBtn" type="button" class="btn primary" style="width:100%">申請する</button>
 </div></div>`;
 
 const PUBLIC_SCRIPT = String.raw`
-let selectedTraining=null, myProfile=null;
+let selectedTraining=null,myProfile=null;
 const statusLabels={pending:'承認待ち',reserved:'予約確定',completed:'受講済み',absent:'欠席',cancelled:'キャンセル'};
 function esc(s){return String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
-function fmt(d){return new Date(d+'T00:00:00').toLocaleDateString('ja-JP',{month:'numeric',day:'numeric',weekday:'short'})}
 function noticeIn(id,t,c){document.getElementById(id).innerHTML='<div class="notice '+(c||'')+'">'+esc(t)+'</div>'}
-function profileAffiliation(p){return [p.affiliation,p.rank].filter(Boolean).join(' / ')}
-async function load(discordId){
- const r=await fetch('/api/trainings'+(discordId?'?discord_id='+encodeURIComponent(discordId):''));
- const data=await r.json().catch(()=>[]);
- const el=document.getElementById('list');
- if(!r.ok){el.innerHTML='<div class="notice error">'+esc((data.error||'研修を取得できませんでした')+(data.detail?'：'+data.detail:''))+'</div>';return}
- if(!data.length){el.innerHTML='<div class="empty">現在、受付中の研修はありません。</div>';return}
- el.innerHTML=data.map(t=>'<div class="card"><div class="title">'+esc(t.title)+'</div>'+(t.description?'<div class="sub" style="margin:10px 0 12px;white-space:pre-wrap">'+esc(t.description)+'</div>':'')+'<div class="between"><span class="sub">'+(t.current_status==='pending'?'現在、承認待ちです。':t.current_status==='reserved'?'承認済みです。受講完了後に次の研修が開放されます。':'申請後、管理者が担当教官を選んで承認します。')+'</span><button class="btn primary bookingBtn" data-id="'+t.id+'" data-title="'+encodeURIComponent(t.title)+'" '+(t.already_applied?'disabled':'')+'>'+(t.current_status==='pending'?'承認待ち':t.current_status==='reserved'?'受講待ち':'申請する')+'</button></div></div>').join('');
- document.querySelectorAll('.bookingBtn:not([disabled])').forEach(btn=>btn.addEventListener('click',()=>openBooking(Number(btn.dataset.id),decodeURIComponent(btn.dataset.title))));
-}
+function show(t,c){const e=document.getElementById('msg');e.innerHTML='<div class="notice '+c+'">'+esc(t)+'</div>';setTimeout(()=>e.innerHTML='',4200)}
+
+function showAuth(){document.getElementById('authView').style.display='block';document.getElementById('loggedInView').style.display='none'}
+function showLoggedIn(){document.getElementById('authView').style.display='none';document.getElementById('loggedInView').style.display='block'}
 function openRegister(){document.getElementById('registerMsg').innerHTML='';document.getElementById('registerModal').classList.add('open')}
 function closeRegister(){document.getElementById('registerModal').classList.remove('open')}
+
+async function restoreTrainee(){
+ const r=await fetch('/api/trainee/session');
+ if(!r.ok){showAuth();return}
+ const d=await r.json();myProfile=d.profile;showLoggedIn();await loadMyPage();
+}
 async function registerTrainee(){
- const btn=document.getElementById('registerSubmitBtn');
- const body={
-   player_name:document.getElementById('regPlayerName').value.trim(),
-   discord_id:document.getElementById('regDiscordId').value.trim(),
-   affiliation:document.getElementById('regAffiliation').value.trim(),
-   rank:document.getElementById('regRank').value.trim()
- };
- if(!body.player_name){noticeIn('registerMsg','プレイヤー名を入力してください','error');return}
- if(!body.discord_id){noticeIn('registerMsg','Discord ID / ユーザー名を入力してください','error');return}
- btn.disabled=true;btn.textContent='登録中...';
+ const name=document.getElementById('regPlayerName').value.trim();
+ const password=document.getElementById('regPassword').value;
+ const password2=document.getElementById('regPassword2').value;
+ if(!name){noticeIn('registerMsg','名前を入力してください','error');return}
+ if(password.length<6){noticeIn('registerMsg','パスワードは6文字以上にしてください','error');return}
+ if(password!==password2){noticeIn('registerMsg','確認用パスワードが一致しません','error');return}
+ const btn=document.getElementById('registerSubmitBtn');btn.disabled=true;btn.textContent='登録中...';
  try{
-   const r=await fetch('/api/trainee/register',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});
+   const r=await fetch('/api/trainee/register',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({name,password})});
    const d=await r.json().catch(()=>({}));
    if(!r.ok){noticeIn('registerMsg',d.error||'登録できませんでした','error');return}
-   myProfile=d.profile;
-   document.getElementById('myDiscordId').value=body.discord_id;
-   closeRegister();
-   show('研修生登録が完了しました。','success');
-   await loadMyPage();
- }catch(e){noticeIn('registerMsg','通信エラーで登録できませんでした','error')}
- finally{btn.disabled=false;btn.textContent='研修生として登録する'}
+   myProfile=d.profile;closeRegister();showLoggedIn();await loadMyPage();
+ }finally{btn.disabled=false;btn.textContent='登録してログイン'}
 }
-function openBooking(id,title){
- selectedTraining={id,title};document.getElementById('bookingMsg').innerHTML='';
- document.getElementById('bookTitle').textContent=title+' 参加申請';
- if(myProfile){
-   document.getElementById('playerName').value=myProfile.player_name||'';
-   document.getElementById('discordId').value=myProfile.discord_id||'';
-   document.getElementById('affiliation').value=profileAffiliation(myProfile);
- }
- document.getElementById('booking').classList.add('open')
-}
-function closeBooking(){document.getElementById('booking').classList.remove('open')}
-function show(t,c){const e=document.getElementById('msg');e.innerHTML='<div class="notice '+c+'">'+esc(t)+'</div>';setTimeout(()=>e.innerHTML='',4200)}
-async function loadMyPage(){
- const discord_id=document.getElementById('myDiscordId').value.trim();
- if(!discord_id){noticeIn('myMsg','Discord ID / ユーザー名を入力してください','error');return}
- const btn=document.getElementById('myPageBtn');btn.disabled=true;btn.textContent='確認中...';
+async function traineeLogin(){
+ const name=document.getElementById('loginName').value.trim();
+ const password=document.getElementById('loginPassword').value;
+ if(!name||!password){noticeIn('loginMsg','名前とパスワードを入力してください','error');return}
+ const btn=document.getElementById('traineeLoginBtn');btn.disabled=true;btn.textContent='ログイン中...';
  try{
-   const r=await fetch('/api/trainee/profile?discord_id='+encodeURIComponent(discord_id));
-   const raw=await r.text();
-   let d={};
-   try{d=raw?JSON.parse(raw):{}}catch(_){d={error:raw||'サーバーから不正な応答が返りました'}}
-   if(!r.ok){noticeIn('myMsg',(d.error||'研修情報を取得できませんでした')+(d.detail?'：'+d.detail:''),'error');return}
-   myProfile=d.profile;
-   document.getElementById('myMsg').innerHTML='';
-   document.getElementById('myPage').style.display='block';
-   document.getElementById('mySummary').innerHTML='<div class="card"><div class="profileHead"><div class="avatar">'+esc((d.profile.player_name||'?').slice(0,1))+'</div><div><div class="title">'+esc(d.profile.player_name)+'</div><div class="sub">Discord：'+esc(d.profile.discord_id)+'</div><div class="sub">'+esc(profileAffiliation(d.profile)||'所属・階級 未登録')+'</div></div></div><div class="grid" style="margin-top:14px"><div class="stat"><span class="sub">承認待ち</span><b>'+d.stats.pending+'</b></div><div class="stat"><span class="sub">予約確定</span><b>'+d.stats.reserved+'</b></div><div class="stat"><span class="sub">受講済み</span><b>'+d.stats.completed+'</b></div><div class="stat"><span class="sub">欠席</span><b>'+d.stats.absent+'</b></div></div></div>';
-   const h=document.getElementById('myHistory');
-   h.innerHTML=d.history.length?d.history.map(x=>'<div class="card"><div class="between"><div><span class="pill '+esc(x.status)+'">'+esc(statusLabels[x.status]||x.status)+'</span><div class="title" style="margin-top:7px">'+esc(x.title)+'</div><div class="meta"><span>📅 '+fmt(x.training_date)+'</span><span>🕒 '+esc(x.start_time||'')+(x.end_time?'〜'+esc(x.end_time):'')+'</span></div></div></div>'+(x.note?'<div class="sub">備考：'+esc(x.note)+'</div>':'')+'</div>').join(''):'<div class="empty">まだ申請・受講履歴はありません。</div>';
-   await load(discord_id);
-   document.getElementById('myPage').scrollIntoView({behavior:'smooth',block:'start'});
- }catch(e){noticeIn('myMsg','通信エラーで取得できませんでした','error')}
- finally{btn.disabled=false;btn.textContent='自分の研修情報を見る'}
+   const r=await fetch('/api/trainee/login',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({name,password})});
+   const d=await r.json().catch(()=>({}));
+   if(!r.ok){noticeIn('loginMsg',d.error||'ログインできませんでした','error');return}
+   myProfile=d.profile;document.getElementById('loginPassword').value='';showLoggedIn();await loadMyPage();
+ }finally{btn.disabled=false;btn.textContent='ログイン'}
+}
+async function traineeLogout(){
+ await fetch('/api/trainee/logout',{method:'POST'});
+ myProfile=null;showAuth();
+}
+async function load(){
+ const r=await fetch('/api/trainings');
+ const data=await r.json().catch(()=>[]);
+ const el=document.getElementById('list');
+ if(r.status===401){showAuth();return}
+ if(!r.ok){el.innerHTML='<div class="notice error">'+esc((data.error||'研修を取得できませんでした')+(data.detail?'：'+data.detail:''))+'</div>';return}
+ if(!data.length){el.innerHTML='<div class="empty">すべての研修を受講済みです。</div>';return}
+ el.innerHTML=data.map(t=>'<div class="card"><div class="title">'+esc(t.title)+'</div>'+(t.description?'<div class="sub" style="margin:10px 0 12px;white-space:pre-wrap">'+esc(t.description)+'</div>':'')+'<div class="between"><span class="sub">'+(t.current_status==='pending'?'現在、承認待ちです。':t.current_status==='reserved'?'承認済みです。受講完了後に次の研修が表示されます。':'申請後、管理者が担当教官を選んで承認します。')+'</span><button class="btn primary bookingBtn" data-id="'+t.id+'" data-title="'+encodeURIComponent(t.title)+'" '+(t.already_applied?'disabled':'')+'>'+(t.current_status==='pending'?'承認待ち':t.current_status==='reserved'?'受講待ち':'申請する')+'</button></div></div>').join('');
+ document.querySelectorAll('.bookingBtn:not([disabled])').forEach(btn=>btn.addEventListener('click',()=>openBooking(Number(btn.dataset.id),decodeURIComponent(btn.dataset.title))));
+}
+function openBooking(id,title){selectedTraining={id,title};document.getElementById('bookingMsg').innerHTML='';document.getElementById('bookTitle').textContent=title+' 申請';document.getElementById('booking').classList.add('open')}
+function closeBooking(){document.getElementById('booking').classList.remove('open')}
+async function loadMyPage(){
+ const r=await fetch('/api/trainee/profile');
+ const d=await r.json().catch(()=>({}));
+ if(r.status===401){showAuth();return}
+ if(!r.ok)return;
+ myProfile=d.profile;
+ document.getElementById('mySummary').innerHTML='<div class="card"><div class="profileHead"><div class="avatar">'+esc((d.profile.player_name||'?').slice(0,1))+'</div><div><div class="title">'+esc(d.profile.player_name)+'</div><div class="sub">ログイン中</div></div></div><div class="grid" style="margin-top:14px"><div class="stat"><span class="sub">承認待ち</span><b>'+d.stats.pending+'</b></div><div class="stat"><span class="sub">予約確定</span><b>'+d.stats.reserved+'</b></div><div class="stat"><span class="sub">受講済み</span><b>'+d.stats.completed+'</b></div><div class="stat"><span class="sub">欠席</span><b>'+d.stats.absent+'</b></div></div></div>';
+ const h=document.getElementById('myHistory');
+ h.innerHTML=d.history.length?d.history.map(x=>'<div class="card"><div class="between"><div><span class="pill '+esc(x.status)+'">'+esc(statusLabels[x.status]||x.status)+'</span><div class="title" style="margin-top:7px">'+esc(x.title)+'</div></div></div>'+(x.assigned_instructor?'<div class="sub" style="margin-top:7px">担当教官：'+esc(x.assigned_instructor)+'</div>':'')+(x.note?'<div class="sub">備考：'+esc(x.note)+'</div>':'')+'</div>').join(''):'<div class="empty">まだ申請・受講履歴はありません。</div>';
+ await load();
 }
 async function submitBooking(){
- const out=document.getElementById('bookingMsg'),btn=document.getElementById('bookingSubmitBtn');
- const player_name=document.getElementById('playerName').value.trim(), discord_id=document.getElementById('discordId').value.trim();
- if(!player_name){noticeIn('bookingMsg','プレイヤー名を入力してください','error');return}
- if(!discord_id){noticeIn('bookingMsg','Discord IDを入力してください','error');return}
- const body={training_id:selectedTraining.id,player_name,discord_id,affiliation:document.getElementById('affiliation').value.trim(),note:document.getElementById('note').value.trim()};
- btn.disabled=true;btn.textContent='申請中...';out.innerHTML='<div class="notice">申請を送信しています...</div>';
+ if(!selectedTraining)return;
+ const btn=document.getElementById('bookingSubmitBtn');btn.disabled=true;btn.textContent='申請中...';
  try{
-   const r=await fetch('/api/reservations',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});
-   let d={};try{d=await r.json()}catch(_){}
+   const r=await fetch('/api/reservations',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({training_id:selectedTraining.id,note:document.getElementById('note').value.trim()})});
+   const d=await r.json().catch(()=>({}));
+   if(r.status===401){closeBooking();showAuth();return}
    if(!r.ok){noticeIn('bookingMsg',d.error||'申請できませんでした','error');return}
-   closeBooking();document.getElementById('note').value='';show('参加申請を送信しました。承認をお待ちください。','success');load(myProfile?.discord_id||discord_id);loadMyPage();
- }catch(e){noticeIn('bookingMsg','通信エラーで申請できませんでした','error')}
- finally{btn.disabled=false;btn.textContent='参加申請する'}
+   closeBooking();document.getElementById('note').value='';show('申請しました。承認をお待ちください。','success');await loadMyPage();
+ }finally{btn.disabled=false;btn.textContent='申請する'}
 }
 document.getElementById('openRegisterBtn')?.addEventListener('click',openRegister);
-document.getElementById('focusMyPageBtn')?.addEventListener('click',()=>document.getElementById('myDiscordId').focus());
 document.getElementById('registerSubmitBtn')?.addEventListener('click',registerTrainee);
-document.getElementById('myPageBtn')?.addEventListener('click',loadMyPage);
+document.getElementById('traineeLoginBtn')?.addEventListener('click',traineeLogin);
+document.getElementById('traineeLogoutBtn')?.addEventListener('click',traineeLogout);
 document.getElementById('bookingSubmitBtn')?.addEventListener('click',submitBooking);
-load();`;
+restoreTrainee();`;
 
 const ADMIN_BODY = `
 <div id="loginView" class="wrap login">
@@ -678,13 +706,13 @@ async function setStatus(id,status){
    assigned_instructor=sel?sel.value.trim():'';
    if(!assigned_instructor){alert('担当教官を選択してから承認してください。');return}
  }
- const r=await fetch('/api/admin/reservations/'+id+'/status',{
-   method:'POST',
+ const r=await fetch('/api/admin/reservations/'+id,{
+   method:'PATCH',
    headers:auth(),
    body:JSON.stringify({status,assigned_instructor})
  });
  const d=await r.json().catch(()=>({}));
- if(!r.ok){alert(d.error||'更新できませんでした');return}
+ if(!r.ok){alert((d.error||'更新できませんでした')+(d.detail?'\n'+d.detail:''));return}
  await loadAdmin();
 }
 async function uploadAsWorker(){
@@ -785,59 +813,21 @@ async function handle(request, env) {
  if(path==="/api/trainings" && method==="GET"){
    try{
      await ensureTrainingPrograms(env);
-     const discordId=(url.searchParams.get("discord_id")||"").trim();
+     const profile=await getTraineeSession(request,env);
+     if(!profile)return json({error:"ログインが必要です"},401);
+     const key=String(profile.discord_id||profile.login_name||profile.player_name||"").trim();
 
-     const {results:programs}=await env.DB.prepare(`
-       SELECT id,training_id,name AS title,description
-       FROM training_programs
-       WHERE active=1 AND training_id IS NOT NULL
-       ORDER BY id
-     `).all();
-
-     // Before opening a mypage we don't know who the trainee is.
-     // Show only the first training instead of exposing every program at once.
-     if(!discordId){
-       return json((programs||[]).slice(0,1).map(p=>({
-         id:p.training_id,title:p.title,description:p.description
-       })));
-     }
-
-     const {results:history}=await env.DB.prepare(`
-       SELECT training_id,status
-       FROM reservations
-       WHERE lower(trim(COALESCE(discord_id,'')))=lower(trim(?))
-       ORDER BY id DESC
-     `).bind(discordId).all();
+     const {results:programs}=await env.DB.prepare("SELECT id,training_id,name AS title,description FROM training_programs WHERE active=1 AND training_id IS NOT NULL ORDER BY id").all();
+     const {results:history}=await env.DB.prepare("SELECT training_id,status FROM reservations WHERE lower(trim(COALESCE(discord_id,'')))=lower(trim(?)) ORDER BY id DESC").bind(key).all();
 
      const latestByTraining=new Map();
-     for(const h of (history||[])){
-       const tid=Number(h.training_id);
-       if(!latestByTraining.has(tid)) latestByTraining.set(tid,String(h.status||""));
-     }
-
-     // Sequential rule:
-     // completed => unlock next
-     // pending/reserved => keep only that current training visible
-     // cancelled/absent/no history => that training is available again/current
+     for(const h of (history||[])){const tid=Number(h.training_id);if(!latestByTraining.has(tid))latestByTraining.set(tid,String(h.status||""))}
      for(const p of (programs||[])){
-       const tid=Number(p.training_id);
-       const status=latestByTraining.get(tid)||"";
-       if(status==="completed") continue;
-
-       if(status==="pending" || status==="reserved"){
-         return json([{
-           id:tid,title:p.title,description:p.description,
-           current_status:status,already_applied:true
-         }]);
-       }
-
-       return json([{
-         id:tid,title:p.title,description:p.description,
-         current_status:status,already_applied:false
-       }]);
+       const tid=Number(p.training_id),status=latestByTraining.get(tid)||"";
+       if(status==="completed")continue;
+       if(status==="pending"||status==="reserved")return json([{id:tid,title:p.title,description:p.description,current_status:status,already_applied:true}]);
+       return json([{id:tid,title:p.title,description:p.description,current_status:status,already_applied:false}]);
      }
-
-     // Everything is completed.
      return json([]);
    }catch(e){
      return json({error:"研修を取得できませんでした",detail:String(e?.message||e)},500);
@@ -846,124 +836,71 @@ async function handle(request, env) {
  if(path==="/api/trainee/register" && method==="POST"){
    await ensureTraineeProfiles(env);
    const b=await request.json().catch(()=>({}));
-   const playerName=String(b.player_name||"").trim();
-   const discordId=String(b.discord_id||"").trim();
-   const affiliation=String(b.affiliation||"").trim();
-   const rank=String(b.rank||"").trim();
-   if(!playerName||!discordId)return json({error:"プレイヤー名とDiscord IDは必須です"},400);
-   const exists=await env.DB.prepare("SELECT id FROM trainee_profiles WHERE lower(trim(discord_id))=lower(trim(?))").bind(discordId).first();
-   if(exists)return json({error:"このDiscord IDはすでに登録されています"},409);
-   await env.DB.prepare("INSERT INTO trainee_profiles(player_name,discord_id,affiliation,rank) VALUES(?,?,?,?)")
-     .bind(playerName,discordId,affiliation,rank).run();
-   return json({ok:true,profile:{player_name:playerName,discord_id:discordId,affiliation,rank}},201);
+   const name=String(b.name||"").trim();
+   const password=String(b.password||"");
+   if(!name)return json({error:"名前を入力してください"},400);
+   if(password.length<6)return json({error:"パスワードは6文字以上にしてください"},400);
+   const exists=await env.DB.prepare("SELECT id FROM trainee_profiles WHERE lower(trim(login_name))=lower(trim(?)) OR (trim(login_name)='' AND lower(trim(player_name))=lower(trim(?)))").bind(name,name).first();
+   if(exists)return json({error:"この名前はすでに登録されています"},409);
+   const salt=randomToken(16);
+   const hash=await traineePasswordHash(password,salt);
+   const r=await env.DB.prepare("INSERT INTO trainee_profiles(player_name,discord_id,login_name,password_hash,password_salt,affiliation,rank) VALUES(?,?,?,?,?,'','')").bind(name,name,name,hash,salt).run();
+   const id=Number(r.meta?.last_row_id||0);
+   const profile={id,player_name:name,login_name:name,discord_id:name,affiliation:"",rank:""};
+   const cookie=await createTraineeSessionCookie(env,id);
+   return new Response(JSON.stringify({ok:true,profile}),{status:201,headers:{"content-type":"application/json; charset=utf-8","cache-control":"no-store","set-cookie":cookie}});
+ }
+
+ if(path==="/api/trainee/login" && method==="POST"){
+   await ensureTraineeProfiles(env);
+   const b=await request.json().catch(()=>({}));
+   const name=String(b.name||"").trim(),password=String(b.password||"");
+   if(!name||!password)return json({error:"名前とパスワードを入力してください"},400);
+   const p=await env.DB.prepare("SELECT id,player_name,login_name,discord_id,affiliation,rank,password_hash,password_salt FROM trainee_profiles WHERE lower(trim(login_name))=lower(trim(?))").bind(name).first();
+   if(!p||!p.password_hash||!p.password_salt)return json({error:"名前またはパスワードが違います"},401);
+   const hash=await traineePasswordHash(password,p.password_salt);
+   if(hash!==p.password_hash)return json({error:"名前またはパスワードが違います"},401);
+   const cookie=await createTraineeSessionCookie(env,p.id);
+   const profile={id:p.id,player_name:p.player_name,login_name:p.login_name,discord_id:p.discord_id,affiliation:p.affiliation||"",rank:p.rank||""};
+   return new Response(JSON.stringify({ok:true,profile}),{headers:{"content-type":"application/json; charset=utf-8","cache-control":"no-store","set-cookie":cookie}});
+ }
+
+ if(path==="/api/trainee/session" && method==="GET"){
+   const p=await getTraineeSession(request,env);
+   if(!p)return json({error:"ログインが必要です"},401);
+   return json({ok:true,profile:p});
+ }
+
+ if(path==="/api/trainee/logout" && method==="POST"){
+   return new Response(JSON.stringify({ok:true}),{headers:{"content-type":"application/json; charset=utf-8","set-cookie":"lomita_trainee=; Max-Age=0; HttpOnly; Secure; SameSite=Strict; Path=/"}});
  }
 
  if(path==="/api/trainee/profile" && method==="GET"){
    await ensureReservationInstructor(env);
-   await ensureTraineeProfiles(env);
-   const discordId=(url.searchParams.get("discord_id")||"").trim();
-   if(!discordId)return json({error:"Discord IDが必要です"},400);
-
-   let profile=null;
-   try{
-     profile=await env.DB.prepare(
-       "SELECT player_name,discord_id,affiliation,rank FROM trainee_profiles WHERE lower(trim(discord_id))=lower(trim(?))"
-     ).bind(discordId).first();
-   }catch(e){
-     return json({error:"研修生情報の取得に失敗しました",detail:String(e?.message||e)},500);
-   }
-
-   let results=[];
-   let historyWarning="";
-   try{
-     const q=await env.DB.prepare(`
-       SELECT
-         r.id,r.training_id,r.player_name,r.discord_id,r.affiliation,r.note,r.status,
-         t.title,t.training_date,t.start_time,t.end_time,t.location,t.category
-       FROM reservations r
-       JOIN trainings t ON t.id=r.training_id
-       WHERE lower(trim(COALESCE(r.discord_id,'')))=lower(trim(?))
-       ORDER BY t.training_date DESC,t.start_time DESC,r.id DESC
-     `).bind(discordId).all();
-     results=Array.isArray(q?.results)?q.results:[];
-   }catch(e){
-     historyWarning=String(e?.message||e);
-     results=[];
-   }
-
-   if(!profile && !results.length){
-     return json({error:"研修生登録が見つかりません。初めての方は研修生登録をしてください。"},404);
-   }
-   if(!profile){
-     const latest=results[0];
-     profile={
-       player_name:latest?.player_name||"",
-       discord_id:latest?.discord_id||discordId,
-       affiliation:latest?.affiliation||"",
-       rank:""
-     };
-   }
-
+   const profile=await getTraineeSession(request,env);
+   if(!profile)return json({error:"ログインが必要です"},401);
+   const key=String(profile.discord_id||profile.login_name||profile.player_name||"").trim();
+   const q=await env.DB.prepare("SELECT r.id,r.training_id,r.player_name,r.discord_id,r.affiliation,r.note,r.status,r.assigned_instructor,t.title FROM reservations r JOIN trainings t ON t.id=r.training_id WHERE lower(trim(COALESCE(r.discord_id,'')))=lower(trim(?)) ORDER BY r.id DESC").bind(key).all();
+   const results=Array.isArray(q?.results)?q.results:[];
    const stats={pending:0,reserved:0,completed:0,absent:0,cancelled:0};
-   for(const x of results){
-     if(stats[x.status]!==undefined)stats[x.status]++;
-   }
-   return json({profile,stats,history:results,history_warning:historyWarning||undefined});
+   for(const x of results)if(stats[x.status]!==undefined)stats[x.status]++;
+   return json({profile,stats,history:results});
  }
-
  if(path==="/api/reservations" && method==="POST"){
+   const profile=await getTraineeSession(request,env);
+   if(!profile)return json({error:"ログインが必要です"},401);
    const b=await request.json().catch(()=>({}));
-   if(!b.training_id||!b.player_name||!b.discord_id) return json({error:"必須項目が不足しています"},400);
-   await ensureTrainingPrograms(env);
-   const t=await env.DB.prepare("SELECT capacity FROM trainings WHERE id=?").bind(b.training_id).first();
+   const trainingId=Number(b.training_id);
+   if(!trainingId)return json({error:"研修が選択されていません"},400);
+   const key=String(profile.discord_id||profile.login_name||profile.player_name||"").trim();
+   const t=await env.DB.prepare("SELECT id FROM trainings WHERE id=?").bind(trainingId).first();
    if(!t)return json({error:"研修が見つかりません"},404);
-
-   const step=await env.DB.prepare("SELECT id,program_id,step_order FROM training_program_steps WHERE training_id=?").bind(b.training_id).first();
-   if(step){
-     const {results:prev}=await env.DB.prepare("SELECT training_id FROM training_program_steps WHERE program_id=? AND step_order<? ORDER BY step_order")
-       .bind(step.program_id,step.step_order).all();
-     if(prev.length){
-       const {results:done}=await env.DB.prepare(`
-         SELECT DISTINCT training_id FROM reservations
-         WHERE lower(trim(COALESCE(discord_id,'')))=lower(trim(?)) AND status='completed'
-       `).bind(b.discord_id).all();
-       const doneSet=new Set(done.map(x=>Number(x.training_id)));
-       const locked=prev.some(x=>!doneSet.has(Number(x.training_id)));
-       if(locked)return json({error:"前の研修がまだ受講済みになっていません"},403);
-     }
-   }
-   const c=await env.DB.prepare("SELECT COUNT(*) c FROM reservations WHERE training_id=? AND status IN ('pending','reserved')").bind(b.training_id).first();
-   if(Number(c.c)>=Number(t.capacity))return json({error:"定員に達しています"},409);
-   const dup=await env.DB.prepare("SELECT id FROM reservations WHERE training_id=? AND lower(player_name)=lower(?) AND status IN ('pending','reserved')").bind(b.training_id,b.player_name).first();
-   if(dup)return json({error:"同じ名前ですでに申請されています"},409);
-   await env.DB.prepare("INSERT INTO reservations(training_id,player_name,discord_id,affiliation,note,status) VALUES(?,?,?,?,?,'pending')")
-     .bind(b.training_id,b.player_name,b.discord_id,b.affiliation||"",b.note||"").run();
+   const dup=await env.DB.prepare("SELECT id,status FROM reservations WHERE training_id=? AND lower(trim(COALESCE(discord_id,'')))=lower(trim(?)) AND status IN ('pending','reserved','completed') ORDER BY id DESC LIMIT 1").bind(trainingId,key).first();
+   if(dup)return json({error:dup.status==="completed"?"この研修は受講済みです":"すでに申請済みです"},409);
+   await env.DB.prepare("INSERT INTO reservations(training_id,player_name,discord_id,affiliation,note,status) VALUES(?,?,?,?,?,'pending')").bind(trainingId,profile.player_name,key,"",String(b.note||"").trim()).run();
    return json({ok:true},201);
  }
 
- if(path==="/api/admin/login" && method==="POST"){
-   const b=await request.json().catch(()=>({}));
-   if(String(b.password||"")!==adminPass)return json({error:"unauthorized"},401);
-   const expires=String(Date.now()+12*60*60*1000);
-   const sig=await adminSessionSignature(adminPass,expires);
-   return new Response(JSON.stringify({ok:true,expires:Number(expires)}),{
-     status:200,
-     headers:{
-       "content-type":"application/json; charset=utf-8",
-       "cache-control":"no-store",
-       "set-cookie":"lomita_admin="+encodeURIComponent(expires+"."+sig)+"; Max-Age=43200; Path=/; HttpOnly; Secure; SameSite=Strict"
-     }
-   });
- }
- if(path==="/api/admin/logout" && method==="POST"){
-   return new Response(JSON.stringify({ok:true}),{
-     headers:{
-       "content-type":"application/json; charset=utf-8",
-       "cache-control":"no-store",
-       "set-cookie":"lomita_admin=; Max-Age=0; Path=/; HttpOnly; Secure; SameSite=Strict"
-     }
-   });
- }
  if(path==="/api/admin/check") return (await isAdmin())?json({ok:true}):json({error:"unauthorized"},401);
  if(path.startsWith("/api/admin/") && !(await isAdmin())) return json({error:"unauthorized"},401);
 
@@ -1242,6 +1179,7 @@ async function handle(request, env) {
 
  m=path.match(/^\/api\/admin\/trainings\/(\d+)\/reservations$/);
  if(m && method==="GET"){
+   await ensureReservationInstructor(env);
    const {results}=await env.DB.prepare("SELECT * FROM reservations WHERE training_id=? ORDER BY CASE status WHEN 'pending' THEN 0 WHEN 'reserved' THEN 1 ELSE 2 END, created_at").bind(Number(m[1])).all(); return json(results);
  }
 
