@@ -47,6 +47,10 @@ async function ensureTraineeProfiles(env) {
   if (!cols.includes("password_salt")) {
     try { await env.DB.prepare("ALTER TABLE trainee_profiles ADD COLUMN password_salt TEXT DEFAULT ''").run(); } catch (_) {}
   }
+  if (!cols.includes("discord_user_id")) {
+    try { await env.DB.prepare("ALTER TABLE trainee_profiles ADD COLUMN discord_user_id TEXT DEFAULT ''").run(); } catch (_) {}
+  }
+
 }
 
 function randomToken(bytes=16){
@@ -170,6 +174,43 @@ async function ensureTrainingPrograms(env) {
     seq++;
   }
 
+}
+
+
+function cookieValue(request,name){
+  const cookie=request.headers.get("cookie")||"";
+  const safe=name.replace(/[.*+?^${}()|[\]\\]/g,"\\$&");
+  const m=cookie.match(new RegExp("(?:^|;\\s*)"+safe+"=([^;]+)"));
+  return m?decodeURIComponent(m[1]):"";
+}
+function discordConfigured(env){
+  return Boolean(env.DISCORD_CLIENT_ID && env.DISCORD_CLIENT_SECRET);
+}
+function discordRedirectUri(request){
+  return new URL("/auth/discord/callback",request.url).toString();
+}
+async function discordExchangeCode(request,env,codeValue){
+  const body=new URLSearchParams({
+    client_id:env.DISCORD_CLIENT_ID,
+    client_secret:env.DISCORD_CLIENT_SECRET,
+    grant_type:"authorization_code",
+    code:codeValue,
+    redirect_uri:discordRedirectUri(request)
+  });
+  const r=await fetch("https://discord.com/api/oauth2/token",{
+    method:"POST",
+    headers:{"content-type":"application/x-www-form-urlencoded"},
+    body
+  });
+  const d=await r.json().catch(()=>({}));
+  if(!r.ok||!d.access_token)throw new Error(d.error_description||d.error||"Discord token exchange failed");
+  return d.access_token;
+}
+async function discordCurrentUser(accessToken){
+  const r=await fetch("https://discord.com/api/users/@me",{headers:{authorization:"Bearer "+accessToken}});
+  const d=await r.json().catch(()=>({}));
+  if(!r.ok||!d.id)throw new Error(d.message||"Discord user fetch failed");
+  return d;
 }
 
 const html = (title, body, script = "") => new Response(`<!doctype html>
@@ -541,7 +582,8 @@ const PUBLIC_BODY = `
       <div class="field"><label>名前</label><input id="loginName" maxlength="40" autocomplete="username" placeholder="登録した名前"></div>
       <div class="field"><label>パスワード</label><input id="loginPassword" type="password" maxlength="100" autocomplete="current-password" placeholder="パスワード"></div>
       <button id="traineeLoginBtn" class="btn dark" type="button" style="width:100%">ログイン</button>
-      <button id="openRegisterBtn" class="btn primary" type="button" style="width:100%;margin-top:10px">初めての方・研修生登録</button>
+      <a id="discordTraineeLoginBtn" href="/auth/discord?role=trainee" class="btn primary" style="display:none;text-align:center;width:100%;margin-top:10px">Discordでログイン</a>
+      <button id="openRegisterBtn" class="btn" type="button" style="width:100%;margin-top:10px">名前＋パスワードで登録</button>
     </div>
   </div>
 
@@ -592,6 +634,14 @@ function showLoggedIn(){document.getElementById('authView').style.display='none'
 function openRegister(){document.getElementById('registerMsg').innerHTML='';document.getElementById('registerModal').classList.add('open')}
 function closeRegister(){document.getElementById('registerModal').classList.remove('open')}
 
+async function loadDiscordLoginConfig(){
+ try{
+   const r=await fetch('/api/auth/discord/config');
+   const d=await r.json().catch(()=>({}));
+   const b=document.getElementById('discordTraineeLoginBtn');
+   if(b&&d.enabled)b.style.display='block';
+ }catch(_){}
+}
 async function restoreTrainee(){
  const r=await fetch('/api/trainee/session');
  if(!r.ok){showAuth();return}
@@ -648,8 +698,17 @@ async function loadMyPage(){
  myProfile=d.profile;
  document.getElementById('mySummary').innerHTML='<div class="card"><div class="profileHead"><div class="avatar">'+esc((d.profile.player_name||'?').slice(0,1))+'</div><div><div class="title">'+esc(d.profile.player_name)+'</div><div class="sub">ログイン中</div></div></div><div class="grid" style="margin-top:14px"><div class="stat"><span class="sub">承認待ち</span><b>'+d.stats.pending+'</b></div><div class="stat"><span class="sub">予約確定</span><b>'+d.stats.reserved+'</b></div><div class="stat"><span class="sub">受講済み</span><b>'+d.stats.completed+'</b></div><div class="stat"><span class="sub">欠席</span><b>'+d.stats.absent+'</b></div></div></div>';
  const h=document.getElementById('myHistory');
- h.innerHTML=d.history.length?d.history.map(x=>'<div class="card"><div class="between"><div><span class="pill '+esc(x.status)+'">'+esc(statusLabels[x.status]||x.status)+'</span><div class="title" style="margin-top:7px">'+esc(x.title)+'</div></div></div>'+(x.assigned_instructor?'<div class="sub" style="margin-top:7px">担当教官：'+esc(x.assigned_instructor)+'</div>':'')+(x.note?'<div class="sub">備考：'+esc(x.note)+'</div>':'')+'</div>').join(''):'<div class="empty">まだ申請・受講履歴はありません。</div>';
+ h.innerHTML=d.history.length?d.history.map(x=>'<div class="card"><div class="between"><div><span class="pill '+esc(x.status)+'">'+esc(statusLabels[x.status]||x.status)+'</span><div class="title" style="margin-top:7px">'+esc(x.title)+'</div></div>'+(x.status==='pending'||x.status==='reserved'?'<button class="btn danger small traineeCancelBtn" data-id="'+x.id+'">申請キャンセル</button>':'')+'</div>'+(x.assigned_instructor?'<div class="sub" style="margin-top:7px">担当教官：'+esc(x.assigned_instructor)+'</div>':'')+(x.note?'<div class="sub">備考：'+esc(x.note)+'</div>':'')+'</div>').join(''):'<div class="empty">まだ申請・受講履歴はありません。</div>';
+ document.querySelectorAll('.traineeCancelBtn').forEach(b=>b.addEventListener('click',()=>cancelMyReservation(Number(b.dataset.id))));
  await load();
+}
+async function cancelMyReservation(id){
+ if(!confirm('この研修申請をキャンセルしますか？'))return;
+ const r=await fetch('/api/trainee/reservations/'+id+'/cancel',{method:'POST'});
+ const d=await r.json().catch(()=>({}));
+ if(!r.ok){alert(d.error||'キャンセルできませんでした');return}
+ show('申請をキャンセルしました。','success');
+ await loadMyPage();
 }
 async function submitBooking(){
  if(!selectedTraining)return;
@@ -667,7 +726,7 @@ document.getElementById('registerSubmitBtn')?.addEventListener('click',registerT
 document.getElementById('traineeLoginBtn')?.addEventListener('click',traineeLogin);
 document.getElementById('traineeLogoutBtn')?.addEventListener('click',traineeLogout);
 document.getElementById('bookingSubmitBtn')?.addEventListener('click',submitBooking);
-restoreTrainee();`;
+loadDiscordLoginConfig();restoreTrainee();`;
 
 const ADMIN_BODY = `
 <div id="loginView" class="wrap login">
@@ -683,6 +742,7 @@ const ADMIN_BODY = `
    <div id="loginMsg"></div>
    <div class="field"><label>管理パスワード</label><input id="password" type="password" placeholder="管理パスワード" autocomplete="current-password" autofocus></div>
    <button id="adminLoginBtn" type="button" class="btn dark" style="width:100%">管理画面を開く</button>
+   <a id="discordAdminLoginBtn" href="/auth/discord?role=admin" class="btn primary" style="display:none;text-align:center;margin-top:8px">Discordで管理者ログイン</a>
    <a href="/" class="btn" style="display:block;text-align:center;margin-top:8px">トップへ戻る</a>
  </div>
 </div>
@@ -696,6 +756,7 @@ const ADMIN_BODY = `
    <button id="tabPrograms" class="btn" type="button" onclick="showAdminSection('programs')">研修プログラム管理</button>
    <button id="tabInstructors" class="btn" type="button" onclick="showAdminSection('instructors')">教官管理</button>
    <button id="tabTrainees" class="btn" type="button" onclick="showAdminSection('trainees')">研修生管理</button>
+   <button id="tabApplicationHistory" class="btn" type="button" onclick="showAdminSection('applicationHistory')">申請履歴</button>
    <button class="btn" type="button" onclick="openManageMenu()">管理メニュー</button>
  </div>
 
@@ -725,6 +786,12 @@ const ADMIN_BODY = `
      <div id="programMsg"></div>
    </div>
    <div id="programList"><div class="empty">研修プログラムを読み込んでいます...</div></div>
+ </div>
+
+ <div id="applicationHistorySection" style="display:none">
+   <div class="section">申請履歴・APPLICATION LOG</div>
+   <div class="card"><div class="sub">全研修の申請・承認・受講済み・欠席・取消を新しい順に確認できます。</div></div>
+   <div id="applicationHistoryList"><div class="empty">申請履歴を読み込んでいます...</div></div>
  </div>
 
  <div id="traineeSection" style="display:none">
@@ -815,6 +882,14 @@ async function logout(){
  location.href='/';
 }
 function showAdmin(){document.getElementById('loginView').style.display='none';document.getElementById('adminView').style.display='block'}
+async function loadAdminDiscordConfig(){
+ try{
+   const r=await fetch('/api/auth/discord/config');
+   const d=await r.json().catch(()=>({}));
+   const b=document.getElementById('discordAdminLoginBtn');
+   if(b&&d.enabled&&d.admin_enabled)b.style.display='block';
+ }catch(_){}
+}
 async function restoreAdmin(){
  const r=await fetch('/api/admin/check');
  if(r.ok){showAdmin();await loadAdmin()}
@@ -826,17 +901,29 @@ function showAdminSection(section){
  const programs=section==='programs';
  const instructors=section==='instructors';
  const trainees=section==='trainees';
+ const applicationHistory=section==='applicationHistory';
  document.getElementById('trainingSection').style.display=training?'block':'none';
  document.getElementById('programSection').style.display=programs?'block':'none';
  document.getElementById('instructorSection').style.display=instructors?'block':'none';
  document.getElementById('traineeSection').style.display=trainees?'block':'none';
+ document.getElementById('applicationHistorySection').style.display=applicationHistory?'block':'none';
  document.getElementById('tabTraining').className='btn '+(training?'dark':'');
  document.getElementById('tabPrograms').className='btn '+(programs?'dark':'');
  document.getElementById('tabInstructors').className='btn '+(instructors?'dark':'');
  document.getElementById('tabTrainees').className='btn '+(trainees?'dark':'');
+ document.getElementById('tabApplicationHistory').className='btn '+(applicationHistory?'dark':'');
  if(programs)loadPrograms();
  if(instructors)loadInstructors();
  if(trainees)loadTrainees();
+ if(applicationHistory)loadApplicationHistory();
+}
+async function loadApplicationHistory(){
+ const e=document.getElementById('applicationHistoryList');
+ const r=await fetch('/api/admin/application-history',{headers:auth()});
+ const d=await r.json().catch(()=>({}));
+ if(!r.ok){e.innerHTML='<div class="notice error">'+esc(d.error||'申請履歴を取得できませんでした')+'</div>';return}
+ if(!d.length){e.innerHTML='<div class="empty">申請履歴はありません。</div>';return}
+ e.innerHTML=d.map(x=>'<div class="card"><div class="between"><div><span class="pill '+esc(x.status)+'">'+esc(labels[x.status]||x.status)+'</span><div class="title" style="margin-top:7px">'+esc(x.title)+'</div><div class="sub" style="margin-top:4px">'+esc(x.player_name)+' / '+esc(x.discord_id||'')+'</div></div><div class="sub">'+esc(x.created_at||'')+'</div></div>'+(x.assigned_instructor?'<div class="sub" style="margin-top:7px">担当教官：'+esc(x.assigned_instructor)+'</div>':'')+(x.note?'<div class="sub">備考：'+esc(x.note)+'</div>':'')+'</div>').join('');
 }
 let instructorRows=[];
 async function loadInstructors(){
@@ -1196,13 +1283,75 @@ document.getElementById('workerUploadBtn')?.addEventListener('click',uploadAsWor
 document.getElementById('gitFile')?.addEventListener('change',updateFileInfo);
 document.getElementById('adminLoginBtn')?.addEventListener('click',login);
 document.getElementById('password')?.addEventListener('keydown',e=>{if(e.key==='Enter')login()});
-restoreAdmin();
+loadAdminDiscordConfig();restoreAdmin();
 `;
 
 async function handle(request, env) {
  const url=new URL(request.url), path=url.pathname, method=request.method;
  const adminPass=env.ADMIN_PASSWORD || "game1234";
  const isAdmin=async()=>request.headers.get("x-admin-password")===adminPass || await verifyAdminSession(request,adminPass);
+ if(path==="/api/auth/discord/config" && method==="GET"){
+   return json({
+     enabled:discordConfigured(env),
+     admin_enabled:discordConfigured(env)&&Boolean(String(env.ADMIN_DISCORD_IDS||"").trim())
+   });
+ }
+
+ if(path==="/auth/discord" && method==="GET"){
+   if(!discordConfigured(env))return new Response("Discord login is not configured",{status:503});
+   const role=(url.searchParams.get("role")==="admin")?"admin":"trainee";
+   const state=randomToken(18);
+   const authorize=new URL("https://discord.com/oauth2/authorize");
+   authorize.searchParams.set("client_id",env.DISCORD_CLIENT_ID);
+   authorize.searchParams.set("response_type","code");
+   authorize.searchParams.set("redirect_uri",discordRedirectUri(request));
+   authorize.searchParams.set("scope","identify");
+   authorize.searchParams.set("state",state);
+   return new Response(null,{status:302,headers:{
+     location:authorize.toString(),
+     "set-cookie":"discord_oauth_state="+encodeURIComponent(state+"."+role)+"; Max-Age=600; HttpOnly; Secure; SameSite=Lax; Path=/"
+   }});
+ }
+
+ if(path==="/auth/discord/callback" && method==="GET"){
+   if(!discordConfigured(env))return new Response("Discord login is not configured",{status:503});
+   const codeValue=url.searchParams.get("code")||"";
+   const state=url.searchParams.get("state")||"";
+   const saved=cookieValue(request,"discord_oauth_state");
+   const parts=saved.split(".");
+   const savedState=parts[0]||"";
+   const role=parts[1]==="admin"?"admin":"trainee";
+   if(!codeValue||!state||!savedState||state!==savedState)return new Response("Invalid Discord OAuth state",{status:400});
+   try{
+     const accessToken=await discordExchangeCode(request,env,codeValue);
+     const du=await discordCurrentUser(accessToken);
+
+     if(role==="admin"){
+       const allowed=String(env.ADMIN_DISCORD_IDS||"").split(",").map(x=>x.trim()).filter(Boolean);
+       if(!allowed.includes(String(du.id)))return new Response("このDiscordアカウントには管理者権限がありません",{status:403,headers:{"content-type":"text/plain; charset=utf-8"}});
+       const expires=String(Date.now()+12*60*60*1000);
+       const sig=await adminSessionSignature(adminPass,expires);
+       const adminCookie="lomita_admin="+encodeURIComponent(expires+"."+sig)+"; Max-Age=43200; Path=/; HttpOnly; Secure; SameSite=Strict";
+       return new Response(null,{status:302,headers:{location:"/admin","set-cookie":adminCookie}});
+     }
+
+     await ensureTraineeProfiles(env);
+     let p=await env.DB.prepare("SELECT id,player_name,login_name,discord_id,affiliation,rank FROM trainee_profiles WHERE discord_user_id=?").bind(String(du.id)).first();
+     if(!p){
+       const display=String(du.global_name||du.username||("Discord "+du.id)).trim();
+       const loginName="discord:"+String(du.id);
+       const r=await env.DB.prepare("INSERT INTO trainee_profiles(player_name,discord_id,login_name,discord_user_id,affiliation,rank,password_hash,password_salt) VALUES(?,?,?,?,?,?,?,?)")
+         .bind(display,String(du.id),loginName,String(du.id),"","","","").run();
+       p={id:Number(r.meta?.last_row_id||0),player_name:display,login_name:loginName,discord_id:String(du.id),affiliation:"",rank:""};
+     }
+     const traineeCookie=await createTraineeSessionCookie(env,p.id);
+     return new Response(null,{status:302,headers:{location:"/trainee","set-cookie":traineeCookie}});
+   }catch(e){
+     return new Response("Discordログインに失敗しました: "+String(e?.message||e),{status:500,headers:{"content-type":"text/plain; charset=utf-8"}});
+   }
+ }
+
+
 
  if(path==="/" && method==="GET") return html("研修予約システム",LANDING_BODY,"");
  if(path==="/trainee" && method==="GET") return html("研修生ページ",PUBLIC_BODY,PUBLIC_SCRIPT);
@@ -1324,6 +1473,18 @@ async function handle(request, env) {
    });
  }
 
+ let traineeCancelMatch=path.match(/^\/api\/trainee\/reservations\/(\d+)\/cancel$/);
+ if(traineeCancelMatch && method==="POST"){
+   const profile=await getTraineeSession(request,env);
+   if(!profile)return json({error:"ログインが必要です"},401);
+   const key=String(profile.discord_id||profile.login_name||profile.player_name||"").trim();
+   const row=await env.DB.prepare("SELECT id,status FROM reservations WHERE id=? AND lower(trim(COALESCE(discord_id,'')))=lower(trim(?))").bind(Number(traineeCancelMatch[1]),key).first();
+   if(!row)return json({error:"申請が見つかりません"},404);
+   if(!["pending","reserved"].includes(row.status))return json({error:"この申請はキャンセルできません"},409);
+   await env.DB.prepare("UPDATE reservations SET status='cancelled' WHERE id=?").bind(row.id).run();
+   return json({ok:true});
+ }
+
  if(path==="/api/admin/check") return (await isAdmin())?json({ok:true}):json({error:"unauthorized"},401);
  if(path.startsWith("/api/admin/") && !(await isAdmin())) return json({error:"unauthorized"},401);
 
@@ -1395,6 +1556,18 @@ async function handle(request, env) {
    const stats={pending:0,reserved:0,completed:0,absent:0,cancelled:0};
    for(const x of results)if(stats[x.status]!==undefined)stats[x.status]++;
    return json({profile,stats,history:results});
+ }
+
+ if(path==="/api/admin/application-history" && method==="GET"){
+   await ensureReservationInstructor(env);
+   const {results}=await env.DB.prepare(`
+     SELECT r.id,r.training_id,r.player_name,r.discord_id,r.affiliation,r.note,r.status,r.assigned_instructor,r.created_at,t.title
+     FROM reservations r
+     JOIN trainings t ON t.id=r.training_id
+     ORDER BY r.id DESC
+     LIMIT 500
+   `).all();
+   return json(results||[]);
  }
 
  if(path==="/api/admin/instructors" && method==="GET"){
