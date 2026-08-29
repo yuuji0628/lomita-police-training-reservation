@@ -37,6 +37,30 @@ async function ensureTraineeProfiles(env) {
   `).run();
 }
 
+async function ensureTrainingPrograms(env) {
+  await env.DB.prepare(`
+    CREATE TABLE IF NOT EXISTS training_programs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      description TEXT DEFAULT '',
+      active INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `).run();
+
+  await env.DB.prepare(`
+    CREATE TABLE IF NOT EXISTS training_program_steps (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      program_id INTEGER NOT NULL,
+      training_id INTEGER NOT NULL UNIQUE,
+      step_order INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (program_id) REFERENCES training_programs(id) ON DELETE CASCADE,
+      FOREIGN KEY (training_id) REFERENCES trainings(id) ON DELETE CASCADE
+    )
+  `).run();
+}
+
 const html = (title, body, script = "") => new Response(`<!doctype html>
 <html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>${title}</title><style>
@@ -150,13 +174,13 @@ function esc(s){return String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&l
 function fmt(d){return new Date(d+'T00:00:00').toLocaleDateString('ja-JP',{month:'numeric',day:'numeric',weekday:'short'})}
 function noticeIn(id,t,c){document.getElementById(id).innerHTML='<div class="notice '+(c||'')+'">'+esc(t)+'</div>'}
 function profileAffiliation(p){return [p.affiliation,p.rank].filter(Boolean).join(' / ')}
-async function load(){
- const r=await fetch('/api/trainings'); const data=await r.json(); const el=document.getElementById('list');
- if(!data.length){el.innerHTML='<div class="empty">現在、受付中の研修はありません。</div>';return}
+async function load(discordId){
+ const qs=discordId?'?discord_id='+encodeURIComponent(discordId):'';
+ const r=await fetch('/api/trainings'+qs); const data=await r.json(); const el=document.getElementById('list');
+ if(!data.length){el.innerHTML='<div class="empty">現在、あなたが受講できる研修はありません。</div>';return}
  el.innerHTML=data.map(t=>{
-   const unlimited=Number(t.capacity)>=999; const remain=unlimited?999:Math.max(0,Number(t.capacity)-Number(t.active_count));
-   const cat=t.category||'一般研修'; const disabled=remain<=0?'disabled style="opacity:.45"':'';
-   return '<div class="card"><div class="between"><div><span class="pill">'+esc(cat)+'</span><div class="title" style="margin-top:8px">'+esc(t.title)+'</div><div class="meta"><span>📅 '+fmt(t.training_date)+'</span><span>🕒 '+esc(t.start_time)+(t.end_time?'〜'+esc(t.end_time):'')+'</span>'+(t.location?'<span>📍 '+esc(t.location)+'</span>':'')+'</div></div><span class="pill">残り '+remain+'名</span></div>'+(t.description?'<div class="sub" style="margin:8px 0 12px">'+esc(t.description)+'</div>':'')+'<div class="between"><span class="sub">担当：'+esc(t.instructor||'未設定')+'　申請/予約 '+t.active_count+'/'+t.capacity+'</span><button class="btn primary bookingBtn" '+disabled+' data-id="'+t.id+'" data-title="'+encodeURIComponent(t.title)+'">'+(remain?'申請する':'満員')+'</button></div></div>'
+   const program=t.program_name?'<span class="pill">'+esc(t.program_name)+' / STEP '+esc(t.step_order)+'</span>':'';
+   return '<div class="card"><div class="between"><div>'+program+'<div class="title" style="margin-top:8px">'+esc(t.title)+'</div><div class="meta"><span>📅 '+fmt(t.training_date)+'</span><span>🕒 '+esc(t.start_time)+'</span></div></div></div>'+(t.description?'<div class="sub" style="margin:8px 0 12px;white-space:pre-wrap">'+esc(t.description)+'</div>':'')+'<div class="between"><span class="sub">'+(t.program_name?'前の研修を受講済みにすると次の研修が開放されます。':'単発研修')+'</span><button class="btn primary bookingBtn" data-id="'+t.id+'" data-title="'+encodeURIComponent(t.title)+'">申請する</button></div></div>'
  }).join('');
  document.querySelectorAll('.bookingBtn').forEach(btn=>btn.addEventListener('click',()=>openBooking(Number(btn.dataset.id),decodeURIComponent(btn.dataset.title))));
 }
@@ -213,6 +237,7 @@ async function loadMyPage(){
    document.getElementById('mySummary').innerHTML='<div class="card"><div class="profileHead"><div class="avatar">'+esc((d.profile.player_name||'?').slice(0,1))+'</div><div><div class="title">'+esc(d.profile.player_name)+'</div><div class="sub">Discord：'+esc(d.profile.discord_id)+'</div><div class="sub">'+esc(profileAffiliation(d.profile)||'所属・階級 未登録')+'</div></div></div><div class="grid" style="margin-top:14px"><div class="stat"><span class="sub">承認待ち</span><b>'+d.stats.pending+'</b></div><div class="stat"><span class="sub">予約確定</span><b>'+d.stats.reserved+'</b></div><div class="stat"><span class="sub">受講済み</span><b>'+d.stats.completed+'</b></div><div class="stat"><span class="sub">欠席</span><b>'+d.stats.absent+'</b></div></div></div>';
    const h=document.getElementById('myHistory');
    h.innerHTML=d.history.length?d.history.map(x=>'<div class="card"><div class="between"><div><span class="pill '+esc(x.status)+'">'+esc(statusLabels[x.status]||x.status)+'</span><div class="title" style="margin-top:7px">'+esc(x.title)+'</div><div class="meta"><span>📅 '+fmt(x.training_date)+'</span><span>🕒 '+esc(x.start_time||'')+(x.end_time?'〜'+esc(x.end_time):'')+'</span></div></div></div>'+(x.note?'<div class="sub">備考：'+esc(x.note)+'</div>':'')+'</div>').join(''):'<div class="empty">まだ申請・受講履歴はありません。</div>';
+   await load(discord_id);
    document.getElementById('myPage').scrollIntoView({behavior:'smooth',block:'start'});
  }catch(e){noticeIn('myMsg','通信エラーで取得できませんでした','error')}
  finally{btn.disabled=false;btn.textContent='自分の研修情報を見る'}
@@ -228,7 +253,7 @@ async function submitBooking(){
    const r=await fetch('/api/reservations',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});
    let d={};try{d=await r.json()}catch(_){}
    if(!r.ok){noticeIn('bookingMsg',d.error||'申請できませんでした','error');return}
-   closeBooking();document.getElementById('note').value='';show('参加申請を送信しました。承認をお待ちください。','success');load();loadMyPage();
+   closeBooking();document.getElementById('note').value='';show('参加申請を送信しました。承認をお待ちください。','success');load(myProfile?.discord_id||discord_id);loadMyPage();
  }catch(e){noticeIn('bookingMsg','通信エラーで申請できませんでした','error')}
  finally{btn.disabled=false;btn.textContent='参加申請する'}
 }
@@ -261,8 +286,9 @@ const ADMIN_BODY = `
  <div id="msg"></div>
  <div class="grid"><div class="stat"><span class="sub">今後の研修</span><b id="sTrain">0</b></div><div class="stat"><span class="sub">承認待ち</span><b id="sPending">0</b></div><div class="stat"><span class="sub">予約確定</span><b id="sReserved">0</b></div><div class="stat"><span class="sub">受講済み</span><b id="sCompleted">0</b></div></div>
 
- <div class="menuTabs">
+ <div class="menuTabs" style="grid-template-columns:repeat(2,1fr)">
    <button id="tabTraining" class="btn dark" type="button" onclick="showAdminSection('training')">研修管理</button>
+   <button id="tabPrograms" class="btn" type="button" onclick="showAdminSection('programs')">研修プログラム</button>
    <button id="tabTrainees" class="btn" type="button" onclick="showAdminSection('trainees')">研修生管理</button>
    <button class="btn" type="button" onclick="openManageMenu()">管理メニュー</button>
  </div>
@@ -270,6 +296,19 @@ const ADMIN_BODY = `
  <div id="trainingSection">
    <div class="section">研修一覧</div><div id="adminList"></div>
  </div>
+ <div id="programSection" style="display:none">
+   <div class="section">研修プログラム</div>
+   <div class="card">
+     <div class="title" style="font-size:16px">新しいプログラムを作成</div>
+     <div class="sub" style="margin:6px 0 12px">研修を順番に並べると、前の研修が「受講済み」になった研修生だけ次の研修が表示されます。</div>
+     <div class="field"><label>プログラム名 *</label><input id="programName" maxlength="80" placeholder="例：新人警察官 基礎研修プログラム"></div>
+     <div class="field"><label>説明</label><textarea id="programDescription" maxlength="500" placeholder="任意"></textarea></div>
+     <button id="createProgramBtn" class="btn primary" type="button" style="width:100%">プログラムを作成</button>
+     <div id="programMsg"></div>
+   </div>
+   <div id="programList"><div class="empty">プログラムを読み込んでいます...</div></div>
+ </div>
+
  <div id="traineeSection" style="display:none">
    <div class="section">研修生一覧</div>
    <div class="card"><input id="traineeSearch" placeholder="名前・Discord ID・所属で検索"></div>
@@ -362,12 +401,77 @@ function openManageMenu(){document.getElementById('manageModal').classList.add('
 function closeManageMenu(){document.getElementById('manageModal').classList.remove('open')}
 function showAdminSection(section){
  const training=section==='training';
+ const programs=section==='programs';
+ const trainees=section==='trainees';
  document.getElementById('trainingSection').style.display=training?'block':'none';
- document.getElementById('traineeSection').style.display=training?'none':'block';
+ document.getElementById('programSection').style.display=programs?'block':'none';
+ document.getElementById('traineeSection').style.display=trainees?'block':'none';
  document.getElementById('tabTraining').className='btn '+(training?'dark':'');
- document.getElementById('tabTrainees').className='btn '+(!training?'dark':'');
- if(!training)loadTrainees();
+ document.getElementById('tabPrograms').className='btn '+(programs?'dark':'');
+ document.getElementById('tabTrainees').className='btn '+(trainees?'dark':'');
+ if(programs)loadPrograms();
+ if(trainees)loadTrainees();
 }
+let programRows=[];
+async function loadPrograms(){
+ const r=await fetch('/api/admin/programs',{headers:auth()});
+ if(r.status===401)return logout();
+ const d=await r.json().catch(()=>[]);
+ if(!r.ok){document.getElementById('programList').innerHTML='<div class="notice error">'+esc(d.error||'プログラムを取得できませんでした')+'</div>';return}
+ programRows=d;renderPrograms();
+}
+function renderPrograms(){
+ const e=document.getElementById('programList');
+ if(!programRows.length){e.innerHTML='<div class="empty">まだ研修プログラムはありません。</div>';return}
+ e.innerHTML=programRows.map(p=>{
+   const used=new Set(p.steps.map(s=>Number(s.training_id)));
+   const options=trainings.filter(t=>!used.has(Number(t.id))).map(t=>'<option value="'+t.id+'">'+esc(t.title)+'（'+esc(t.training_date)+' '+esc(t.start_time)+'）</option>').join('');
+   const steps=p.steps.length?p.steps.map((s,i)=>'<div class="res"><div class="between"><div><span class="pill">STEP '+(i+1)+'</span><b style="margin-left:8px">'+esc(s.title)+'</b><div class="sub" style="margin-top:4px">'+esc(s.training_date)+' '+esc(s.start_time)+'</div></div><div class="row"><button class="btn small" data-move-step="'+s.id+'" data-dir="-1" '+(i===0?'disabled':'')+'>↑</button><button class="btn small" data-move-step="'+s.id+'" data-dir="1" '+(i===p.steps.length-1?'disabled':'')+'>↓</button><button class="btn small danger" data-remove-step="'+s.id+'">削除</button></div></div></div>').join(''):'<div class="empty" style="padding:18px">研修を追加してください。</div>';
+   return '<div class="card"><div class="between"><div><div class="title">'+esc(p.name)+'</div>'+(p.description?'<div class="sub" style="margin-top:4px">'+esc(p.description)+'</div>':'')+'</div><button class="btn small danger" data-delete-program="'+p.id+'">プログラム削除</button></div><div style="margin-top:12px">'+steps+'</div><div class="formgrid" style="margin-top:12px"><select id="programAdd_'+p.id+'"><option value="">追加する研修を選択</option>'+options+'</select><button class="btn primary" data-add-program-step="'+p.id+'" '+(!options?'disabled':'')+'>この研修を次に追加</button></div></div>';
+ }).join('');
+ document.querySelectorAll('[data-add-program-step]').forEach(b=>b.addEventListener('click',()=>addProgramStep(Number(b.dataset.addProgramStep))));
+ document.querySelectorAll('[data-remove-step]').forEach(b=>b.addEventListener('click',()=>removeProgramStep(Number(b.dataset.removeStep))));
+ document.querySelectorAll('[data-move-step]').forEach(b=>b.addEventListener('click',()=>moveProgramStep(Number(b.dataset.moveStep),Number(b.dataset.dir))));
+ document.querySelectorAll('[data-delete-program]').forEach(b=>b.addEventListener('click',()=>deleteProgram(Number(b.dataset.deleteProgram))));
+}
+async function createProgram(){
+ const name=document.getElementById('programName').value.trim();
+ const description=document.getElementById('programDescription').value.trim();
+ if(!name){noticeInAdmin('programMsg','プログラム名を入力してください','error');return}
+ const btn=document.getElementById('createProgramBtn');btn.disabled=true;btn.textContent='作成中...';
+ try{
+   const r=await fetch('/api/admin/programs',{method:'POST',headers:auth(),body:JSON.stringify({name,description})});
+   const d=await r.json().catch(()=>({}));
+   if(!r.ok){noticeInAdmin('programMsg',d.error||'作成できませんでした','error');return}
+   document.getElementById('programName').value='';document.getElementById('programDescription').value='';
+   noticeInAdmin('programMsg','研修プログラムを作成しました','success');await loadPrograms();
+ }finally{btn.disabled=false;btn.textContent='プログラムを作成'}
+}
+function noticeInAdmin(id,t,c){document.getElementById(id).innerHTML='<div class="notice '+(c||'')+'">'+esc(t)+'</div>'}
+async function addProgramStep(programId){
+ const sel=document.getElementById('programAdd_'+programId);
+ const training_id=Number(sel.value);
+ if(!training_id)return;
+ const r=await fetch('/api/admin/programs/'+programId+'/steps',{method:'POST',headers:auth(),body:JSON.stringify({training_id})});
+ const d=await r.json().catch(()=>({}));
+ if(!r.ok){alert(d.error||'追加できませんでした');return}
+ await loadPrograms();
+}
+async function removeProgramStep(stepId){
+ if(!confirm('この研修をプログラムから外しますか？'))return;
+ const r=await fetch('/api/admin/program-steps/'+stepId,{method:'DELETE',headers:auth()});
+ if(r.ok)await loadPrograms();
+}
+async function moveProgramStep(stepId,dir){
+ const r=await fetch('/api/admin/program-steps/'+stepId+'/move',{method:'POST',headers:auth(),body:JSON.stringify({direction:dir})});
+ if(r.ok)await loadPrograms();
+}
+async function deleteProgram(id){
+ if(!confirm('この研修プログラムを削除しますか？\\n研修自体は削除されません。'))return;
+ const r=await fetch('/api/admin/programs/'+id,{method:'DELETE',headers:auth()});
+ if(r.ok)await loadPrograms();
+}
+
 let traineeRows=[];
 async function loadTrainees(){
  const r=await fetch('/api/admin/trainees',{headers:auth()});
@@ -511,6 +615,7 @@ function updateFileInfo(){
 }
 document.getElementById('trainingSaveBtn')?.addEventListener('click',saveTraining);
 document.getElementById('traineeSearch')?.addEventListener('input',renderTrainees);
+document.getElementById('createProgramBtn')?.addEventListener('click',createProgram);
 async function uploadToGitHub(){
   const files=[...document.getElementById('gitFile').files];
   const out=document.getElementById('gitMsg');
@@ -573,16 +678,54 @@ async function handle(request, env) {
  if(path==="/admin" && method==="GET") return html("研修管理",ADMIN_BODY,ADMIN_SCRIPT);
 
  if(path==="/api/trainings" && method==="GET"){
-   const {results}=await env.DB.prepare(`
-     SELECT t.*,
-       COALESCE(SUM(CASE WHEN r.status IN ('pending','reserved') THEN 1 ELSE 0 END),0) active_count
-     FROM trainings t LEFT JOIN reservations r ON r.training_id=t.id
-     WHERE date(t.training_date) >= date('now')
-     GROUP BY t.id ORDER BY t.training_date,t.start_time
-   `).all();
-   return json(results);
- }
+   await ensureTrainingPrograms(env);
+   const discordId=(url.searchParams.get("discord_id")||"").trim();
 
+   const {results:rows}=await env.DB.prepare(`
+     SELECT t.*,
+       p.id program_id,p.name program_name,ps.step_order,
+       COALESCE(SUM(CASE WHEN r.status IN ('pending','reserved') THEN 1 ELSE 0 END),0) active_count
+     FROM trainings t
+     LEFT JOIN training_program_steps ps ON ps.training_id=t.id
+     LEFT JOIN training_programs p ON p.id=ps.program_id AND p.active=1
+     LEFT JOIN reservations r ON r.training_id=t.id
+     WHERE date(t.training_date)>=date('now')
+     GROUP BY t.id
+     ORDER BY COALESCE(p.id,999999),COALESCE(ps.step_order,1),t.training_date,t.start_time
+   `).all();
+
+   const standalone=rows.filter(x=>!x.program_id);
+   const byProgram=new Map();
+   for(const row of rows){
+     if(!row.program_id)continue;
+     if(!byProgram.has(row.program_id))byProgram.set(row.program_id,[]);
+     byProgram.get(row.program_id).push(row);
+   }
+
+   const visible=[...standalone];
+   let completed=new Set();
+   if(discordId){
+     const {results:done}=await env.DB.prepare(`
+       SELECT DISTINCT training_id FROM reservations
+       WHERE lower(trim(COALESCE(discord_id,'')))=lower(trim(?))
+         AND status='completed'
+     `).bind(discordId).all();
+     completed=new Set(done.map(x=>Number(x.training_id)));
+   }
+
+   for(const steps of byProgram.values()){
+     steps.sort((a,b)=>Number(a.step_order)-Number(b.step_order));
+     if(!discordId){
+       if(steps[0])visible.push(steps[0]);
+       continue;
+     }
+     const next=steps.find(x=>!completed.has(Number(x.id)));
+     if(next)visible.push(next);
+   }
+
+   visible.sort((a,b)=>String(a.training_date).localeCompare(String(b.training_date))||String(a.start_time).localeCompare(String(b.start_time)));
+   return json(visible);
+ }
  if(path==="/api/trainee/register" && method==="POST"){
    await ensureTraineeProfiles(env);
    const b=await request.json().catch(()=>({}));
@@ -653,8 +796,24 @@ async function handle(request, env) {
  if(path==="/api/reservations" && method==="POST"){
    const b=await request.json().catch(()=>({}));
    if(!b.training_id||!b.player_name||!b.discord_id) return json({error:"必須項目が不足しています"},400);
+   await ensureTrainingPrograms(env);
    const t=await env.DB.prepare("SELECT capacity FROM trainings WHERE id=?").bind(b.training_id).first();
    if(!t)return json({error:"研修が見つかりません"},404);
+
+   const step=await env.DB.prepare("SELECT id,program_id,step_order FROM training_program_steps WHERE training_id=?").bind(b.training_id).first();
+   if(step){
+     const {results:prev}=await env.DB.prepare("SELECT training_id FROM training_program_steps WHERE program_id=? AND step_order<? ORDER BY step_order")
+       .bind(step.program_id,step.step_order).all();
+     if(prev.length){
+       const {results:done}=await env.DB.prepare(`
+         SELECT DISTINCT training_id FROM reservations
+         WHERE lower(trim(COALESCE(discord_id,'')))=lower(trim(?)) AND status='completed'
+       `).bind(b.discord_id).all();
+       const doneSet=new Set(done.map(x=>Number(x.training_id)));
+       const locked=prev.some(x=>!doneSet.has(Number(x.training_id)));
+       if(locked)return json({error:"前の研修がまだ受講済みになっていません"},403);
+     }
+   }
    const c=await env.DB.prepare("SELECT COUNT(*) c FROM reservations WHERE training_id=? AND status IN ('pending','reserved')").bind(b.training_id).first();
    if(Number(c.c)>=Number(t.capacity))return json({error:"定員に達しています"},409);
    const dup=await env.DB.prepare("SELECT id FROM reservations WHERE training_id=? AND lower(player_name)=lower(?) AND status IN ('pending','reserved')").bind(b.training_id,b.player_name).first();
@@ -747,6 +906,78 @@ async function handle(request, env) {
    return json({profile,stats,history:results});
  }
 
+ if(path==="/api/admin/programs" && method==="GET"){
+   await ensureTrainingPrograms(env);
+   const {results:programs}=await env.DB.prepare("SELECT * FROM training_programs ORDER BY id DESC").all();
+   const {results:steps}=await env.DB.prepare(`
+     SELECT ps.id,ps.program_id,ps.training_id,ps.step_order,t.title,t.training_date,t.start_time
+     FROM training_program_steps ps JOIN trainings t ON t.id=ps.training_id
+     ORDER BY ps.program_id,ps.step_order,ps.id
+   `).all();
+   return json(programs.map(p=>({...p,steps:steps.filter(s=>Number(s.program_id)===Number(p.id))})));
+ }
+
+ if(path==="/api/admin/programs" && method==="POST"){
+   await ensureTrainingPrograms(env);
+   const b=await request.json().catch(()=>({}));
+   const name=String(b.name||"").trim();
+   if(!name)return json({error:"プログラム名は必須です"},400);
+   const r=await env.DB.prepare("INSERT INTO training_programs(name,description) VALUES(?,?)").bind(name,String(b.description||"").trim()).run();
+   return json({ok:true,id:r.meta?.last_row_id||null},201);
+ }
+
+ let pm=path.match(/^\/api\/admin\/programs\/(\d+)$/);
+ if(pm && method==="DELETE"){
+   await ensureTrainingPrograms(env);
+   await env.DB.prepare("DELETE FROM training_program_steps WHERE program_id=?").bind(Number(pm[1])).run();
+   await env.DB.prepare("DELETE FROM training_programs WHERE id=?").bind(Number(pm[1])).run();
+   return json({ok:true});
+ }
+
+ pm=path.match(/^\/api\/admin\/programs\/(\d+)\/steps$/);
+ if(pm && method==="POST"){
+   await ensureTrainingPrograms(env);
+   const b=await request.json().catch(()=>({}));
+   const trainingId=Number(b.training_id);
+   if(!trainingId)return json({error:"研修を選択してください"},400);
+   const exists=await env.DB.prepare("SELECT id FROM training_program_steps WHERE training_id=?").bind(trainingId).first();
+   if(exists)return json({error:"この研修はすでに別のプログラムに入っています"},409);
+   const max=await env.DB.prepare("SELECT COALESCE(MAX(step_order),0) n FROM training_program_steps WHERE program_id=?").bind(Number(pm[1])).first();
+   await env.DB.prepare("INSERT INTO training_program_steps(program_id,training_id,step_order) VALUES(?,?,?)")
+     .bind(Number(pm[1]),trainingId,Number(max.n||0)+1).run();
+   return json({ok:true},201);
+ }
+
+ let sm=path.match(/^\/api\/admin\/program-steps\/(\d+)$/);
+ if(sm && method==="DELETE"){
+   await ensureTrainingPrograms(env);
+   const step=await env.DB.prepare("SELECT program_id,step_order FROM training_program_steps WHERE id=?").bind(Number(sm[1])).first();
+   if(step){
+     await env.DB.prepare("DELETE FROM training_program_steps WHERE id=?").bind(Number(sm[1])).run();
+     await env.DB.prepare("UPDATE training_program_steps SET step_order=step_order-1 WHERE program_id=? AND step_order>?")
+       .bind(step.program_id,step.step_order).run();
+   }
+   return json({ok:true});
+ }
+
+ sm=path.match(/^\/api\/admin\/program-steps\/(\d+)\/move$/);
+ if(sm && method==="POST"){
+   await ensureTrainingPrograms(env);
+   const b=await request.json().catch(()=>({}));
+   const dir=Number(b.direction)===-1?-1:1;
+   const cur=await env.DB.prepare("SELECT id,program_id,step_order FROM training_program_steps WHERE id=?").bind(Number(sm[1])).first();
+   if(!cur)return json({error:"ステップが見つかりません"},404);
+   const targetOrder=Number(cur.step_order)+dir;
+   const other=await env.DB.prepare("SELECT id FROM training_program_steps WHERE program_id=? AND step_order=?").bind(cur.program_id,targetOrder).first();
+   if(!other)return json({ok:true});
+   await env.DB.batch([
+     env.DB.prepare("UPDATE training_program_steps SET step_order=0 WHERE id=?").bind(cur.id),
+     env.DB.prepare("UPDATE training_program_steps SET step_order=? WHERE id=?").bind(cur.step_order,other.id),
+     env.DB.prepare("UPDATE training_program_steps SET step_order=? WHERE id=?").bind(targetOrder,cur.id)
+   ]);
+   return json({ok:true});
+ }
+
  if(path==="/api/admin/trainings" && method==="GET"){
    const {results}=await env.DB.prepare(`
      SELECT t.*,
@@ -797,6 +1028,10 @@ async function handle(request, env) {
    }
  }
  if(m && method==="DELETE"){
+   await ensureTrainingPrograms(env);
+   const oldStep=await env.DB.prepare("SELECT program_id,step_order FROM training_program_steps WHERE training_id=?").bind(Number(m[1])).first();
+   await env.DB.prepare("DELETE FROM training_program_steps WHERE training_id=?").bind(Number(m[1])).run();
+   if(oldStep)await env.DB.prepare("UPDATE training_program_steps SET step_order=step_order-1 WHERE program_id=? AND step_order>?").bind(oldStep.program_id,oldStep.step_order).run();
    await env.DB.prepare("DELETE FROM reservations WHERE training_id=?").bind(Number(m[1])).run();
    await env.DB.prepare("DELETE FROM trainings WHERE id=?").bind(Number(m[1])).run(); return json({ok:true});
  }
