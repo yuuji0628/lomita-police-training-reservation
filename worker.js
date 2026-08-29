@@ -757,7 +757,6 @@ async function handle(request, env) {
      LEFT JOIN training_program_steps ps ON ps.training_id=t.id
      LEFT JOIN training_programs p ON p.id=ps.program_id AND p.active=1
      LEFT JOIN reservations r ON r.training_id=t.id
-     WHERE date(t.training_date)>=date('now')
      GROUP BY t.id
      ORDER BY COALESCE(p.id,999999),COALESCE(ps.step_order,1),t.training_date,t.start_time
    `).all();
@@ -791,7 +790,13 @@ async function handle(request, env) {
      if(next)visible.push(next);
    }
 
-   visible.sort((a,b)=>String(a.training_date).localeCompare(String(b.training_date))||String(a.start_time).localeCompare(String(b.start_time)));
+   visible.sort((a,b)=>{
+     const ap=Number(a.program_id||999999), bp=Number(b.program_id||999999);
+     if(ap!==bp)return ap-bp;
+     const as=Number(a.step_order||1), bs=Number(b.step_order||1);
+     if(as!==bs)return as-bs;
+     return Number(a.id)-Number(b.id);
+   });
    return json(visible);
  }
  if(path==="/api/trainee/register" && method==="POST"){
