@@ -154,7 +154,7 @@ async function submitBooking(){
 }
 document.getElementById('myPageBtn')?.addEventListener('click',loadMyPage);
 document.getElementById('bookingSubmitBtn')?.addEventListener('click',submitBooking);
-load();``;
+load();`;
 
 const ADMIN_BODY = `
 <div id="loginView" class="wrap login"><div class="card">
