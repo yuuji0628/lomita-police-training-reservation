@@ -7,20 +7,45 @@ const json = (data, status = 200) => new Response(JSON.stringify(data), {
 const b64url = bytes => btoa(String.fromCharCode(...new Uint8Array(bytes)))
   .replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
 
-async function adminSessionSignature(secret, expires) {
+async function adminSessionSignature(secret, expires, role = "owner") {
+  const data = new TextEncoder().encode("lomita-admin:" + expires + ":" + role + ":" + secret);
+  return b64url(await crypto.subtle.digest("SHA-256", data));
+}
+
+async function legacyAdminSessionSignature(secret, expires) {
   const data = new TextEncoder().encode("lomita-admin:" + expires + ":" + secret);
   return b64url(await crypto.subtle.digest("SHA-256", data));
 }
 
-async function verifyAdminSession(request, secret) {
+async function getAdminSessionRole(request, secret) {
   const cookie = request.headers.get("cookie") || "";
   const match = cookie.match(/(?:^|;\s*)lomita_admin=([^;]+)/);
-  if (!match) return false;
-  const [expiresRaw, sig] = decodeURIComponent(match[1]).split(".");
-  const expires = Number(expiresRaw);
-  if (!expires || expires < Date.now() || !sig) return false;
-  const expected = await adminSessionSignature(secret, expiresRaw);
-  return sig === expected;
+  if (!match) return null;
+  const parts = decodeURIComponent(match[1]).split(".");
+
+  // Current format: expires.role.signature
+  if (parts.length === 3) {
+    const [expiresRaw, roleRaw, sig] = parts;
+    const expires = Number(expiresRaw);
+    const role = roleRaw === "owner" ? "owner" : roleRaw === "manager" ? "manager" : "";
+    if (!expires || expires < Date.now() || !role || !sig) return null;
+    const expected = await adminSessionSignature(secret, expiresRaw, role);
+    return sig === expected ? role : null;
+  }
+
+  // Compatibility with sessions issued before role separation.
+  if (parts.length === 2) {
+    const [expiresRaw, sig] = parts;
+    const expires = Number(expiresRaw);
+    if (!expires || expires < Date.now() || !sig) return null;
+    const expected = await legacyAdminSessionSignature(secret, expiresRaw);
+    return sig === expected ? "owner" : null;
+  }
+  return null;
+}
+
+async function verifyAdminSession(request, secret) {
+  return Boolean(await getAdminSessionRole(request, secret));
 }
 
 async function ensureTraineeProfiles(env) {
@@ -496,6 +521,7 @@ textarea{min-height:90px}
   border-radius:14px;
   font-weight:900;
 }
+.ownerOnly{display:none}
 .menuTabs .btn.dark{
   box-shadow:inset 0 -3px 0 #d7ad454d,0 6px 16px #06182d20;
 }
@@ -742,12 +768,11 @@ const ADMIN_BODY = `
    <div id="loginMsg"></div>
    <div class="field"><label>管理パスワード</label><input id="password" type="password" placeholder="管理パスワード" autocomplete="current-password" autofocus></div>
    <button id="adminLoginBtn" type="button" class="btn dark" style="width:100%">管理画面を開く</button>
-   <a id="discordAdminLoginBtn" href="/auth/discord?role=admin" class="btn primary" style="display:none;text-align:center;margin-top:8px">Discordで管理者ログイン</a>
    <a href="/" class="btn" style="display:block;text-align:center;margin-top:8px">トップへ戻る</a>
  </div>
 </div>
 <div id="adminView" style="display:none"><div class="wrap">
- <div class="header"><div class="between"><div><span class="badge">LOMITA POLICE</span><div class="brand">研修管理本部</div><div class="sub">研修・参加申請・受講状況を一括管理</div></div><div class="row"><button class="btn small" onclick="logout()">ログアウト</button><button class="btn small" onclick="openManageMenu()">⚙ 管理メニュー</button><button class="btn primary small" onclick="openTraining()">＋研修追加</button></div></div></div>
+ <div class="header"><div class="between"><div><span class="badge">LOMITA POLICE</span><div class="brand">研修管理本部</div><div class="sub">研修・参加申請・受講状況を一括管理</div><div id="adminRoleLabel" class="sub" style="margin-top:4px"></div></div><div class="row"><button class="btn small" onclick="logout()">ログアウト</button><button class="btn small ownerOnly" onclick="openManageMenu()">⚙ 管理メニュー</button><button class="btn primary small" onclick="openTraining()">＋研修追加</button></div></div></div>
  <div id="msg"></div>
  <div class="grid"><div class="stat"><span class="sub">今後の研修</span><b id="sTrain">0</b></div><div class="stat"><span class="sub">承認待ち</span><b id="sPending">0</b></div><div class="stat"><span class="sub">予約確定</span><b id="sReserved">0</b></div><div class="stat"><span class="sub">受講済み</span><b id="sCompleted">0</b></div></div>
 
@@ -757,7 +782,7 @@ const ADMIN_BODY = `
    <button id="tabInstructors" class="btn" type="button" onclick="showAdminSection('instructors')">教官管理</button>
    <button id="tabTrainees" class="btn" type="button" onclick="showAdminSection('trainees')">研修生管理</button>
    <button id="tabApplicationHistory" class="btn" type="button" onclick="showAdminSection('applicationHistory')">申請履歴</button>
-   <button class="btn" type="button" onclick="openManageMenu()">管理メニュー</button>
+   <button class="btn ownerOnly" type="button" onclick="openManageMenu()">管理メニュー</button>
  </div>
 
  <div id="trainingSection">
@@ -856,7 +881,7 @@ const ADMIN_BODY = `
 </div></div>`;
 
 const ADMIN_SCRIPT = String.raw`
-let adminPassword='', trainings=[], activeTrainingId=null, buildTimer=null;
+let adminPassword='', trainings=[], activeTrainingId=null, buildTimer=null, currentAdminRole='';
 const labels={pending:'承認待ち',reserved:'予約確定',completed:'受講済み',absent:'欠席',cancelled:'キャンセル'};
 function esc(s){return String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 function auth(){const h={'content-type':'application/json'};if(adminPassword)h['x-admin-password']=adminPassword;return h}
@@ -873,7 +898,7 @@ async function login(){
      document.getElementById('loginMsg').innerHTML='<div class="notice error">'+(r.status===401?'パスワードが違います':'ログイン処理に失敗しました（HTTP '+r.status+'）')+'</div>';
      return;
    }
-   adminPassword='';showAdmin();await loadAdmin();
+   adminPassword='';showAdmin();await loadCurrentAdminRole();await loadAdmin();
  }finally{btn.disabled=false;btn.textContent='管理画面を開く'}
 }
 async function logout(){
@@ -882,19 +907,22 @@ async function logout(){
  location.href='/';
 }
 function showAdmin(){document.getElementById('loginView').style.display='none';document.getElementById('adminView').style.display='block'}
-async function loadAdminDiscordConfig(){
+async function loadCurrentAdminRole(){
  try{
-   const r=await fetch('/api/auth/discord/config');
+   const r=await fetch('/api/admin/role',{headers:auth()});
    const d=await r.json().catch(()=>({}));
-   const b=document.getElementById('discordAdminLoginBtn');
-   if(b&&d.enabled&&d.admin_enabled)b.style.display='block';
+   if(!r.ok)return;
+   currentAdminRole=d.role||'manager';
+   document.querySelectorAll('.ownerOnly').forEach(el=>el.style.display=d.can_github?'':'none');
+   const label=document.getElementById('adminRoleLabel');
+   if(label)label.textContent=d.can_github?'システム管理者':'認証済み管理ユーザー';
  }catch(_){}
 }
 async function restoreAdmin(){
  const r=await fetch('/api/admin/check');
- if(r.ok){showAdmin();await loadAdmin()}
+ if(r.ok){showAdmin();await loadCurrentAdminRole();await loadAdmin()}
 }
-function openManageMenu(){document.getElementById('manageModal').classList.add('open');setTimeout(()=>loadBuildStatus(),150)}
+function openManageMenu(){if(currentAdminRole!=='owner'){alert('システム管理者のみ利用できます');return}document.getElementById('manageModal').classList.add('open');setTimeout(()=>loadBuildStatus(),150)}
 function closeManageMenu(){document.getElementById('manageModal').classList.remove('open')}
 function showAdminSection(section){
  const training=section==='training';
@@ -1283,23 +1311,25 @@ document.getElementById('workerUploadBtn')?.addEventListener('click',uploadAsWor
 document.getElementById('gitFile')?.addEventListener('change',updateFileInfo);
 document.getElementById('adminLoginBtn')?.addEventListener('click',login);
 document.getElementById('password')?.addEventListener('keydown',e=>{if(e.key==='Enter')login()});
-loadAdminDiscordConfig();restoreAdmin();
+restoreAdmin();
 `;
 
 async function handle(request, env) {
  const url=new URL(request.url), path=url.pathname, method=request.method;
  const adminPass=env.ADMIN_PASSWORD || "game1234";
- const isAdmin=async()=>request.headers.get("x-admin-password")===adminPass || await verifyAdminSession(request,adminPass);
+ const getAdminRole=async()=>{
+   if(request.headers.get("x-admin-password")===adminPass)return "owner";
+   return await getAdminSessionRole(request,adminPass);
+ };
+ const isAdmin=async()=>Boolean(await getAdminRole());
+ const isOwnerAdmin=async()=>await getAdminRole()==="owner";
  if(path==="/api/auth/discord/config" && method==="GET"){
-   return json({
-     enabled:discordConfigured(env),
-     admin_enabled:discordConfigured(env)&&Boolean(String(env.ADMIN_DISCORD_IDS||"").trim())
-   });
+   return json({enabled:discordConfigured(env)});
  }
 
  if(path==="/auth/discord" && method==="GET"){
    if(!discordConfigured(env))return new Response("Discord login is not configured",{status:503});
-   const role=(url.searchParams.get("role")==="admin")?"admin":"trainee";
+   const role="trainee";
    const state=randomToken(18);
    const authorize=new URL("https://discord.com/oauth2/authorize");
    authorize.searchParams.set("client_id",env.DISCORD_CLIENT_ID);
@@ -1320,20 +1350,11 @@ async function handle(request, env) {
    const saved=cookieValue(request,"discord_oauth_state");
    const parts=saved.split(".");
    const savedState=parts[0]||"";
-   const role=parts[1]==="admin"?"admin":"trainee";
+   const role="trainee";
    if(!codeValue||!state||!savedState||state!==savedState)return new Response("Invalid Discord OAuth state",{status:400});
    try{
      const accessToken=await discordExchangeCode(request,env,codeValue);
      const du=await discordCurrentUser(accessToken);
-
-     if(role==="admin"){
-       const allowed=String(env.ADMIN_DISCORD_IDS||"").split(",").map(x=>x.trim()).filter(Boolean);
-       if(!allowed.includes(String(du.id)))return new Response("このDiscordアカウントには管理者権限がありません",{status:403,headers:{"content-type":"text/plain; charset=utf-8"}});
-       const expires=String(Date.now()+12*60*60*1000);
-       const sig=await adminSessionSignature(adminPass,expires);
-       const adminCookie="lomita_admin="+encodeURIComponent(expires+"."+sig)+"; Max-Age=43200; Path=/; HttpOnly; Secure; SameSite=Strict";
-       return new Response(null,{status:302,headers:{location:"/admin","set-cookie":adminCookie}});
-     }
 
      await ensureTraineeProfiles(env);
      let p=await env.DB.prepare("SELECT id,player_name,login_name,discord_id,affiliation,rank FROM trainee_profiles WHERE discord_user_id=?").bind(String(du.id)).first();
@@ -1452,13 +1473,14 @@ async function handle(request, env) {
    const b=await request.json().catch(()=>({}));
    if(String(b.password||"")!==adminPass)return json({error:"unauthorized"},401);
    const expires=String(Date.now()+12*60*60*1000);
-   const sig=await adminSessionSignature(adminPass,expires);
-   return new Response(JSON.stringify({ok:true,expires:Number(expires)}),{
+   const role="owner";
+   const sig=await adminSessionSignature(adminPass,expires,role);
+   return new Response(JSON.stringify({ok:true,expires:Number(expires),role}),{
      status:200,
      headers:{
        "content-type":"application/json; charset=utf-8",
        "cache-control":"no-store",
-       "set-cookie":"lomita_admin="+encodeURIComponent(expires+"."+sig)+"; Max-Age=43200; Path=/; HttpOnly; Secure; SameSite=Strict"
+       "set-cookie":"lomita_admin="+encodeURIComponent(expires+"."+role+"."+sig)+"; Max-Age=43200; Path=/; HttpOnly; Secure; SameSite=Strict"
      }
    });
  }
@@ -1483,6 +1505,12 @@ async function handle(request, env) {
    if(!["pending","reserved"].includes(row.status))return json({error:"この申請はキャンセルできません"},409);
    await env.DB.prepare("UPDATE reservations SET status='cancelled' WHERE id=?").bind(row.id).run();
    return json({ok:true});
+ }
+
+ if(path==="/api/admin/role" && method==="GET"){
+   const role=await getAdminRole();
+   if(!role)return json({error:"unauthorized"},401);
+   return json({ok:true,role,can_github:role==="owner"});
  }
 
  if(path==="/api/admin/check") return (await isAdmin())?json({ok:true}):json({error:"unauthorized"},401);
@@ -1837,6 +1865,7 @@ async function handle(request, env) {
  }
 
  if(path==="/api/admin/github/upload-worker" && method==="POST"){
+   if(!(await isOwnerAdmin()))return json({error:"システム管理者のみ利用できます"},403);
    if(!env.GITHUB_TOKEN) return json({error:"Cloudflareに GITHUB_TOKEN が設定されていません"},500);
    const form=await request.formData();
    const file=form.get("file");
@@ -1881,6 +1910,7 @@ async function handle(request, env) {
  }
 
  if(path==="/api/admin/github/upload" && method==="POST"){
+   if(!(await isOwnerAdmin()))return json({error:"システム管理者のみ利用できます"},403);
    if(!env.GITHUB_TOKEN) return json({error:"Cloudflareに GITHUB_TOKEN が設定されていません"},500);
    const form=await request.formData();
    const files=form.getAll("files").filter(f=>f && typeof f.arrayBuffer==="function");
