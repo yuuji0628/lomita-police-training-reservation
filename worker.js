@@ -37,6 +37,14 @@ async function ensureTraineeProfiles(env) {
   `).run();
 }
 
+async function ensureReservationInstructor(env) {
+  const info = await env.DB.prepare("PRAGMA table_info(reservations)").all();
+  const cols = (info.results || []).map(x => String(x.name || "").toLowerCase());
+  if (!cols.includes("assigned_instructor")) {
+    await env.DB.prepare("ALTER TABLE reservations ADD COLUMN assigned_instructor TEXT DEFAULT ''").run();
+  }
+}
+
 async function ensureInstructors(env) {
   await env.DB.prepare(`
     CREATE TABLE IF NOT EXISTS instructors (
@@ -69,6 +77,21 @@ async function ensureTrainingPrograms(env) {
       FOREIGN KEY (training_id) REFERENCES trainings(id) ON DELETE CASCADE
     )
   `).run();
+  const pinfo = await env.DB.prepare("PRAGMA table_info(training_programs)").all();
+  const pcols = (pinfo.results || []).map(x => String(x.name || "").toLowerCase());
+  if (!pcols.includes("training_id")) {
+    await env.DB.prepare("ALTER TABLE training_programs ADD COLUMN training_id INTEGER").run();
+  }
+  const {results:orphans} = await env.DB.prepare("SELECT id,name,description FROM training_programs WHERE training_id IS NULL").all();
+  for (const p of orphans || []) {
+    const tr = await env.DB.prepare(`
+      INSERT INTO trainings(category,title,description,training_date,start_time,end_time,capacity,instructor,location)
+      VALUES(?,?,?,?,?,?,?,?,?)
+    `).bind("研修プログラム",p.name,p.description||"","2099-12-31","00:00","",999,"","").run();
+    const tid = Number(tr.meta?.last_row_id||0);
+    if (tid) await env.DB.prepare("UPDATE training_programs SET training_id=? WHERE id=?").bind(tid,p.id).run();
+  }
+
 }
 
 const html = (title, body, script = "") => new Response(`<!doctype html>
@@ -185,13 +208,12 @@ function fmt(d){return new Date(d+'T00:00:00').toLocaleDateString('ja-JP',{month
 function noticeIn(id,t,c){document.getElementById(id).innerHTML='<div class="notice '+(c||'')+'">'+esc(t)+'</div>'}
 function profileAffiliation(p){return [p.affiliation,p.rank].filter(Boolean).join(' / ')}
 async function load(discordId){
- const qs=discordId?'?discord_id='+encodeURIComponent(discordId):'';
- const r=await fetch('/api/trainings'+qs); const data=await r.json(); const el=document.getElementById('list');
- if(!data.length){el.innerHTML='<div class="empty">現在、あなたが受講できる研修はありません。</div>';return}
- el.innerHTML=data.map(t=>{
-   const program=t.program_name?'<span class="pill">'+esc(t.program_name)+' / STEP '+esc(t.step_order)+'</span>':'';
-   return '<div class="card"><div>'+program+'<div class="title" style="margin-top:8px">'+esc(t.title)+'</div>'+(t.instructor?'<div class="sub" style="margin-top:6px">担当：'+esc(t.instructor)+'</div>':'')+'</div>'+(t.description?'<div class="sub" style="margin:10px 0 12px;white-space:pre-wrap">'+esc(t.description)+'</div>':'')+'<div class="between"><span class="sub">'+(t.program_name?'前の研修を受講済みにすると次の研修が開放されます。':'単発研修')+'</span><button class="btn primary bookingBtn" data-id="'+t.id+'" data-title="'+encodeURIComponent(t.title)+'">申請する</button></div></div>'
- }).join('');
+ const r=await fetch('/api/trainings');
+ const data=await r.json().catch(()=>[]);
+ const el=document.getElementById('list');
+ if(!r.ok){el.innerHTML='<div class="notice error">'+esc(data.error||'研修を取得できませんでした')+'</div>';return}
+ if(!data.length){el.innerHTML='<div class="empty">現在、受付中の研修はありません。</div>';return}
+ el.innerHTML=data.map(t=>'<div class="card"><div class="title">'+esc(t.title)+'</div>'+(t.description?'<div class="sub" style="margin:10px 0 12px;white-space:pre-wrap">'+esc(t.description)+'</div>':'')+'<div class="between"><span class="sub">申請後、管理者が担当教官を選んで承認します。</span><button class="btn primary bookingBtn" data-id="'+t.id+'" data-title="'+encodeURIComponent(t.title)+'">申請する</button></div></div>').join('');
  document.querySelectorAll('.bookingBtn').forEach(btn=>btn.addEventListener('click',()=>openBooking(Number(btn.dataset.id),decodeURIComponent(btn.dataset.title))));
 }
 function openRegister(){document.getElementById('registerMsg').innerHTML='';document.getElementById('registerModal').classList.add('open')}
@@ -298,7 +320,7 @@ const ADMIN_BODY = `
 
  <div class="menuTabs" style="grid-template-columns:repeat(2,1fr)">
    <button id="tabTraining" class="btn dark" type="button" onclick="showAdminSection('training')">研修管理</button>
-   <button id="tabPrograms" class="btn" type="button" onclick="showAdminSection('programs')">研修プログラム</button>
+   <button id="tabPrograms" class="btn" type="button" onclick="showAdminSection('programs')">研修プログラム管理</button>
    <button id="tabInstructors" class="btn" type="button" onclick="showAdminSection('instructors')">教官管理</button>
    <button id="tabTrainees" class="btn" type="button" onclick="showAdminSection('trainees')">研修生管理</button>
    <button class="btn" type="button" onclick="openManageMenu()">管理メニュー</button>
@@ -320,16 +342,16 @@ const ADMIN_BODY = `
  </div>
 
   <div id="programSection" style="display:none">
-   <div class="section">研修プログラム</div>
+   <div class="section">研修プログラム管理</div>
    <div class="card">
-     <div class="title" style="font-size:16px">新しいプログラムを作成</div>
-     <div class="sub" style="margin:6px 0 12px">プログラムの中で研修を直接作成できます。前の研修が「受講済み」になると次のSTEPが自動で表示されます。</div>
-     <div class="field"><label>プログラム名 *</label><input id="programName" maxlength="80" placeholder="例：新人警察官 基礎研修プログラム"></div>
-     <div class="field"><label>説明</label><textarea id="programDescription" maxlength="500" placeholder="任意"></textarea></div>
-     <button id="createProgramBtn" class="btn primary" type="button" style="width:100%">プログラムを作成</button>
+     <div class="title" style="font-size:16px">研修プログラムを作成</div>
+     <div class="sub" style="margin:6px 0 12px">このプログラム自体が、そのまま研修生の申請対象になります。</div>
+     <div class="field"><label>研修名 *</label><input id="programName" maxlength="80" placeholder="例：学科1"></div>
+     <div class="field"><label>フリー記入欄</label><textarea id="programDescription" maxlength="1000" placeholder="研修内容・注意事項など"></textarea></div>
+     <button id="createProgramBtn" class="btn primary" type="button" style="width:100%">研修プログラムを作成</button>
      <div id="programMsg"></div>
    </div>
-   <div id="programList"><div class="empty">プログラムを読み込んでいます...</div></div>
+   <div id="programList"><div class="empty">研修プログラムを読み込んでいます...</div></div>
  </div>
 
  <div id="traineeSection" style="display:none">
@@ -483,82 +505,40 @@ async function deleteInstructor(id){
 
 let programRows=[];
 async function loadPrograms(){
- if(!instructorRows.length){
-   const ir=await fetch('/api/admin/instructors',{headers:auth()});
-   if(ir.ok)instructorRows=await ir.json().catch(()=>[]);
- }
  const r=await fetch('/api/admin/programs',{headers:auth()});
  if(r.status===401)return logout();
  const d=await r.json().catch(()=>[]);
- if(!r.ok){document.getElementById('programList').innerHTML='<div class="notice error">'+esc(d.error||'プログラムを取得できませんでした')+'</div>';return}
+ if(!r.ok){document.getElementById('programList').innerHTML='<div class="notice error">'+esc(d.error||'研修プログラムを取得できませんでした')+'</div>';return}
  programRows=d;renderPrograms();
 }
 function renderPrograms(){
  const e=document.getElementById('programList');
  if(!programRows.length){e.innerHTML='<div class="empty">まだ研修プログラムはありません。</div>';return}
- e.innerHTML=programRows.map(p=>{
-   const steps=p.steps.length?p.steps.map((s,i)=>'<div class="res"><div class="between"><div><span class="pill">STEP '+(i+1)+'</span><b style="margin-left:8px">'+esc(s.title)+'</b>'+(s.instructor?'<div class="sub" style="margin-top:4px">担当：'+esc(s.instructor)+'</div>':'')+(s.description?'<div class="sub" style="margin-top:4px;white-space:pre-wrap">'+esc(s.description)+'</div>':'')+'</div><div class="row"><button class="btn small" data-move-step="'+s.id+'" data-dir="-1" '+(i===0?'disabled':'')+'>↑</button><button class="btn small" data-move-step="'+s.id+'" data-dir="1" '+(i===p.steps.length-1?'disabled':'')+'>↓</button><button class="btn small danger" data-remove-step="'+s.id+'">削除</button></div></div></div>').join(''):'<div class="empty" style="padding:18px">まだ研修がありません。下からSTEP1を作成してください。</div>';
-   const instructorOptions='<option value="">担当者なし</option>'+instructorRows.map(x=>'<option value="'+esc(x.name)+'">'+esc(x.name)+'</option>').join('');
-   return '<div class="card"><div class="between"><div><div class="title">'+esc(p.name)+'</div>'+(p.description?'<div class="sub" style="margin-top:4px">'+esc(p.description)+'</div>':'')+'</div><button class="btn small danger" data-delete-program="'+p.id+'">プログラム削除</button></div><div style="margin-top:12px">'+steps+'</div><div class="card" style="background:#f8fafc;margin-top:14px"><div class="title" style="font-size:15px">次の研修を作成</div><div class="sub" style="margin:4px 0 10px">作成すると自動で STEP '+(p.steps.length+1)+' に追加されます。</div><div class="field"><label>研修名 *</label><input id="programTrainingTitle_'+p.id+'" maxlength="80" placeholder="例：無線基礎"></div><div class="field"><label>フリー記入欄</label><textarea id="programTrainingDescription_'+p.id+'" maxlength="1000" placeholder="内容・注意事項など"></textarea></div><div class="field"><label>担当教官</label><select id="programTrainingInstructor_'+p.id+'">'+instructorOptions+'</select></div><button class="btn primary" style="width:100%" data-create-program-training="'+p.id+'">STEP '+(p.steps.length+1)+' として作成</button><div id="programTrainingMsg_'+p.id+'"></div></div></div>';
- }).join('');
- document.querySelectorAll('[data-create-program-training]').forEach(b=>b.addEventListener('click',()=>createProgramTraining(Number(b.dataset.createProgramTraining),b)));
- document.querySelectorAll('[data-remove-step]').forEach(b=>b.addEventListener('click',()=>removeProgramStep(Number(b.dataset.removeStep))));
- document.querySelectorAll('[data-move-step]').forEach(b=>b.addEventListener('click',()=>moveProgramStep(Number(b.dataset.moveStep),Number(b.dataset.dir))));
+ e.innerHTML=programRows.map(p=>'<div class="card"><div class="between"><div><div class="title">'+esc(p.name)+'</div>'+(p.description?'<div class="sub" style="margin-top:6px;white-space:pre-wrap">'+esc(p.description)+'</div>':'')+'<div class="sub" style="margin-top:7px">研修生はこのプログラムへ直接申請します。</div></div><button class="btn small danger" data-delete-program="'+p.id+'">削除</button></div></div>').join('');
  document.querySelectorAll('[data-delete-program]').forEach(b=>b.addEventListener('click',()=>deleteProgram(Number(b.dataset.deleteProgram))));
 }
 async function createProgram(){
  const name=document.getElementById('programName').value.trim();
  const description=document.getElementById('programDescription').value.trim();
- if(!name){noticeInAdmin('programMsg','プログラム名を入力してください','error');return}
+ if(!name){noticeInAdmin('programMsg','研修名を入力してください','error');return}
  const btn=document.getElementById('createProgramBtn');btn.disabled=true;btn.textContent='作成中...';
  try{
    const r=await fetch('/api/admin/programs',{method:'POST',headers:auth(),body:JSON.stringify({name,description})});
    const d=await r.json().catch(()=>({}));
    if(!r.ok){noticeInAdmin('programMsg',d.error||'作成できませんでした','error');return}
-   document.getElementById('programName').value='';document.getElementById('programDescription').value='';
-   noticeInAdmin('programMsg','研修プログラムを作成しました','success');await loadPrograms();
- }finally{btn.disabled=false;btn.textContent='プログラムを作成'}
+   document.getElementById('programName').value='';
+   document.getElementById('programDescription').value='';
+   noticeInAdmin('programMsg','研修プログラムを作成しました','success');
+   await loadPrograms();
+ }finally{btn.disabled=false;btn.textContent='研修プログラムを作成'}
 }
 function noticeInAdmin(id,t,c){document.getElementById(id).innerHTML='<div class="notice '+(c||'')+'">'+esc(t)+'</div>'}
-async function createProgramTraining(programId,btn){
- const title=document.getElementById('programTrainingTitle_'+programId).value.trim();
- const description=document.getElementById('programTrainingDescription_'+programId).value.trim();
- const instructor=document.getElementById('programTrainingInstructor_'+programId).value.trim();
- const msgEl=document.getElementById('programTrainingMsg_'+programId);
- if(!title){msgEl.innerHTML='<div class="notice error">研修名を入力してください。</div>';return}
- const old=btn.textContent;btn.disabled=true;btn.textContent='作成中...';
- msgEl.innerHTML='<div class="notice">研修を作成しています...</div>';
- try{
-   const r=await fetch('/api/admin/programs/'+programId+'/create-training',{
-     method:'POST',
-     headers:auth(),
-     body:JSON.stringify({title,description,instructor})
-   });
-   const d=await r.json().catch(()=>({}));
-   if(!r.ok){msgEl.innerHTML='<div class="notice error">'+esc(d.error||'研修を作成できませんでした')+'</div>';return}
-   msg('研修を作成し、プログラムへ追加しました','success');
-   await loadAdmin();
-   await loadInstructors();
-   await loadPrograms();
- }catch(e){
-   msgEl.innerHTML='<div class="notice error">通信エラーで作成できませんでした。</div>';
- }finally{
-   btn.disabled=false;btn.textContent=old;
- }
-}
-async function removeProgramStep(stepId){
- if(!confirm('この研修をプログラムから外しますか？'))return;
- const r=await fetch('/api/admin/program-steps/'+stepId,{method:'DELETE',headers:auth()});
- if(r.ok)await loadPrograms();
-}
-async function moveProgramStep(stepId,dir){
- const r=await fetch('/api/admin/program-steps/'+stepId+'/move',{method:'POST',headers:auth(),body:JSON.stringify({direction:dir})});
- if(r.ok)await loadPrograms();
-}
 async function deleteProgram(id){
- if(!confirm('この研修プログラムを削除しますか？\\n研修自体は削除されません。'))return;
+ if(!confirm('この研修プログラムを削除しますか？'))return;
  const r=await fetch('/api/admin/programs/'+id,{method:'DELETE',headers:auth()});
- if(r.ok)await loadPrograms();
+ const d=await r.json().catch(()=>({}));
+ if(!r.ok){alert(d.error||'削除できませんでした');return}
+ await loadPrograms();
 }
 
 let traineeRows=[];
@@ -587,6 +567,7 @@ async function openTraineeDetail(discord){
 function closeTraineeDetail(){document.getElementById('traineeModal').classList.remove('open')}
 function fmt(d){return new Date(d+'T00:00:00').toLocaleDateString('ja-JP',{month:'numeric',day:'numeric',weekday:'short'})}
 async function loadAdmin(){
+ if(!instructorRows.length){const ir=await fetch('/api/admin/instructors',{headers:auth()});if(ir.ok)instructorRows=await ir.json().catch(()=>[]);}
  const r=await fetch('/api/admin/trainings',{headers:auth()}); if(r.status===401)return logout(); trainings=await r.json(); render();
  const s=await fetch('/api/admin/stats',{headers:auth()}); const st=await s.json();
  document.getElementById('sTrain').textContent=st.trainings;document.getElementById('sPending').textContent=st.pending;document.getElementById('sReserved').textContent=st.reserved;document.getElementById('sCompleted').textContent=st.completed;
@@ -664,12 +645,25 @@ async function deleteTraining(id){if(!confirm('この研修と関連予約を削
 async function openReservations(id,title){activeTrainingId=id;document.getElementById('resTitle').textContent=title+' / 参加者管理';document.getElementById('resModal').classList.add('open');await loadReservations()}
 function closeReservations(){document.getElementById('resModal').classList.remove('open')}
 async function loadReservations(){const r=await fetch('/api/admin/trainings/'+activeTrainingId+'/reservations',{headers:auth()});const data=await r.json();const e=document.getElementById('resList');if(!data.length){e.innerHTML='<div class="empty">申請者はいません。</div>';return}
- e.innerHTML=data.map(x=>'<div class="res"><div class="between"><div><b>'+esc(x.player_name)+'</b> <span class="pill '+esc(x.status)+'">'+esc(labels[x.status]||x.status)+'</span><div class="sub">Discord：'+esc(x.discord_id||'未登録')+'</div><div class="sub">'+esc(x.affiliation||'所属未入力')+'</div></div></div>'+(x.note?'<div class="sub" style="margin-top:6px">備考：'+esc(x.note)+'</div>':'')+'<div class="statusButtons">'+(x.status==='pending'?'<button class="btn primary small statusBtn" data-id="'+x.id+'" data-status="reserved">承認</button>':'')+'<button class="btn small statusBtn" data-id="'+x.id+'" data-status="completed">受講済み</button><button class="btn small statusBtn" data-id="'+x.id+'" data-status="absent">欠席</button><button class="btn danger small statusBtn" data-id="'+x.id+'" data-status="cancelled">取消</button></div></div>').join('');
+ e.innerHTML=data.map(x=>'<div class="res"><div class="between"><div><b>'+esc(x.player_name)+'</b> <span class="pill '+esc(x.status)+'">'+esc(labels[x.status]||x.status)+'</span><div class="sub">Discord：'+esc(x.discord_id||'未登録')+'</div><div class="sub">'+esc(x.affiliation||'所属未入力')+'</div></div></div>'+(x.note?'<div class="sub" style="margin-top:6px">備考：'+esc(x.note)+'</div>':'')+'<div class="field" style="margin:10px 0"><label>担当教官</label><select id="reservationInstructor_'+x.id+'"><option value="">担当教官を選択</option>'+instructorRows.map(i=>'<option value="'+esc(i.name)+'" '+(x.assigned_instructor===i.name?'selected':'')+'>'+esc(i.name)+'</option>').join('')+'</select></div><div class="statusButtons">'+(x.status==='pending'?'<button class="btn primary small statusBtn" data-id="'+x.id+'" data-status="reserved">担当を決めて承認</button>':'')+'<button class="btn small statusBtn" data-id="'+x.id+'" data-status="completed">受講済み</button><button class="btn small statusBtn" data-id="'+x.id+'" data-status="absent">欠席</button><button class="btn danger small statusBtn" data-id="'+x.id+'" data-status="cancelled">取消</button></div></div>').join('');
  document.querySelectorAll('.statusBtn').forEach(btn=>btn.addEventListener('click',()=>setStatus(Number(btn.dataset.id),btn.dataset.status)));
 }
-async function setStatus(id,status){const r=await fetch('/api/admin/reservations/'+id,{method:'PATCH',headers:auth(),body:JSON.stringify({status})});if(r.ok){await loadReservations();loadAdmin()}}
-
-let buildTimer=null;
+async function setStatus(id,status){
+ let assigned_instructor='';
+ if(status==='reserved'){
+   const sel=document.getElementById('reservationInstructor_'+id);
+   assigned_instructor=sel?sel.value.trim():'';
+   if(!assigned_instructor){alert('担当教官を選択してから承認してください。');return}
+ }
+ const r=await fetch('/api/admin/reservations/'+id+'/status',{
+   method:'POST',
+   headers:auth(),
+   body:JSON.stringify({status,assigned_instructor})
+ });
+ const d=await r.json().catch(()=>({}));
+ if(!r.ok){alert(d.error||'更新できませんでした');return}
+ await loadAdmin();
+}
 async function uploadAsWorker(){
  const input=document.getElementById('workerFile');
  const btn=document.getElementById('workerUploadBtn');
@@ -767,57 +761,13 @@ async function handle(request, env) {
 
  if(path==="/api/trainings" && method==="GET"){
    await ensureTrainingPrograms(env);
-   const discordId=(url.searchParams.get("discord_id")||"").trim();
-
-   const {results:rows}=await env.DB.prepare(`
-     SELECT t.*,
-       p.id program_id,p.name program_name,ps.step_order,
-       COALESCE(SUM(CASE WHEN r.status IN ('pending','reserved') THEN 1 ELSE 0 END),0) active_count
-     FROM trainings t
-     LEFT JOIN training_program_steps ps ON ps.training_id=t.id
-     LEFT JOIN training_programs p ON p.id=ps.program_id AND p.active=1
-     LEFT JOIN reservations r ON r.training_id=t.id
-     GROUP BY t.id
-     ORDER BY COALESCE(p.id,999999),COALESCE(ps.step_order,1),t.training_date,t.start_time
+   const {results}=await env.DB.prepare(`
+     SELECT training_id AS id,name AS title,description
+     FROM training_programs
+     WHERE active=1 AND training_id IS NOT NULL
+     ORDER BY id
    `).all();
-
-   const standalone=rows.filter(x=>!x.program_id);
-   const byProgram=new Map();
-   for(const row of rows){
-     if(!row.program_id)continue;
-     if(!byProgram.has(row.program_id))byProgram.set(row.program_id,[]);
-     byProgram.get(row.program_id).push(row);
-   }
-
-   const visible=[...standalone];
-   let completed=new Set();
-   if(discordId){
-     const {results:done}=await env.DB.prepare(`
-       SELECT DISTINCT training_id FROM reservations
-       WHERE lower(trim(COALESCE(discord_id,'')))=lower(trim(?))
-         AND status='completed'
-     `).bind(discordId).all();
-     completed=new Set(done.map(x=>Number(x.training_id)));
-   }
-
-   for(const steps of byProgram.values()){
-     steps.sort((a,b)=>Number(a.step_order)-Number(b.step_order));
-     if(!discordId){
-       if(steps[0])visible.push(steps[0]);
-       continue;
-     }
-     const next=steps.find(x=>!completed.has(Number(x.id)));
-     if(next)visible.push(next);
-   }
-
-   visible.sort((a,b)=>{
-     const ap=Number(a.program_id||999999), bp=Number(b.program_id||999999);
-     if(ap!==bp)return ap-bp;
-     const as=Number(a.step_order||1), bs=Number(b.step_order||1);
-     if(as!==bs)return as-bs;
-     return Number(a.id)-Number(b.id);
-   });
-   return json(visible);
+   return json(results);
  }
  if(path==="/api/trainee/register" && method==="POST"){
    await ensureTraineeProfiles(env);
@@ -835,6 +785,7 @@ async function handle(request, env) {
  }
 
  if(path==="/api/trainee/profile" && method==="GET"){
+   await ensureReservationInstructor(env);
    await ensureTraineeProfiles(env);
    const discordId=(url.searchParams.get("discord_id")||"").trim();
    if(!discordId)return json({error:"Discord IDが必要です"},400);
@@ -1042,16 +993,29 @@ async function handle(request, env) {
    await ensureTrainingPrograms(env);
    const b=await request.json().catch(()=>({}));
    const name=String(b.name||"").trim();
-   if(!name)return json({error:"プログラム名は必須です"},400);
-   const r=await env.DB.prepare("INSERT INTO training_programs(name,description) VALUES(?,?)").bind(name,String(b.description||"").trim()).run();
-   return json({ok:true,id:r.meta?.last_row_id||null},201);
- }
+   const description=String(b.description||"").trim();
+   if(!name)return json({error:"研修名は必須です"},400);
 
+   const tr=await env.DB.prepare(`
+     INSERT INTO trainings(category,title,description,training_date,start_time,end_time,capacity,instructor,location)
+     VALUES(?,?,?,?,?,?,?,?,?)
+   `).bind("研修プログラム",name,description,"2099-12-31","00:00","",999,"","").run();
+   const trainingId=Number(tr.meta?.last_row_id||0);
+
+   const r=await env.DB.prepare("INSERT INTO training_programs(name,description,training_id) VALUES(?,?,?)")
+     .bind(name,description,trainingId).run();
+   return json({ok:true,id:r.meta?.last_row_id||null,training_id:trainingId},201);
+ }
  let pm=path.match(/^\/api\/admin\/programs\/(\d+)$/);
  if(pm && method==="DELETE"){
    await ensureTrainingPrograms(env);
+   const p=await env.DB.prepare("SELECT training_id FROM training_programs WHERE id=?").bind(Number(pm[1])).first();
    await env.DB.prepare("DELETE FROM training_program_steps WHERE program_id=?").bind(Number(pm[1])).run();
    await env.DB.prepare("DELETE FROM training_programs WHERE id=?").bind(Number(pm[1])).run();
+   if(p?.training_id){
+     await env.DB.prepare("DELETE FROM reservations WHERE training_id=?").bind(Number(p.training_id)).run();
+     await env.DB.prepare("DELETE FROM trainings WHERE id=?").bind(Number(p.training_id)).run();
+   }
    return json({ok:true});
  }
 
@@ -1144,6 +1108,7 @@ async function handle(request, env) {
  }
 
  if(path==="/api/admin/trainings" && method==="GET"){
+   await ensureReservationInstructor(env);
    const {results}=await env.DB.prepare(`
      SELECT t.*,
        COALESCE(SUM(CASE WHEN r.status IN ('pending','reserved') THEN 1 ELSE 0 END),0) active_count
@@ -1208,8 +1173,20 @@ async function handle(request, env) {
 
  m=path.match(/^\/api\/admin\/reservations\/(\d+)$/);
  if(m && method==="PATCH"){
-   const b=await request.json(); if(!['pending','reserved','completed','absent','cancelled'].includes(b.status))return json({error:"invalid status"},400);
-   await env.DB.prepare("UPDATE reservations SET status=? WHERE id=?").bind(b.status,Number(m[1])).run(); return json({ok:true});
+   await ensureReservationInstructor(env);
+   await ensureInstructors(env);
+   const b=await request.json().catch(()=>({}));
+   if(!['pending','reserved','completed','absent','cancelled'].includes(b.status))return json({error:"invalid status"},400);
+   const assigned=String(b.assigned_instructor||"").trim();
+   if(b.status==="reserved"){
+     if(!assigned)return json({error:"担当教官を選択してください"},400);
+     const ok=await env.DB.prepare("SELECT id FROM instructors WHERE lower(trim(name))=lower(trim(?))").bind(assigned).first();
+     if(!ok)return json({error:"登録されていない教官です"},400);
+     await env.DB.prepare("UPDATE reservations SET status=?,assigned_instructor=? WHERE id=?").bind(b.status,assigned,Number(m[1])).run();
+   }else{
+     await env.DB.prepare("UPDATE reservations SET status=? WHERE id=?").bind(b.status,Number(m[1])).run();
+   }
+   return json({ok:true});
  }
 
  if(path==="/api/admin/github/upload-worker" && method==="POST"){
