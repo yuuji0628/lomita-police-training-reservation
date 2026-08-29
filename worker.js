@@ -108,6 +108,18 @@ const ADMIN_BODY = `
  <div class="header"><div class="between"><div><span class="badge">LOMITA POLICE</span><div class="brand">研修管理本部</div><div class="sub">研修・参加申請・受講状況を一括管理</div></div><div class="row"><button class="btn small" onclick="logout()">ログアウト</button><button class="btn primary small" onclick="openTraining()">＋研修追加</button></div></div></div>
  <div id="msg"></div>
  <div class="grid"><div class="stat"><span class="sub">今後の研修</span><b id="sTrain">0</b></div><div class="stat"><span class="sub">承認待ち</span><b id="sPending">0</b></div><div class="stat"><span class="sub">予約確定</span><b id="sReserved">0</b></div><div class="stat"><span class="sub">受講済み</span><b id="sCompleted">0</b></div></div>
+
+ <div class="section">GitHubアップロード</div>
+ <div class="card">
+   <div class="title" style="font-size:16px">ファイルをGitHubへ送信</div>
+   <div class="sub" style="margin:6px 0 12px">選択したファイルをリポジトリの main ブランチへ直接コミットします。</div>
+   <div id="gitMsg"></div>
+   <div class="field"><label>アップロードするファイル *</label><input id="gitFile" type="file"></div>
+   <div class="field"><label>GitHub上の保存先</label><input id="gitPath" placeholder="例：worker.js（空欄ならファイル名を使用）"></div>
+   <div class="field"><label>コミットメッセージ</label><input id="gitCommit" value="admin upload: update file" maxlength="120"></div>
+   <button class="btn primary" id="gitUploadBtn" style="width:100%" onclick="uploadToGitHub()">GitHubへアップロード</button>
+ </div>
+
  <div class="section">研修一覧</div><div id="adminList"></div>
 </div><div class="footerNav"><a href="/">トップ</a><a class="active" href="/admin">管理画面</a></div></div>
 <div id="trainingModal" class="modal"><div class="sheet">
@@ -154,6 +166,31 @@ async function loadReservations(){const r=await fetch('/api/admin/trainings/'+ac
  document.querySelectorAll('.statusBtn').forEach(btn=>btn.addEventListener('click',()=>setStatus(Number(btn.dataset.id),btn.dataset.status)));
 }
 async function setStatus(id,status){const r=await fetch('/api/admin/reservations/'+id,{method:'PATCH',headers:auth(),body:JSON.stringify({status})});if(r.ok){await loadReservations();loadAdmin()}}
+
+async function uploadToGitHub(){
+  const file=document.getElementById('gitFile').files[0];
+  const out=document.getElementById('gitMsg');
+  const btn=document.getElementById('gitUploadBtn');
+  if(!file){out.innerHTML='<div class="notice error">ファイルを選択してください</div>';return}
+  if(file.size>5*1024*1024){out.innerHTML='<div class="notice error">5MB以下のファイルを選択してください</div>';return}
+  const form=new FormData();
+  form.append('file',file);
+  form.append('path',document.getElementById('gitPath').value.trim()||file.name);
+  form.append('message',document.getElementById('gitCommit').value.trim()||('admin upload: '+file.name));
+  btn.disabled=true; btn.textContent='アップロード中...';
+  out.innerHTML='<div class="notice">GitHubへ送信しています...</div>';
+  try{
+    const r=await fetch('/api/admin/github/upload',{method:'POST',headers:{'x-admin-password':adminPassword},body:form});
+    const d=await r.json();
+    if(!r.ok) throw new Error(d.error||'アップロードに失敗しました');
+    out.innerHTML='<div class="notice success">GitHubへアップロードしました。Cloudflareの自動ビルドを待ってください。</div>';
+    document.getElementById('gitFile').value='';
+  }catch(e){
+    out.innerHTML='<div class="notice error">'+esc(e.message)+'</div>';
+  }finally{
+    btn.disabled=false; btn.textContent='GitHubへアップロード';
+  }
+}
 verify();`;
 
 async function handle(request, env) {
@@ -234,6 +271,54 @@ async function handle(request, env) {
  if(m && method==="PATCH"){
    const b=await request.json(); if(!['pending','reserved','completed','absent','cancelled'].includes(b.status))return json({error:"invalid status"},400);
    await env.DB.prepare("UPDATE reservations SET status=? WHERE id=?").bind(b.status,Number(m[1])).run(); return json({ok:true});
+ }
+
+ if(path==="/api/admin/github/upload" && method==="POST"){
+   if(!env.GITHUB_TOKEN) return json({error:"Cloudflareに GITHUB_TOKEN が設定されていません"},500);
+   const form=await request.formData();
+   const file=form.get("file");
+   let target=String(form.get("path")||"").trim();
+   const message=String(form.get("message")||"admin upload").trim();
+   if(!file || typeof file.arrayBuffer!=="function") return json({error:"ファイルがありません"},400);
+   if(file.size>5*1024*1024) return json({error:"ファイルは5MB以下にしてください"},413);
+   if(!target) target=file.name;
+   target=target.replace(/^\/+/,"");
+   if(target.includes("..")) return json({error:"保存先パスが不正です"},400);
+
+   const repo=env.GITHUB_REPO || "yuuji0628/lomita-police-training-reservation";
+   const branch=env.GITHUB_BRANCH || "main";
+   const api="https://api.github.com/repos/"+repo+"/contents/"+target.split("/").map(encodeURIComponent).join("/");
+   const headers={
+     "authorization":"Bearer "+env.GITHUB_TOKEN,
+     "accept":"application/vnd.github+json",
+     "x-github-api-version":"2022-11-28",
+     "user-agent":"lomita-training-admin"
+   };
+
+   let sha;
+   const existing=await fetch(api+"?ref="+encodeURIComponent(branch),{headers});
+   if(existing.ok){
+     const cur=await existing.json();
+     sha=cur.sha;
+   }else if(existing.status!==404){
+     const err=await existing.text();
+     return json({error:"GitHub確認エラー: "+err.slice(0,300)},502);
+   }
+
+   const bytes=new Uint8Array(await file.arrayBuffer());
+   let binary="";
+   const chunk=0x8000;
+   for(let i=0;i<bytes.length;i+=chunk){
+     binary+=String.fromCharCode(...bytes.subarray(i,i+chunk));
+   }
+   const content=btoa(binary);
+   const body={message,content,branch};
+   if(sha) body.sha=sha;
+
+   const put=await fetch(api,{method:"PUT",headers:{...headers,"content-type":"application/json"},body:JSON.stringify(body)});
+   const result=await put.json().catch(()=>({}));
+   if(!put.ok) return json({error:result.message||"GitHubへのアップロードに失敗しました"},put.status);
+   return json({ok:true,path:target,commit:result.commit?.sha||null});
  }
 
  return new Response("Not Found",{status:404});
