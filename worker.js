@@ -131,12 +131,13 @@ const ADMIN_BODY = `
 </div><div class="footerNav"><a href="/">トップ</a><a class="active" href="/admin">管理画面</a></div></div>
 <div id="trainingModal" class="modal"><div class="sheet">
  <button class="btn small" style="float:right" onclick="closeTraining()">閉じる</button><div class="title" id="trainingModalTitle">研修を追加</div>
+ <div id="trainingMsg"></div>
  <input type="hidden" id="trainingId">
  <div class="field"><label>研修種別 *</label><select id="category"><option>基礎研修</option><option>射撃研修</option><option>運転研修</option><option>逮捕・制圧研修</option><option>無線・指令研修</option><option>幹部研修</option><option>特殊部隊研修</option><option>その他</option></select></div>
  <div class="field"><label>研修名 *</label><input id="title" maxlength="60"></div>
  <div class="field"><label>説明</label><textarea id="description" maxlength="300"></textarea></div>
  <div class="formgrid"><div class="field"><label>日付 *</label><input id="trainingDate" type="date"></div><div class="field"><label>定員 *</label><input id="capacity" type="number" min="1" max="999" value="10"></div><div class="field"><label>開始 *</label><input id="startTime" type="time"></div><div class="field"><label>終了</label><input id="endTime" type="time"></div><div class="field"><label>担当者</label><input id="instructor" maxlength="50"></div><div class="field"><label>場所</label><input id="location" maxlength="60"></div></div>
- <button class="btn primary" style="width:100%" onclick="saveTraining()">保存する</button>
+ <button id="trainingSaveBtn" type="button" class="btn primary" style="width:100%">保存する</button>
 </div></div>
 <div id="resModal" class="modal"><div class="sheet"><button class="btn small" style="float:right" onclick="closeReservations()">閉じる</button><div class="title" id="resTitle">参加者管理</div><div id="resList"></div></div></div>`;
 
@@ -161,9 +162,64 @@ function render(){const e=document.getElementById('adminList');if(!trainings.len
  document.querySelectorAll('.editBtn').forEach(btn=>btn.addEventListener('click',()=>openTraining(Number(btn.dataset.id))));
  document.querySelectorAll('.delBtn').forEach(btn=>btn.addEventListener('click',()=>deleteTraining(Number(btn.dataset.id))));
 }
-function openTraining(id){const t=id?trainings.find(x=>x.id===id):null;document.getElementById('trainingModal').classList.add('open');document.getElementById('trainingModalTitle').textContent=t?'研修を編集':'研修を追加';document.getElementById('trainingId').value=t?t.id:'';document.getElementById('category').value=t?(t.category||'基礎研修'):'基礎研修';document.getElementById('title').value=t?t.title:'';document.getElementById('description').value=t?t.description:'';document.getElementById('trainingDate').value=t?t.training_date:new Date().toISOString().slice(0,10);document.getElementById('capacity').value=t?t.capacity:10;document.getElementById('startTime').value=t?t.start_time:'';document.getElementById('endTime').value=t?t.end_time:'';document.getElementById('instructor').value=t?t.instructor:'';document.getElementById('location').value=t?t.location:''}
+function openTraining(id){const t=id?trainings.find(x=>x.id===id):null;document.getElementById('trainingMsg').innerHTML='';document.getElementById('trainingModal').classList.add('open');document.getElementById('trainingModalTitle').textContent=t?'研修を編集':'研修を追加';document.getElementById('trainingId').value=t?t.id:'';document.getElementById('category').value=t?(t.category||'基礎研修'):'基礎研修';document.getElementById('title').value=t?t.title:'';document.getElementById('description').value=t?t.description:'';document.getElementById('trainingDate').value=t?t.training_date:new Date().toISOString().slice(0,10);document.getElementById('capacity').value=t?t.capacity:10;document.getElementById('startTime').value=t?t.start_time:'';document.getElementById('endTime').value=t?t.end_time:'';document.getElementById('instructor').value=t?t.instructor:'';document.getElementById('location').value=t?t.location:''}
 function closeTraining(){document.getElementById('trainingModal').classList.remove('open')}
-async function saveTraining(){const body={category:document.getElementById('category').value,title:document.getElementById('title').value.trim(),description:document.getElementById('description').value.trim(),training_date:document.getElementById('trainingDate').value,capacity:Number(document.getElementById('capacity').value),start_time:document.getElementById('startTime').value,end_time:document.getElementById('endTime').value,instructor:document.getElementById('instructor').value.trim(),location:document.getElementById('location').value.trim()};if(!body.title||!body.training_date||!body.start_time)return msg('必須項目を入力してください','error');const id=document.getElementById('trainingId').value;const r=await fetch(id?'/api/admin/trainings/'+id:'/api/admin/trainings',{method:id?'PUT':'POST',headers:auth(),body:JSON.stringify(body)});if(!r.ok)return msg('保存できませんでした','error');closeTraining();msg('保存しました','success');loadAdmin()}
+async function saveTraining(){
+ const modalMsg=document.getElementById('trainingMsg');
+ const body={
+   category:document.getElementById('category').value,
+   title:document.getElementById('title').value.trim(),
+   description:document.getElementById('description').value.trim(),
+   training_date:document.getElementById('trainingDate').value,
+   capacity:Number(document.getElementById('capacity').value),
+   start_time:document.getElementById('startTime').value,
+   end_time:document.getElementById('endTime').value,
+   instructor:document.getElementById('instructor').value.trim(),
+   location:document.getElementById('location').value.trim()
+ };
+ const required=[['title','研修名'],['trainingDate','日付'],['startTime','開始時刻']];
+ for(const [id,label] of required){
+   const el=document.getElementById(id);
+   if(!el.value){
+     modalMsg.innerHTML='<div class="notice error">'+label+'を入力してください。</div>';
+     el.focus();
+     el.scrollIntoView({behavior:'smooth',block:'center'});
+     return;
+   }
+ }
+ if(!Number.isFinite(body.capacity)||body.capacity<1){
+   modalMsg.innerHTML='<div class="notice error">定員は1名以上で入力してください。</div>';
+   const el=document.getElementById('capacity');el.focus();el.scrollIntoView({behavior:'smooth',block:'center'});return;
+ }
+ if(body.end_time && body.end_time<=body.start_time){
+   modalMsg.innerHTML='<div class="notice error">終了時刻は開始時刻より後にしてください。</div>';
+   const el=document.getElementById('endTime');el.focus();el.scrollIntoView({behavior:'smooth',block:'center'});return;
+ }
+ const id=document.getElementById('trainingId').value;
+ const saveBtn=document.getElementById('trainingSaveBtn');
+ const oldText=saveBtn.textContent;
+ saveBtn.disabled=true;saveBtn.textContent='保存中...';
+ modalMsg.innerHTML='<div class="notice">保存しています...</div>';
+ try{
+   const r=await fetch(id?'/api/admin/trainings/'+id:'/api/admin/trainings',{
+     method:id?'PUT':'POST',
+     headers:auth(),
+     body:JSON.stringify(body)
+   });
+   let d={}; try{d=await r.json()}catch(_){}
+   if(!r.ok){
+     modalMsg.innerHTML='<div class="notice error">'+esc(d.error||('保存できませんでした（HTTP '+r.status+'）'))+'</div>';
+     return;
+   }
+   closeTraining();
+   msg('研修を保存しました','success');
+   await loadAdmin();
+ }catch(e){
+   modalMsg.innerHTML='<div class="notice error">通信エラーで保存できませんでした。もう一度お試しください。</div>';
+ }finally{
+   saveBtn.disabled=false;saveBtn.textContent=oldText;
+ }
+}
 async function deleteTraining(id){if(!confirm('この研修と関連予約を削除しますか？'))return;const r=await fetch('/api/admin/trainings/'+id,{method:'DELETE',headers:auth()});if(r.ok){msg('削除しました','success');loadAdmin()}}
 async function openReservations(id,title){activeTrainingId=id;document.getElementById('resTitle').textContent=title+' / 参加者管理';document.getElementById('resModal').classList.add('open');await loadReservations()}
 function closeReservations(){document.getElementById('resModal').classList.remove('open')}
@@ -181,6 +237,7 @@ function updateFileInfo(){
   const total=files.reduce((n,f)=>n+f.size,0);
   el.textContent=files.length+'個選択 ・ 合計 '+(total/1024).toFixed(total>1024?0:1)+' KB';
 }
+document.getElementById('trainingSaveBtn')?.addEventListener('click',saveTraining);
 async function uploadToGitHub(){
   const files=[...document.getElementById('gitFile').files];
   const out=document.getElementById('gitMsg');
@@ -284,14 +341,44 @@ async function handle(request, env) {
  }
 
  if(path==="/api/admin/trainings" && method==="POST"){
-   const b=await request.json(); await env.DB.prepare("INSERT INTO trainings(category,title,description,training_date,start_time,end_time,capacity,instructor,location) VALUES(?,?,?,?,?,?,?,?,?)")
-   .bind(b.category||"基礎研修",b.title,b.description||"",b.training_date,b.start_time,b.end_time||"",b.capacity||10,b.instructor||"",b.location||"").run(); return json({ok:true},201);
+   try{
+     const b=await request.json();
+     if(!b.title || !b.training_date || !b.start_time) return json({error:"研修名・日付・開始時刻は必須です"},400);
+     try{
+       await env.DB.prepare("INSERT INTO trainings(category,title,description,training_date,start_time,end_time,capacity,instructor,location) VALUES(?,?,?,?,?,?,?,?,?)")
+       .bind(b.category||"基礎研修",b.title,b.description||"",b.training_date,b.start_time,b.end_time||"",b.capacity||10,b.instructor||"",b.location||"").run();
+     }catch(e){
+       const em=String(e?.message||e||"");
+       if(/no column named category|has no column named category/i.test(em)){
+         await env.DB.prepare("INSERT INTO trainings(title,description,training_date,start_time,end_time,capacity,instructor,location) VALUES(?,?,?,?,?,?,?,?)")
+         .bind(b.title,b.description||"",b.training_date,b.start_time,b.end_time||"",b.capacity||10,b.instructor||"",b.location||"").run();
+       }else throw e;
+     }
+     return json({ok:true},201);
+   }catch(e){
+     return json({error:"D1保存エラー: "+String(e?.message||e)},500);
+   }
  }
 
  let m=path.match(/^\/api\/admin\/trainings\/(\d+)$/);
  if(m && method==="PUT"){
-   const b=await request.json(); await env.DB.prepare("UPDATE trainings SET category=?,title=?,description=?,training_date=?,start_time=?,end_time=?,capacity=?,instructor=?,location=? WHERE id=?")
-   .bind(b.category||"基礎研修",b.title,b.description||"",b.training_date,b.start_time,b.end_time||"",b.capacity||10,b.instructor||"",b.location||"",Number(m[1])).run(); return json({ok:true});
+   try{
+     const b=await request.json();
+     if(!b.title || !b.training_date || !b.start_time) return json({error:"研修名・日付・開始時刻は必須です"},400);
+     try{
+       await env.DB.prepare("UPDATE trainings SET category=?,title=?,description=?,training_date=?,start_time=?,end_time=?,capacity=?,instructor=?,location=? WHERE id=?")
+       .bind(b.category||"基礎研修",b.title,b.description||"",b.training_date,b.start_time,b.end_time||"",b.capacity||10,b.instructor||"",b.location||"",Number(m[1])).run();
+     }catch(e){
+       const em=String(e?.message||e||"");
+       if(/no such column: category|no column named category|has no column named category/i.test(em)){
+         await env.DB.prepare("UPDATE trainings SET title=?,description=?,training_date=?,start_time=?,end_time=?,capacity=?,instructor=?,location=? WHERE id=?")
+         .bind(b.title,b.description||"",b.training_date,b.start_time,b.end_time||"",b.capacity||10,b.instructor||"",b.location||"",Number(m[1])).run();
+       }else throw e;
+     }
+     return json({ok:true});
+   }catch(e){
+     return json({error:"D1保存エラー: "+String(e?.message||e)},500);
+   }
  }
  if(m && method==="DELETE"){
    await env.DB.prepare("DELETE FROM reservations WHERE training_id=?").bind(Number(m[1])).run();
