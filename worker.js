@@ -154,7 +154,7 @@ async function load(){
  const r=await fetch('/api/trainings'); const data=await r.json(); const el=document.getElementById('list');
  if(!data.length){el.innerHTML='<div class="empty">現在、受付中の研修はありません。</div>';return}
  el.innerHTML=data.map(t=>{
-   const remain=Math.max(0,Number(t.capacity)-Number(t.active_count));
+   const unlimited=Number(t.capacity)>=999; const remain=unlimited?999:Math.max(0,Number(t.capacity)-Number(t.active_count));
    const cat=t.category||'一般研修'; const disabled=remain<=0?'disabled style="opacity:.45"':'';
    return '<div class="card"><div class="between"><div><span class="pill">'+esc(cat)+'</span><div class="title" style="margin-top:8px">'+esc(t.title)+'</div><div class="meta"><span>📅 '+fmt(t.training_date)+'</span><span>🕒 '+esc(t.start_time)+(t.end_time?'〜'+esc(t.end_time):'')+'</span>'+(t.location?'<span>📍 '+esc(t.location)+'</span>':'')+'</div></div><span class="pill">残り '+remain+'名</span></div>'+(t.description?'<div class="sub" style="margin:8px 0 12px">'+esc(t.description)+'</div>':'')+'<div class="between"><span class="sub">担当：'+esc(t.instructor||'未設定')+'　申請/予約 '+t.active_count+'/'+t.capacity+'</span><button class="btn primary bookingBtn" '+disabled+' data-id="'+t.id+'" data-title="'+encodeURIComponent(t.title)+'">'+(remain?'申請する':'満員')+'</button></div></div>'
  }).join('');
@@ -283,7 +283,15 @@ const ADMIN_BODY = `
  <div class="sub" style="margin:5px 0 16px">システム更新・ビルド確認などの管理機能</div>
  <div class="section">GitHubアップロード</div>
  <div class="card">
-   <div class="title" style="font-size:16px">ファイルをGitHubへ送信</div>
+   <div class="card" style="border:2px solid #0b4fa3">
+   <div class="title" style="font-size:16px">worker.jsとして更新</div>
+   <div class="sub" style="margin:6px 0 12px">修正版JSを選ぶと、元のファイル名に関係なく本番の worker.js を上書きします。</div>
+   <div id="workerUploadMsg"></div>
+   <div class="field"><label>修正版JSファイル *</label><input id="workerFile" type="file" accept=".js,text/javascript"></div>
+   <button id="workerUploadBtn" type="button" class="btn primary" style="width:100%">worker.jsとして更新</button>
+ </div>
+
+ <div class="title" style="font-size:16px">ファイルをGitHubへ送信</div>
    <div class="sub" style="margin:6px 0 12px">選択したファイルをリポジトリの main ブランチへ直接コミットします。</div>
    <div id="gitMsg"></div>
    <div class="field"><label>アップロードするファイル *（複数選択可）</label><input id="gitFile" type="file" multiple><div class="sub" id="gitFileInfo" style="margin-top:6px">ファイル未選択</div></div>
@@ -302,15 +310,20 @@ const ADMIN_BODY = `
 
 </div></div>
 <div id="trainingModal" class="modal"><div class="sheet">
- <button class="btn small" style="float:right" onclick="closeTraining()">閉じる</button><div class="title" id="trainingModalTitle">研修を追加</div>
+ <button class="btn small" style="float:right" onclick="closeTraining()">閉じる</button>
+ <div class="title" id="trainingModalTitle">研修を追加</div>
+ <div class="sub" style="margin:5px 0 12px">必要な情報だけ入力してください。</div>
  <div id="trainingMsg"></div>
  <input type="hidden" id="trainingId">
- <div class="field"><label>研修種別 *</label><select id="category"><option>基礎研修</option><option>射撃研修</option><option>運転研修</option><option>逮捕・制圧研修</option><option>無線・指令研修</option><option>幹部研修</option><option>特殊部隊研修</option><option>その他</option></select></div>
- <div class="field"><label>研修名 *</label><input id="title" maxlength="60"></div>
- <div class="field"><label>説明</label><textarea id="description" maxlength="300"></textarea></div>
- <div class="formgrid"><div class="field"><label>日付 *</label><input id="trainingDate" type="date"></div><div class="field"><label>定員 *</label><input id="capacity" type="number" min="1" max="999" value="10"></div><div class="field"><label>開始 *</label><input id="startTime" type="time"></div><div class="field"><label>終了</label><input id="endTime" type="time"></div><div class="field"><label>担当者</label><input id="instructor" maxlength="50"></div><div class="field"><label>場所</label><input id="location" maxlength="60"></div></div>
+
+ <div class="field"><label>研修名 *</label><input id="title" maxlength="80" placeholder="例：交通取締研修"></div>
+ <div class="field"><label>日にち *</label><input id="trainingDate" type="date"></div>
+ <div class="field"><label>時間 *</label><input id="startTime" type="time"></div>
+ <div class="field"><label>フリー記入欄</label><textarea id="description" maxlength="1000" placeholder="研修内容、集合場所、持ち物、注意事項など自由に記入"></textarea></div>
+
  <button id="trainingSaveBtn" type="button" class="btn primary" style="width:100%">保存する</button>
 </div></div>
+
 <div id="resModal" class="modal"><div class="sheet"><button class="btn small" style="float:right" onclick="closeReservations()">閉じる</button><div class="title" id="resTitle">参加者管理</div><div id="resList"></div></div></div>
 <div id="traineeModal" class="modal"><div class="sheet">
  <button class="btn small" style="float:right" onclick="closeTraineeDetail()">閉じる</button>
@@ -391,39 +404,46 @@ function render(){const e=document.getElementById('adminList');if(!trainings.len
  document.querySelectorAll('.editBtn').forEach(btn=>btn.addEventListener('click',()=>openTraining(Number(btn.dataset.id))));
  document.querySelectorAll('.delBtn').forEach(btn=>btn.addEventListener('click',()=>deleteTraining(Number(btn.dataset.id))));
 }
-function openTraining(id){const t=id?trainings.find(x=>x.id===id):null;document.getElementById('trainingMsg').innerHTML='';document.getElementById('trainingModal').classList.add('open');document.getElementById('trainingModalTitle').textContent=t?'研修を編集':'研修を追加';document.getElementById('trainingId').value=t?t.id:'';document.getElementById('category').value=t?(t.category||'基礎研修'):'基礎研修';document.getElementById('title').value=t?t.title:'';document.getElementById('description').value=t?t.description:'';document.getElementById('trainingDate').value=t?t.training_date:new Date().toISOString().slice(0,10);document.getElementById('capacity').value=t?t.capacity:10;document.getElementById('startTime').value=t?t.start_time:'';document.getElementById('endTime').value=t?t.end_time:'';document.getElementById('instructor').value=t?t.instructor:'';document.getElementById('location').value=t?t.location:''}
+function openTraining(id){
+ const t=id?trainings.find(x=>x.id===id):null;
+ document.getElementById('trainingMsg').innerHTML='';
+ document.getElementById('trainingModal').classList.add('open');
+ document.getElementById('trainingModalTitle').textContent=t?'研修を編集':'研修を追加';
+ document.getElementById('trainingId').value=t?.id||'';
+ document.getElementById('title').value=t?.title||'';
+ document.getElementById('trainingDate').value=t?.training_date||'';
+ document.getElementById('startTime').value=t?.start_time||'';
+ document.getElementById('description').value=t?.description||'';
+}
 function closeTraining(){document.getElementById('trainingModal').classList.remove('open')}
 async function saveTraining(){
  const modalMsg=document.getElementById('trainingMsg');
- const body={
-   category:document.getElementById('category').value,
-   title:document.getElementById('title').value.trim(),
-   description:document.getElementById('description').value.trim(),
-   training_date:document.getElementById('trainingDate').value,
-   capacity:Number(document.getElementById('capacity').value),
-   start_time:document.getElementById('startTime').value,
-   end_time:document.getElementById('endTime').value,
-   instructor:document.getElementById('instructor').value.trim(),
-   location:document.getElementById('location').value.trim()
- };
- const required=[['title','研修名'],['trainingDate','日付'],['startTime','開始時刻']];
+ const title=document.getElementById('title').value.trim();
+ const training_date=document.getElementById('trainingDate').value;
+ const start_time=document.getElementById('startTime').value;
+ const description=document.getElementById('description').value.trim();
+
+ const required=[['title','研修名'],['trainingDate','日にち'],['startTime','時間']];
  for(const [id,label] of required){
    const el=document.getElementById(id);
    if(!el.value){
      modalMsg.innerHTML='<div class="notice error">'+label+'を入力してください。</div>';
-     el.focus();
-     el.scrollIntoView({behavior:'smooth',block:'center'});
-     return;
+     el.focus();el.scrollIntoView({behavior:'smooth',block:'center'});return;
    }
  }
- if(!Number.isFinite(body.capacity)||body.capacity<1){
-   modalMsg.innerHTML='<div class="notice error">定員は1名以上で入力してください。</div>';
-   const el=document.getElementById('capacity');el.focus();el.scrollIntoView({behavior:'smooth',block:'center'});return;
- }
- if(body.end_time && body.end_time<=body.start_time){
-   modalMsg.innerHTML='<div class="notice error">終了時刻は開始時刻より後にしてください。</div>';
-   const el=document.getElementById('endTime');el.focus();el.scrollIntoView({behavior:'smooth',block:'center'});return;
- }
+
+ const body={
+   category:'一般研修',
+   title,
+   description,
+   training_date,
+   capacity:999,
+   start_time,
+   end_time:'',
+   instructor:'',
+   location:''
+ };
+
  const id=document.getElementById('trainingId').value;
  const saveBtn=document.getElementById('trainingSaveBtn');
  const oldText=saveBtn.textContent;
@@ -435,7 +455,7 @@ async function saveTraining(){
      headers:auth(),
      body:JSON.stringify(body)
    });
-   let d={}; try{d=await r.json()}catch(_){}
+   let d={};try{d=await r.json()}catch(_){}
    if(!r.ok){
      modalMsg.innerHTML='<div class="notice error">'+esc(d.error||('保存できませんでした（HTTP '+r.status+'）'))+'</div>';
      return;
@@ -444,7 +464,7 @@ async function saveTraining(){
    msg('研修を保存しました','success');
    await loadAdmin();
  }catch(e){
-   modalMsg.innerHTML='<div class="notice error">通信エラーで保存できませんでした。もう一度お試しください。</div>';
+   modalMsg.innerHTML='<div class="notice error">通信エラーで保存できませんでした。</div>';
  }finally{
    saveBtn.disabled=false;saveBtn.textContent=oldText;
  }
@@ -459,6 +479,29 @@ async function loadReservations(){const r=await fetch('/api/admin/trainings/'+ac
 async function setStatus(id,status){const r=await fetch('/api/admin/reservations/'+id,{method:'PATCH',headers:auth(),body:JSON.stringify({status})});if(r.ok){await loadReservations();loadAdmin()}}
 
 let buildTimer=null;
+async function uploadAsWorker(){
+ const input=document.getElementById('workerFile');
+ const btn=document.getElementById('workerUploadBtn');
+ const msgEl=document.getElementById('workerUploadMsg');
+ const file=input?.files?.[0];
+ if(!file){msgEl.innerHTML='<div class="notice error">JSファイルを選択してください。</div>';return}
+ btn.disabled=true;btn.textContent='アップロード中...';
+ msgEl.innerHTML='<div class="notice">worker.jsとしてGitHubへ送信しています...</div>';
+ try{
+   const fd=new FormData();
+   fd.append('file',file,file.name);
+   const r=await fetch('/api/admin/github/upload-worker',{method:'POST',headers:adminPassword?{'x-admin-password':adminPassword}:{},body:fd});
+   const d=await r.json().catch(()=>({}));
+   if(!r.ok){msgEl.innerHTML='<div class="notice error">'+esc(d.error||'アップロードに失敗しました')+'</div>';return}
+   msgEl.innerHTML='<div class="notice success">worker.jsを更新しました。Cloudflareの自動ビルドを待ってください。</div>';
+   input.value='';
+ }catch(e){
+   msgEl.innerHTML='<div class="notice error">通信エラーでアップロードできませんでした。</div>';
+ }finally{
+   btn.disabled=false;btn.textContent='worker.jsとして更新';
+ }
+}
+
 function updateFileInfo(){
   const files=[...document.getElementById('gitFile').files];
   const el=document.getElementById('gitFileInfo');
@@ -513,6 +556,7 @@ function startBuildWatch(){
   if(buildTimer)clearInterval(buildTimer); loadBuildStatus();
   buildTimer=setInterval(loadBuildStatus,5000); setTimeout(()=>{if(buildTimer){clearInterval(buildTimer);buildTimer=null}},120000);
 }
+document.getElementById('workerUploadBtn')?.addEventListener('click',uploadAsWorker);
 document.getElementById('gitFile')?.addEventListener('change',updateFileInfo);
 document.getElementById('adminLoginBtn')?.addEventListener('click',login);
 document.getElementById('password')?.addEventListener('keydown',e=>{if(e.key==='Enter')login()});
@@ -766,6 +810,50 @@ async function handle(request, env) {
  if(m && method==="PATCH"){
    const b=await request.json(); if(!['pending','reserved','completed','absent','cancelled'].includes(b.status))return json({error:"invalid status"},400);
    await env.DB.prepare("UPDATE reservations SET status=? WHERE id=?").bind(b.status,Number(m[1])).run(); return json({ok:true});
+ }
+
+ if(path==="/api/admin/github/upload-worker" && method==="POST"){
+   if(!env.GITHUB_TOKEN) return json({error:"Cloudflareに GITHUB_TOKEN が設定されていません"},500);
+   const form=await request.formData();
+   const file=form.get("file");
+   if(!file || typeof file.arrayBuffer!=="function") return json({error:"JSファイルがありません"},400);
+   if(file.size>5*1024*1024) return json({error:"5MB以下のJSファイルにしてください"},413);
+
+   const repo=env.GITHUB_REPO || "yuuji0628/lomita-police-training-reservation";
+   const branch=env.GITHUB_BRANCH || "main";
+   const base="https://api.github.com/repos/"+repo;
+   const headers={
+     "authorization":"Bearer "+env.GITHUB_TOKEN,
+     "accept":"application/vnd.github+json",
+     "x-github-api-version":"2022-11-28",
+     "user-agent":"lomita-training-admin",
+     "content-type":"application/json"
+   };
+
+   const currentRes=await fetch(base+"/contents/worker.js?ref="+encodeURIComponent(branch),{headers});
+   const current=await currentRes.json().catch(()=>({}));
+   if(!currentRes.ok) return json({error:current.message||"現在のworker.jsを取得できません"},currentRes.status);
+
+   const bytes=new Uint8Array(await file.arrayBuffer());
+   let binary="";
+   for(let i=0;i<bytes.length;i+=0x8000){
+     binary+=String.fromCharCode(...bytes.subarray(i,i+0x8000));
+   }
+
+   const putRes=await fetch(base+"/contents/worker.js",{
+     method:"PUT",
+     headers,
+     body:JSON.stringify({
+       message:"admin: update worker.js",
+       content:btoa(binary),
+       sha:current.sha,
+       branch
+     })
+   });
+   const result=await putRes.json().catch(()=>({}));
+   if(!putRes.ok) return json({error:result.message||"worker.jsを更新できませんでした"},putRes.status);
+
+   return json({ok:true,commit_sha:result.commit?.sha||"",path:"worker.js"});
  }
 
  if(path==="/api/admin/github/upload" && method==="POST"){
