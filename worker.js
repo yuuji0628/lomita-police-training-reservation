@@ -770,7 +770,11 @@ async function login(){
  btn.disabled=true;btn.textContent='確認中...';
  try{
    const r=await fetch('/api/admin/login',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({password})});
-   if(!r.ok){document.getElementById('loginMsg').innerHTML='<div class="notice error">パスワードが違います</div>';return}
+   const d=await r.json().catch(()=>({}));
+   if(!r.ok){
+     document.getElementById('loginMsg').innerHTML='<div class="notice error">'+(r.status===401?'パスワードが違います':'ログイン処理に失敗しました（HTTP '+r.status+'）')+'</div>';
+     return;
+   }
    adminPassword='';showAdmin();await loadAdmin();
  }finally{btn.disabled=false;btn.textContent='管理画面を開く'}
 }
@@ -1262,6 +1266,31 @@ async function handle(request, env) {
    if(dup)return json({error:dup.status==="completed"?"この研修は受講済みです":"すでに申請済みです"},409);
    await env.DB.prepare("INSERT INTO reservations(training_id,player_name,discord_id,affiliation,note,status) VALUES(?,?,?,?,?,'pending')").bind(trainingId,profile.player_name,key,"",String(b.note||"").trim()).run();
    return json({ok:true},201);
+ }
+
+ if(path==="/api/admin/login" && method==="POST"){
+   const b=await request.json().catch(()=>({}));
+   if(String(b.password||"")!==adminPass)return json({error:"unauthorized"},401);
+   const expires=String(Date.now()+12*60*60*1000);
+   const sig=await adminSessionSignature(adminPass,expires);
+   return new Response(JSON.stringify({ok:true,expires:Number(expires)}),{
+     status:200,
+     headers:{
+       "content-type":"application/json; charset=utf-8",
+       "cache-control":"no-store",
+       "set-cookie":"lomita_admin="+encodeURIComponent(expires+"."+sig)+"; Max-Age=43200; Path=/; HttpOnly; Secure; SameSite=Strict"
+     }
+   });
+ }
+
+ if(path==="/api/admin/logout" && method==="POST"){
+   return new Response(JSON.stringify({ok:true}),{
+     headers:{
+       "content-type":"application/json; charset=utf-8",
+       "cache-control":"no-store",
+       "set-cookie":"lomita_admin=; Max-Age=0; Path=/; HttpOnly; Secure; SameSite=Strict"
+     }
+   });
  }
 
  if(path==="/api/admin/check") return (await isAdmin())?json({ok:true}):json({error:"unauthorized"},401);
