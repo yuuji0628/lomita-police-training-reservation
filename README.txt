@@ -1,17 +1,18 @@
-Lomita Police 研修予約システム
+Lomita Police 研修予約システム v2
 
-Cloudflare Worker に worker.js の内容をそのまま入れてください。
+追加内容:
+- 警察向けデザイン
+- 研修種別
+- Discord ID
+- 参加申請 → 管理者承認
+- 承認待ち / 予約確定 / 受講済み / 欠席 / キャンセル管理
 
-前提:
-- D1 バインディング名: DB
-- 接続先: lomita-police-training-db
-- schema.sql はすでに実行済み
+更新手順:
+1. Cloudflare D1 の lomita-police-training-db を開く
+2. コンソールで migration.sql を1回だけ実行
+3. GitHub のルート直下へ worker.js と wrangler.jsonc をアップロード（既存を上書き）
+4. Cloudflareの自動ビルド成功を確認
+5. / と /admin を確認
 
-管理画面:
-https://あなたのWorkerURL/admin
-
-初期管理パスワード:
-game1234
-
-※ ADMIN_PASSWORD をCloudflare側に設定している場合は、その値が優先されます。
-Cloudflare deploy enabled
+管理パスワード:
+ADMIN_PASSWORD を設定していなければ game1234
