@@ -99,8 +99,8 @@ load();`;
 
 const ADMIN_BODY = `
 <div id="loginView" class="wrap login"><div class="card">
- <span class="badge">LOMITA POLICE</span><div class="title" style="font-size:24px">研修管理</div><div class="sub" style="margin:5px 0 16px">共通パスワードを入力してください</div>
- <div id="loginMsg"></div><input id="password" type="password" placeholder="パスワード" onkeydown="if(event.key==='Enter')login()">
+ <span class="badge">LOMITA POLICE</span><div class="title" style="font-size:24px">研修管理</div><div class="sub" style="margin:5px 0 8px">共通パスワードを入力してください</div><div class="notice" style="margin-bottom:14px">管理者画面を開くたびにパスワード認証が必要です。</div>
+ <div id="loginMsg"></div><input id="password" type="password" placeholder="管理パスワード" autocomplete="current-password" autofocus onkeydown="if(event.key==='Enter')login()">
  <button class="btn dark" style="width:100%;margin-top:10px" onclick="login()">管理画面を開く</button>
  <a href="/" class="btn" style="display:block;text-align:center;margin-top:8px">トップへ戻る</a>
 </div></div>
@@ -134,15 +134,14 @@ const ADMIN_BODY = `
 <div id="resModal" class="modal"><div class="sheet"><button class="btn small" style="float:right" onclick="closeReservations()">閉じる</button><div class="title" id="resTitle">参加者管理</div><div id="resList"></div></div></div>`;
 
 const ADMIN_SCRIPT = String.raw`
-let adminPassword=localStorage.getItem('trainingAdminPassword')||'', trainings=[], activeTrainingId=null;
+let adminPassword='', trainings=[], activeTrainingId=null;
 const labels={pending:'承認待ち',reserved:'予約確定',completed:'受講済み',absent:'欠席',cancelled:'キャンセル'};
 function esc(s){return String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 function auth(){return {'content-type':'application/json','x-admin-password':adminPassword}}
 function msg(t,c){const e=document.getElementById('msg');e.innerHTML='<div class="notice '+c+'">'+esc(t)+'</div>';setTimeout(()=>e.innerHTML='',3500)}
-async function login(){adminPassword=document.getElementById('password').value;const r=await fetch('/api/admin/check',{headers:{'x-admin-password':adminPassword}});if(!r.ok){document.getElementById('loginMsg').innerHTML='<div class="notice error">パスワードが違います</div>';return}localStorage.setItem('trainingAdminPassword',adminPassword);showAdmin();loadAdmin()}
-function logout(){localStorage.removeItem('trainingAdminPassword');location.reload()}
+async function login(){adminPassword=document.getElementById('password').value;const r=await fetch('/api/admin/check',{headers:{'x-admin-password':adminPassword}});if(!r.ok){document.getElementById('loginMsg').innerHTML='<div class="notice error">パスワードが違います</div>';return}showAdmin();loadAdmin()}
+function logout(){adminPassword='';location.href='/'}
 function showAdmin(){document.getElementById('loginView').style.display='none';document.getElementById('adminView').style.display='block'}
-async function verify(){if(!adminPassword)return;const r=await fetch('/api/admin/check',{headers:{'x-admin-password':adminPassword}});if(r.ok){showAdmin();loadAdmin()}}
 function fmt(d){return new Date(d+'T00:00:00').toLocaleDateString('ja-JP',{month:'numeric',day:'numeric',weekday:'short'})}
 async function loadAdmin(){
  const r=await fetch('/api/admin/trainings',{headers:auth()}); if(r.status===401)return logout(); trainings=await r.json(); render();
@@ -191,7 +190,7 @@ async function uploadToGitHub(){
     btn.disabled=false; btn.textContent='GitHubへアップロード';
   }
 }
-verify();`;
+`;
 
 async function handle(request, env) {
  const url=new URL(request.url), path=url.pathname, method=request.method;
