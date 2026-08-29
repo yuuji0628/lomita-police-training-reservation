@@ -175,28 +175,307 @@ async function ensureTrainingPrograms(env) {
 const html = (title, body, script = "") => new Response(`<!doctype html>
 <html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>${title}</title><style>
-:root{--navy:#081a33;--blue:#0b4fa3;--gold:#d6a93b;--bg:#eef3f8;--card:#fff;--text:#0d1b2a;--muted:#667085;--line:#dbe3ec;--danger:#c62828;--ok:#147d43;--warn:#a15c00}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans JP",sans-serif}
-a{color:inherit;text-decoration:none}.wrap{max-width:900px;margin:auto;padding:18px 14px 96px}.header{background:linear-gradient(135deg,var(--navy),#102f58);color:#fff;padding:18px;border-radius:18px;box-shadow:0 8px 24px #0b234033;margin-bottom:14px}
-.header .brand{font-size:24px;font-weight:900;letter-spacing:.03em}.badge{display:inline-block;background:var(--gold);color:#111;padding:4px 9px;border-radius:999px;font-size:11px;font-weight:900;margin-bottom:8px}
-.sub{color:var(--muted);font-size:13px}.header .sub{color:#d6e3f2}.top,.between,.row{display:flex;gap:10px;align-items:center}.between{justify-content:space-between}.row{flex-wrap:wrap}
-.btn{border:1px solid var(--line);background:#fff;color:var(--text);padding:11px 14px;border-radius:12px;font-weight:800;cursor:pointer}.btn.primary{background:var(--blue);color:#fff;border-color:var(--blue)}.btn.dark{background:var(--navy);color:#fff;border-color:var(--navy)}.btn.danger{color:var(--danger);border-color:#f0b8b8;background:#fff5f5}.btn.small{padding:8px 10px;font-size:12px}
-.card,.stat{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:15px;box-shadow:0 2px 10px #132d4a0a}.card{margin:12px 0}.title{font-size:18px;font-weight:900}.meta{display:flex;flex-wrap:wrap;gap:8px;color:var(--muted);font-size:13px;margin:8px 0}.pill{display:inline-flex;border-radius:999px;background:#eaf1f8;padding:5px 9px;font-size:12px;font-weight:800}.pill.pending{background:#fff3d6;color:var(--warn)}.pill.reserved{background:#e8f2ff;color:var(--blue)}.pill.completed{background:#e6f6ed;color:var(--ok)}.pill.cancelled,.pill.absent{background:#fdeaea;color:var(--danger)}
-.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}.stat b{display:block;font-size:25px;margin-top:5px}.section{font-weight:900;font-size:17px;margin:22px 2px 8px}.empty{text-align:center;color:var(--muted);padding:38px 10px}
-input,textarea,select{width:100%;border:1px solid #cbd5e1;border-radius:12px;padding:12px 13px;font:inherit;background:#fff}textarea{min-height:90px}.field{margin:12px 0}.field label{display:block;font-size:12px;color:var(--muted);font-weight:800;margin-bottom:6px}.formgrid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
-.notice{padding:11px 12px;border-radius:12px;background:#eaf3ff;color:#0b4fa3;font-size:13px;margin:10px 0}.notice.error{background:#fff0f0;color:#b42318}.notice.success{background:#eaf8ef;color:#147d43}
-.modal{position:fixed;inset:0;background:#06152799;display:none;align-items:flex-end;justify-content:center;z-index:30}.modal.open{display:flex}.sheet{background:#fff;width:100%;max-width:640px;max-height:92vh;overflow:auto;border-radius:22px 22px 0 0;padding:18px;padding-bottom:calc(20px + env(safe-area-inset-bottom))}
-.login{max-width:430px;margin:60px auto 0}.footerNav{position:fixed;left:0;right:0;bottom:0;background:#fffffffa;border-top:1px solid var(--line);display:flex;gap:10px;padding:8px 14px calc(8px + env(safe-area-inset-bottom));z-index:20}.footerNav a{flex:1;text-align:center;padding:12px;border-radius:12px;font-weight:900}.footerNav .active{background:var(--navy);color:#fff}
-.res{border-top:1px solid var(--line);padding:13px 0}.res:first-child{border-top:0}.statusButtons{display:flex;gap:6px;flex-wrap:wrap;margin-top:9px}.menuTabs{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:12px 0}.menuTabs .btn{width:100%;padding:12px 8px}.profileHead{display:flex;gap:12px;align-items:center}.avatar{width:48px;height:48px;border-radius:50%;background:#e8f2ff;display:flex;align-items:center;justify-content:center;font-weight:900;color:var(--blue)}
-@media(max-width:700px){.grid{grid-template-columns:1fr 1fr}.formgrid{grid-template-columns:1fr}.header .between{align-items:flex-start}.top{align-items:flex-start}}
+:root{
+  --navy:#071b33;
+  --navy2:#0d2948;
+  --navy3:#123b66;
+  --blue:#1659a7;
+  --gold:#d7ad45;
+  --gold2:#f0d98c;
+  --bg:#e9eef4;
+  --panel:#f7f9fc;
+  --card:#ffffff;
+  --text:#0b1726;
+  --muted:#68778b;
+  --line:#cfd8e3;
+  --danger:#b42318;
+  --ok:#147d43;
+  --warn:#a15c00;
+}
+*{box-sizing:border-box}
+body{
+  margin:0;
+  background:
+    linear-gradient(180deg,#dfe7f0 0,#edf2f7 220px,#eef3f8 100%);
+  color:var(--text);
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans JP",sans-serif;
+}
+body:before{
+  content:"";
+  display:block;
+  position:fixed;
+  inset:0 0 auto 0;
+  height:6px;
+  background:linear-gradient(90deg,var(--gold),#fff0,var(--gold));
+  z-index:100;
+}
+a{color:inherit;text-decoration:none}
+.wrap{max-width:900px;margin:auto;padding:18px 14px 100px}
+.header{
+  position:relative;
+  overflow:hidden;
+  background:linear-gradient(135deg,var(--navy) 0%,var(--navy2) 58%,#123c66 100%);
+  color:#fff;
+  padding:20px;
+  border-radius:20px;
+  border:1px solid #ffffff20;
+  box-shadow:0 14px 36px #06182a30;
+  margin-bottom:14px;
+}
+.header:after{
+  content:"POLICE";
+  position:absolute;
+  right:-12px;
+  top:4px;
+  font-size:64px;
+  line-height:1;
+  font-weight:1000;
+  letter-spacing:.08em;
+  color:#ffffff08;
+  transform:rotate(-3deg);
+}
+.header .brand{font-size:25px;font-weight:950;letter-spacing:.03em}
+.header .sub{color:#d6e3f2}
+.badge{
+  display:inline-flex;
+  align-items:center;
+  gap:5px;
+  background:linear-gradient(180deg,var(--gold2),var(--gold));
+  color:#12233a;
+  padding:5px 10px;
+  border-radius:999px;
+  font-size:11px;
+  font-weight:950;
+  border:1px solid #fff8;
+  box-shadow:inset 0 1px #fff8;
+  margin-bottom:8px;
+}
+.sub{color:var(--muted);font-size:13px}
+.top,.between,.row{display:flex;gap:10px;align-items:center}
+.between{justify-content:space-between}
+.row{flex-wrap:wrap}
+
+.btn{
+  border:1px solid var(--line);
+  background:#fff;
+  color:var(--text);
+  padding:11px 14px;
+  border-radius:12px;
+  font-weight:850;
+  cursor:pointer;
+  box-shadow:0 1px 2px #08192c0d;
+}
+.btn:hover{filter:brightness(.99)}
+.btn:active{transform:translateY(1px)}
+.btn.primary{
+  background:linear-gradient(180deg,#1d65b8,#164f92);
+  color:#fff;
+  border-color:#164f92;
+  box-shadow:0 6px 14px #164f9228;
+}
+.btn.dark{
+  background:linear-gradient(180deg,#0b223f,#06182d);
+  color:#fff;
+  border-color:#06182d;
+}
+.btn.danger{color:var(--danger);border-color:#efb4ae;background:#fff7f6}
+.btn.small{padding:8px 10px;font-size:12px}
+
+.card,.stat{
+  background:var(--card);
+  border:1px solid #cfd8e4;
+  border-radius:18px;
+  padding:16px;
+  box-shadow:0 4px 16px #0a20350a;
+}
+.card{margin:12px 0}
+.card:has(.title){position:relative}
+.title{font-size:18px;font-weight:950;letter-spacing:.01em}
+.meta{display:flex;flex-wrap:wrap;gap:8px;color:var(--muted);font-size:13px;margin:8px 0}
+.pill{
+  display:inline-flex;
+  align-items:center;
+  border-radius:999px;
+  background:#e7edf4;
+  color:#26384c;
+  padding:5px 9px;
+  font-size:12px;
+  font-weight:850;
+  border:1px solid #d4dde7;
+}
+.pill.pending{background:#fff5d9;color:#8a5600;border-color:#efd99e}
+.pill.reserved{background:#e9f2ff;color:#164f92;border-color:#bdd5f5}
+.pill.completed{background:#e8f7ef;color:#147d43;border-color:#bfe3cf}
+.pill.cancelled,.pill.absent{background:#fff0ef;color:var(--danger);border-color:#efc0bc}
+
+.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+.stat{
+  position:relative;
+  overflow:hidden;
+  background:linear-gradient(180deg,#fff,#f9fbfd);
+}
+.stat:before{
+  content:"";
+  position:absolute;
+  left:0;top:0;bottom:0;
+  width:4px;
+  background:var(--navy3);
+}
+.stat b{display:block;font-size:26px;margin-top:5px}
+.section{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  font-weight:950;
+  font-size:18px;
+  margin:24px 2px 9px;
+  color:#0b1d31;
+}
+.section:before{
+  content:"";
+  width:5px;
+  height:20px;
+  border-radius:99px;
+  background:linear-gradient(180deg,var(--gold),#b58b29);
+  box-shadow:0 0 0 2px #fff8;
+}
+.empty{text-align:center;color:var(--muted);padding:38px 10px}
+
+input,textarea,select{
+  width:100%;
+  border:1px solid #c6d1de;
+  border-radius:12px;
+  padding:12px 13px;
+  font:inherit;
+  background:#fff;
+  color:var(--text);
+  box-shadow:inset 0 1px 2px #0b1e3108;
+}
+input:focus,textarea:focus,select:focus{
+  outline:none;
+  border-color:#6b94c4;
+  box-shadow:0 0 0 3px #1659a714;
+}
+textarea{min-height:90px}
+.field{margin:12px 0}
+.field label{
+  display:block;
+  font-size:12px;
+  color:#52647a;
+  font-weight:850;
+  margin-bottom:6px;
+}
+.formgrid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+
+.notice{
+  padding:11px 12px;
+  border-radius:12px;
+  background:#eaf3ff;
+  color:#164f92;
+  font-size:13px;
+  margin:10px 0;
+  border:1px solid #c8dbf3;
+}
+.notice.error{background:#fff0f0;color:#b42318;border-color:#efc2c2}
+.notice.success{background:#eaf8ef;color:#147d43;border-color:#c5e8d2}
+
+.modal{
+  position:fixed;
+  inset:0;
+  background:#061527b8;
+  backdrop-filter:blur(3px);
+  display:none;
+  align-items:flex-end;
+  justify-content:center;
+  z-index:30;
+}
+.modal.open{display:flex}
+.sheet{
+  background:linear-gradient(180deg,#fff,#f8fafc);
+  width:100%;
+  max-width:640px;
+  max-height:92vh;
+  overflow:auto;
+  border-radius:24px 24px 0 0;
+  padding:20px;
+  padding-bottom:calc(22px + env(safe-area-inset-bottom));
+  border-top:4px solid var(--gold);
+  box-shadow:0 -18px 50px #06152738;
+}
+.login{max-width:430px;margin:60px auto 0}
+
+.footerNav{
+  position:fixed;
+  left:0;right:0;bottom:0;
+  background:#fffffffa;
+  border-top:1px solid var(--line);
+  display:flex;
+  gap:10px;
+  padding:8px 14px calc(8px + env(safe-area-inset-bottom));
+  z-index:20;
+  box-shadow:0 -8px 24px #06152712;
+}
+.footerNav a{
+  flex:1;
+  text-align:center;
+  padding:12px;
+  border-radius:12px;
+  font-weight:950;
+}
+.footerNav .active{
+  background:linear-gradient(180deg,#0b223f,#06182d);
+  color:#fff;
+  box-shadow:inset 0 0 0 1px #ffffff12;
+}
+
+.res{border-top:1px solid var(--line);padding:13px 0}
+.res:first-child{border-top:0}
+.statusButtons{display:flex;gap:6px;flex-wrap:wrap;margin-top:9px}
+.menuTabs{
+  display:grid;
+  grid-template-columns:repeat(2,1fr);
+  gap:9px;
+  margin:14px 0;
+}
+.menuTabs .btn{
+  width:100%;
+  padding:13px 9px;
+  border-radius:14px;
+  font-weight:900;
+}
+.menuTabs .btn.dark{
+  box-shadow:inset 0 -3px 0 #d7ad454d,0 6px 16px #06182d20;
+}
+.profileHead{display:flex;gap:12px;align-items:center}
+.avatar{
+  width:50px;height:50px;border-radius:50%;
+  background:linear-gradient(180deg,#eaf2fb,#dae7f6);
+  border:2px solid #bfd1e4;
+  display:flex;align-items:center;justify-content:center;
+  font-weight:950;color:var(--blue);
+}
+
+.traineeCard{border-left:4px solid var(--navy3)}
+#programList .card{border-top:3px solid #d7ad4555}
+#instructorList .card{border-left:4px solid #d7ad45}
+#trainingList .card{border-left:4px solid #164f92}
+
+@media(max-width:700px){
+  .grid{grid-template-columns:1fr 1fr}
+  .formgrid{grid-template-columns:1fr}
+  .header .between{align-items:flex-start}
+  .top{align-items:flex-start}
+  .header:after{font-size:48px;right:-18px;top:14px}
+  .menuTabs{grid-template-columns:repeat(2,1fr)}
+}
 </style></head><body>${body}<script>${script}</script></body></html>`, {headers:{"content-type":"text/html; charset=utf-8"}});
 
 
 const LANDING_BODY = `
 <div class="wrap" style="max-width:620px">
   <div class="header" style="margin-top:35px">
-    <span class="badge">LOMITA POLICE</span>
-    <div class="brand">研修予約システム</div>
+    <span class="badge">LOMITA POLICE DEPARTMENT</span>
+    <div class="brand">警察研修管理システム</div>
     <div class="sub">利用する画面を選択してください</div>
   </div>
 
@@ -217,7 +496,7 @@ const PUBLIC_BODY = `
 <div class="wrap">
   <div class="header">
     <div class="between">
-      <div><span class="badge">TRAINEE</span><div class="brand">研修生ページ</div><div class="sub">研修申請・承認状況・受講履歴</div></div>
+      <div><span class="badge">TRAINEE PORTAL</span><div class="brand">研修生ポータル</div><div class="sub">研修申請・承認状況・受講履歴</div></div>
       <a class="btn small" href="/">トップへ</a>
     </div>
   </div>
@@ -390,7 +669,7 @@ const ADMIN_BODY = `
  </div>
 
  <div id="trainingSection">
-   <div class="section">研修一覧</div><div id="adminList"></div>
+   <div class="section">研修一覧・TRAINING CONTROL</div><div id="adminList"></div>
  </div>
  <div id="instructorSection" style="display:none">
    <div class="section">教官管理</div>
@@ -418,7 +697,7 @@ const ADMIN_BODY = `
  </div>
 
  <div id="traineeSection" style="display:none">
-   <div class="section">研修生一覧</div>
+   <div class="section">研修生一覧・TRAINEE STATUS</div>
    <div class="card"><input id="traineeSearch" placeholder="名前・Discord ID・所属で検索"></div>
    <div id="traineeList"><div class="empty">研修生情報を読み込んでいます...</div></div>
  </div>
