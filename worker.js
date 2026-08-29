@@ -72,26 +72,49 @@ async function ensureTrainingPrograms(env) {
       program_id INTEGER NOT NULL,
       training_id INTEGER NOT NULL UNIQUE,
       step_order INTEGER NOT NULL DEFAULT 1,
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (program_id) REFERENCES training_programs(id) ON DELETE CASCADE,
-      FOREIGN KEY (training_id) REFERENCES trainings(id) ON DELETE CASCADE
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
   `).run();
+
+  // Old DBs do not have training_id. Add it safely.
   const pinfo = await env.DB.prepare("PRAGMA table_info(training_programs)").all();
-  const pcols = (pinfo.results || []).map(x => String(x.name || "").toLowerCase());
+  let pcols = (pinfo.results || []).map(x => String(x.name || "").toLowerCase());
   if (!pcols.includes("training_id")) {
-    await env.DB.prepare("ALTER TABLE training_programs ADD COLUMN training_id INTEGER").run();
-  }
-  const {results:orphans} = await env.DB.prepare("SELECT id,name,description FROM training_programs WHERE training_id IS NULL").all();
-  for (const p of orphans || []) {
-    const tr = await env.DB.prepare(`
-      INSERT INTO trainings(category,title,description,training_date,start_time,end_time,capacity,instructor,location)
-      VALUES(?,?,?,?,?,?,?,?,?)
-    `).bind("研修プログラム",p.name,p.description||"","2099-12-31","00:00","",999,"","").run();
-    const tid = Number(tr.meta?.last_row_id||0);
-    if (tid) await env.DB.prepare("UPDATE training_programs SET training_id=? WHERE id=?").bind(tid,p.id).run();
+    try {
+      await env.DB.prepare("ALTER TABLE training_programs ADD COLUMN training_id INTEGER").run();
+    } catch (e) {
+      // Another request may have added it at the same time.
+      const check = await env.DB.prepare("PRAGMA table_info(training_programs)").all();
+      pcols = (check.results || []).map(x => String(x.name || "").toLowerCase());
+      if (!pcols.includes("training_id")) throw e;
+    }
   }
 
+  // Existing programs become application-ready trainings automatically.
+  const {results:orphans} = await env.DB.prepare(
+    "SELECT id,name,description FROM training_programs WHERE training_id IS NULL"
+  ).all();
+
+  for (const p of (orphans || [])) {
+    const tr = await env.DB.prepare(`
+      INSERT INTO trainings(title,description,training_date,start_time,capacity,instructor,location)
+      VALUES(?,?,?,?,?,?,?)
+    `).bind(
+      p.name,
+      p.description || "",
+      "2099-12-31",
+      "00:00",
+      999,
+      "",
+      ""
+    ).run();
+
+    const tid = Number(tr.meta?.last_row_id || 0);
+    if (tid) {
+      await env.DB.prepare("UPDATE training_programs SET training_id=? WHERE id=?")
+        .bind(tid,p.id).run();
+    }
+  }
 }
 
 const html = (title, body, script = "") => new Response(`<!doctype html>
@@ -211,7 +234,7 @@ async function load(discordId){
  const r=await fetch('/api/trainings');
  const data=await r.json().catch(()=>[]);
  const el=document.getElementById('list');
- if(!r.ok){el.innerHTML='<div class="notice error">'+esc(data.error||'研修を取得できませんでした')+'</div>';return}
+ if(!r.ok){el.innerHTML='<div class="notice error">'+esc((data.error||'研修を取得できませんでした')+(data.detail?'：'+data.detail:''))+'</div>';return}
  if(!data.length){el.innerHTML='<div class="empty">現在、受付中の研修はありません。</div>';return}
  el.innerHTML=data.map(t=>'<div class="card"><div class="title">'+esc(t.title)+'</div>'+(t.description?'<div class="sub" style="margin:10px 0 12px;white-space:pre-wrap">'+esc(t.description)+'</div>':'')+'<div class="between"><span class="sub">申請後、管理者が担当教官を選んで承認します。</span><button class="btn primary bookingBtn" data-id="'+t.id+'" data-title="'+encodeURIComponent(t.title)+'">申請する</button></div></div>').join('');
  document.querySelectorAll('.bookingBtn').forEach(btn=>btn.addEventListener('click',()=>openBooking(Number(btn.dataset.id),decodeURIComponent(btn.dataset.title))));
@@ -760,14 +783,18 @@ async function handle(request, env) {
  if(path==="/admin" && method==="GET") return html("研修管理",ADMIN_BODY,ADMIN_SCRIPT);
 
  if(path==="/api/trainings" && method==="GET"){
-   await ensureTrainingPrograms(env);
-   const {results}=await env.DB.prepare(`
-     SELECT training_id AS id,name AS title,description
-     FROM training_programs
-     WHERE active=1 AND training_id IS NOT NULL
-     ORDER BY id
-   `).all();
-   return json(results);
+   try{
+     await ensureTrainingPrograms(env);
+     const {results}=await env.DB.prepare(`
+       SELECT training_id AS id,name AS title,description
+       FROM training_programs
+       WHERE active=1 AND training_id IS NOT NULL
+       ORDER BY id
+     `).all();
+     return json(results || []);
+   }catch(e){
+     return json({error:"研修を取得できませんでした",detail:String(e?.message||e)},500);
+   }
  }
  if(path==="/api/trainee/register" && method==="POST"){
    await ensureTraineeProfiles(env);
@@ -997,9 +1024,9 @@ async function handle(request, env) {
    if(!name)return json({error:"研修名は必須です"},400);
 
    const tr=await env.DB.prepare(`
-     INSERT INTO trainings(category,title,description,training_date,start_time,end_time,capacity,instructor,location)
-     VALUES(?,?,?,?,?,?,?,?,?)
-   `).bind("研修プログラム",name,description,"2099-12-31","00:00","",999,"","").run();
+     INSERT INTO trainings(title,description,training_date,start_time,capacity,instructor,location)
+     VALUES(?,?,?,?,?,?,?)
+   `).bind(name,description,"2099-12-31","00:00",999,"","").run();
    const trainingId=Number(tr.meta?.last_row_id||0);
 
    const r=await env.DB.prepare("INSERT INTO training_programs(name,description,training_id) VALUES(?,?,?)")
