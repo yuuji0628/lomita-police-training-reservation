@@ -472,6 +472,25 @@ textarea{min-height:90px}
 #instructorList .card{border-left:4px solid #d7ad45}
 #trainingList .card{border-left:4px solid #164f92}
 
+
+/* Compact trainee dashboard */
+#traineeApp .header{padding:15px 16px;border-radius:17px;margin-bottom:10px}
+#traineeApp .header .brand{font-size:21px}
+#traineeApp .header .badge{padding:4px 8px;margin-bottom:5px}
+#traineeApp .section{font-size:16px;margin:16px 2px 7px}
+#traineeApp .section:before{height:17px;width:4px}
+#traineeApp .profileCard{padding:12px}
+#traineeApp .profileHead{gap:9px}
+#traineeApp .avatar{width:40px;height:40px}
+#traineeApp .grid{gap:7px;margin-top:10px}
+#traineeApp .stat{padding:10px 12px;border-radius:13px;min-height:72px}
+#traineeApp .stat b{font-size:22px;margin-top:2px}
+#traineeApp .stat .sub{font-size:11px}
+#traineeApp .card{padding:12px;border-radius:15px;margin:8px 0}
+#traineeApp .title{font-size:16px}
+#traineeApp .meta{margin:5px 0;font-size:12px}
+#traineeApp .pill{padding:4px 8px;font-size:11px}
+
 @media(max-width:700px){
   .grid{grid-template-columns:1fr 1fr}
   .formgrid{grid-template-columns:1fr}
@@ -505,7 +524,7 @@ const LANDING_BODY = `
 </div>`;
 
 const PUBLIC_BODY = `
-<div class="wrap">
+<div class="wrap" id="traineeApp">
   <div class="header">
     <div class="between">
       <div><span class="badge">TRAINEE PORTAL</span><div class="brand">研修生ポータル</div><div class="sub">研修申請・承認状況・受講履歴</div></div>
@@ -616,7 +635,7 @@ async function load(){
  if(r.status===401){showAuth();return}
  if(!r.ok){el.innerHTML='<div class="notice error">'+esc((data.error||'研修を取得できませんでした')+(data.detail?'：'+data.detail:''))+'</div>';return}
  if(!data.length){el.innerHTML='<div class="empty">すべての研修を受講済みです。</div>';return}
- el.innerHTML=data.map(t=>'<div class="card"><div class="title">'+esc(t.title)+'</div>'+(t.description?'<div class="sub" style="margin:10px 0 12px;white-space:pre-wrap">'+esc(t.description)+'</div>':'')+'<div class="between"><span class="sub">'+(t.current_status==='pending'?'現在、承認待ちです。':t.current_status==='reserved'?'承認済みです。受講完了後に次の研修が表示されます。':'申請後、管理者が担当教官を選んで承認します。')+'</span><button class="btn primary bookingBtn" data-id="'+t.id+'" data-title="'+encodeURIComponent(t.title)+'" '+(t.already_applied?'disabled':'')+'>'+(t.current_status==='pending'?'承認待ち':t.current_status==='reserved'?'受講待ち':'申請する')+'</button></div></div>').join('');
+ el.innerHTML=data.map(t=>'<div class="card profileCard"><div class="title">'+esc(t.title)+'</div>'+(t.description?'<div class="sub" style="margin:10px 0 12px;white-space:pre-wrap">'+esc(t.description)+'</div>':'')+'<div class="between"><span class="sub">'+(t.current_status==='pending'?'現在、承認待ちです。':t.current_status==='reserved'?'承認済みです。受講完了後に次の研修が表示されます。':'申請後、管理者が担当教官を選んで承認します。')+'</span><button class="btn primary bookingBtn" data-id="'+t.id+'" data-title="'+encodeURIComponent(t.title)+'" '+(t.already_applied?'disabled':'')+'>'+(t.current_status==='pending'?'承認待ち':t.current_status==='reserved'?'受講待ち':'申請する')+'</button></div></div>').join('');
  document.querySelectorAll('.bookingBtn:not([disabled])').forEach(btn=>btn.addEventListener('click',()=>openBooking(Number(btn.dataset.id),decodeURIComponent(btn.dataset.title))));
 }
 function openBooking(id,title){selectedTraining={id,title};document.getElementById('bookingMsg').innerHTML='';document.getElementById('bookTitle').textContent=title+' 申請';document.getElementById('booking').classList.add('open')}
