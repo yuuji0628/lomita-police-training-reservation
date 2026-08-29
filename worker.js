@@ -37,6 +37,16 @@ async function ensureTraineeProfiles(env) {
   `).run();
 }
 
+async function ensureInstructors(env) {
+  await env.DB.prepare(`
+    CREATE TABLE IF NOT EXISTS instructors (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `).run();
+}
+
 async function ensureTrainingPrograms(env) {
   await env.DB.prepare(`
     CREATE TABLE IF NOT EXISTS training_programs (
@@ -180,7 +190,7 @@ async function load(discordId){
  if(!data.length){el.innerHTML='<div class="empty">現在、あなたが受講できる研修はありません。</div>';return}
  el.innerHTML=data.map(t=>{
    const program=t.program_name?'<span class="pill">'+esc(t.program_name)+' / STEP '+esc(t.step_order)+'</span>':'';
-   return '<div class="card"><div class="between"><div>'+program+'<div class="title" style="margin-top:8px">'+esc(t.title)+'</div><div class="meta"><span>📅 '+fmt(t.training_date)+'</span><span>🕒 '+esc(t.start_time)+'</span></div></div></div>'+(t.description?'<div class="sub" style="margin:8px 0 12px;white-space:pre-wrap">'+esc(t.description)+'</div>':'')+'<div class="between"><span class="sub">'+(t.program_name?'前の研修を受講済みにすると次の研修が開放されます。':'単発研修')+'</span><button class="btn primary bookingBtn" data-id="'+t.id+'" data-title="'+encodeURIComponent(t.title)+'">申請する</button></div></div>'
+   return '<div class="card"><div>'+program+'<div class="title" style="margin-top:8px">'+esc(t.title)+'</div>'+(t.instructor?'<div class="sub" style="margin-top:6px">担当：'+esc(t.instructor)+'</div>':'')+'</div>'+(t.description?'<div class="sub" style="margin:10px 0 12px;white-space:pre-wrap">'+esc(t.description)+'</div>':'')+'<div class="between"><span class="sub">'+(t.program_name?'前の研修を受講済みにすると次の研修が開放されます。':'単発研修')+'</span><button class="btn primary bookingBtn" data-id="'+t.id+'" data-title="'+encodeURIComponent(t.title)+'">申請する</button></div></div>'
  }).join('');
  document.querySelectorAll('.bookingBtn').forEach(btn=>btn.addEventListener('click',()=>openBooking(Number(btn.dataset.id),decodeURIComponent(btn.dataset.title))));
 }
@@ -289,6 +299,7 @@ const ADMIN_BODY = `
  <div class="menuTabs" style="grid-template-columns:repeat(2,1fr)">
    <button id="tabTraining" class="btn dark" type="button" onclick="showAdminSection('training')">研修管理</button>
    <button id="tabPrograms" class="btn" type="button" onclick="showAdminSection('programs')">研修プログラム</button>
+   <button id="tabInstructors" class="btn" type="button" onclick="showAdminSection('instructors')">教官管理</button>
    <button id="tabTrainees" class="btn" type="button" onclick="showAdminSection('trainees')">研修生管理</button>
    <button class="btn" type="button" onclick="openManageMenu()">管理メニュー</button>
  </div>
@@ -296,7 +307,19 @@ const ADMIN_BODY = `
  <div id="trainingSection">
    <div class="section">研修一覧</div><div id="adminList"></div>
  </div>
- <div id="programSection" style="display:none">
+ <div id="instructorSection" style="display:none">
+   <div class="section">教官管理</div>
+   <div class="card">
+     <div class="title" style="font-size:16px">教官を登録</div>
+     <div class="sub" style="margin:6px 0 12px">ここで登録した教官を研修の担当者として選べます。</div>
+     <div class="field"><label>教官名 *</label><input id="instructorName" maxlength="80" placeholder="教官名を入力"></div>
+     <button id="createInstructorBtn" class="btn primary" type="button" style="width:100%">教官を登録</button>
+     <div id="instructorMsg"></div>
+   </div>
+   <div id="instructorList"><div class="empty">教官を読み込んでいます...</div></div>
+ </div>
+
+  <div id="programSection" style="display:none">
    <div class="section">研修プログラム</div>
    <div class="card">
      <div class="title" style="font-size:16px">新しいプログラムを作成</div>
@@ -351,14 +374,13 @@ const ADMIN_BODY = `
 <div id="trainingModal" class="modal"><div class="sheet">
  <button class="btn small" style="float:right" onclick="closeTraining()">閉じる</button>
  <div class="title" id="trainingModalTitle">研修を追加</div>
- <div class="sub" style="margin:5px 0 12px">必要な情報だけ入力してください。</div>
+ <div class="sub" style="margin:5px 0 12px">研修内容はシンプルに登録できます。</div>
  <div id="trainingMsg"></div>
  <input type="hidden" id="trainingId">
 
  <div class="field"><label>研修名 *</label><input id="title" maxlength="80" placeholder="例：交通取締研修"></div>
- <div class="field"><label>日にち *</label><input id="trainingDate" type="date"></div>
- <div class="field"><label>時間 *</label><input id="startTime" type="time"></div>
- <div class="field"><label>フリー記入欄</label><textarea id="description" maxlength="1000" placeholder="研修内容、集合場所、持ち物、注意事項など自由に記入"></textarea></div>
+ <div class="field"><label>フリー記入欄</label><textarea id="description" maxlength="1000" placeholder="研修内容、注意事項など自由に記入"></textarea></div>
+ <div class="field"><label>担当者</label><select id="instructor"><option value="">担当者なし</option></select></div>
 
  <button id="trainingSaveBtn" type="button" class="btn primary" style="width:100%">保存する</button>
 </div></div>
@@ -402,16 +424,63 @@ function closeManageMenu(){document.getElementById('manageModal').classList.remo
 function showAdminSection(section){
  const training=section==='training';
  const programs=section==='programs';
+ const instructors=section==='instructors';
  const trainees=section==='trainees';
  document.getElementById('trainingSection').style.display=training?'block':'none';
  document.getElementById('programSection').style.display=programs?'block':'none';
+ document.getElementById('instructorSection').style.display=instructors?'block':'none';
  document.getElementById('traineeSection').style.display=trainees?'block':'none';
  document.getElementById('tabTraining').className='btn '+(training?'dark':'');
  document.getElementById('tabPrograms').className='btn '+(programs?'dark':'');
+ document.getElementById('tabInstructors').className='btn '+(instructors?'dark':'');
  document.getElementById('tabTrainees').className='btn '+(trainees?'dark':'');
  if(programs)loadPrograms();
+ if(instructors)loadInstructors();
  if(trainees)loadTrainees();
 }
+let instructorRows=[];
+async function loadInstructors(){
+ const r=await fetch('/api/admin/instructors',{headers:auth()});
+ if(r.status===401)return logout();
+ const d=await r.json().catch(()=>[]);
+ if(!r.ok){document.getElementById('instructorList').innerHTML='<div class="notice error">'+esc(d.error||'教官を取得できませんでした')+'</div>';return}
+ instructorRows=d;
+ renderInstructors();
+ refreshInstructorSelect();
+}
+function renderInstructors(){
+ const e=document.getElementById('instructorList');
+ if(!instructorRows.length){e.innerHTML='<div class="empty">まだ教官は登録されていません。</div>';return}
+ e.innerHTML=instructorRows.map(x=>'<div class="card"><div class="between"><div><div class="title">'+esc(x.name)+'</div><div class="sub">登録済み教官</div></div><button class="btn small danger" data-delete-instructor="'+x.id+'">削除</button></div></div>').join('');
+ document.querySelectorAll('[data-delete-instructor]').forEach(b=>b.addEventListener('click',()=>deleteInstructor(Number(b.dataset.deleteInstructor))));
+}
+function refreshInstructorSelect(selected){
+ const sel=document.getElementById('instructor');
+ if(!sel)return;
+ sel.innerHTML='<option value="">担当者なし</option>'+instructorRows.map(x=>'<option value="'+esc(x.name)+'">'+esc(x.name)+'</option>').join('');
+ if(selected)sel.value=selected;
+}
+async function createInstructor(){
+ const name=document.getElementById('instructorName').value.trim();
+ if(!name){noticeInAdmin('instructorMsg','教官名を入力してください','error');return}
+ const btn=document.getElementById('createInstructorBtn');btn.disabled=true;btn.textContent='登録中...';
+ try{
+   const r=await fetch('/api/admin/instructors',{method:'POST',headers:auth(),body:JSON.stringify({name})});
+   const d=await r.json().catch(()=>({}));
+   if(!r.ok){noticeInAdmin('instructorMsg',d.error||'登録できませんでした','error');return}
+   document.getElementById('instructorName').value='';
+   noticeInAdmin('instructorMsg','教官を登録しました','success');
+   await loadInstructors();
+ }finally{btn.disabled=false;btn.textContent='教官を登録'}
+}
+async function deleteInstructor(id){
+ if(!confirm('この教官を削除しますか？\\n既存研修の担当者名はそのまま残ります。'))return;
+ const r=await fetch('/api/admin/instructors/'+id,{method:'DELETE',headers:auth()});
+ const d=await r.json().catch(()=>({}));
+ if(!r.ok){alert(d.error||'削除できませんでした');return}
+ await loadInstructors();
+}
+
 let programRows=[];
 async function loadPrograms(){
  const r=await fetch('/api/admin/programs',{headers:auth()});
@@ -425,7 +494,7 @@ function renderPrograms(){
  if(!programRows.length){e.innerHTML='<div class="empty">まだ研修プログラムはありません。</div>';return}
  e.innerHTML=programRows.map(p=>{
    const used=new Set(p.steps.map(s=>Number(s.training_id)));
-   const options=trainings.filter(t=>!used.has(Number(t.id))).map(t=>'<option value="'+t.id+'">'+esc(t.title)+'（'+esc(t.training_date)+' '+esc(t.start_time)+'）</option>').join('');
+   const options=trainings.filter(t=>!used.has(Number(t.id))).map(t=>'<option value="'+t.id+'">'+esc(t.title)+'</option>').join('');
    const steps=p.steps.length?p.steps.map((s,i)=>'<div class="res"><div class="between"><div><span class="pill">STEP '+(i+1)+'</span><b style="margin-left:8px">'+esc(s.title)+'</b><div class="sub" style="margin-top:4px">'+esc(s.training_date)+' '+esc(s.start_time)+'</div></div><div class="row"><button class="btn small" data-move-step="'+s.id+'" data-dir="-1" '+(i===0?'disabled':'')+'>↑</button><button class="btn small" data-move-step="'+s.id+'" data-dir="1" '+(i===p.steps.length-1?'disabled':'')+'>↓</button><button class="btn small danger" data-remove-step="'+s.id+'">削除</button></div></div></div>').join(''):'<div class="empty" style="padding:18px">研修を追加してください。</div>';
    return '<div class="card"><div class="between"><div><div class="title">'+esc(p.name)+'</div>'+(p.description?'<div class="sub" style="margin-top:4px">'+esc(p.description)+'</div>':'')+'</div><button class="btn small danger" data-delete-program="'+p.id+'">プログラム削除</button></div><div style="margin-top:12px">'+steps+'</div><div class="formgrid" style="margin-top:12px"><select id="programAdd_'+p.id+'"><option value="">追加する研修を選択</option>'+options+'</select><button class="btn primary" data-add-program-step="'+p.id+'" '+(!options?'disabled':'')+'>この研修を次に追加</button></div></div>';
  }).join('');
@@ -508,47 +577,45 @@ function render(){const e=document.getElementById('adminList');if(!trainings.len
  document.querySelectorAll('.editBtn').forEach(btn=>btn.addEventListener('click',()=>openTraining(Number(btn.dataset.id))));
  document.querySelectorAll('.delBtn').forEach(btn=>btn.addEventListener('click',()=>deleteTraining(Number(btn.dataset.id))));
 }
-function openTraining(id){
+async function openTraining(id){
  const t=id?trainings.find(x=>x.id===id):null;
  document.getElementById('trainingMsg').innerHTML='';
  document.getElementById('trainingModal').classList.add('open');
  document.getElementById('trainingModalTitle').textContent=t?'研修を編集':'研修を追加';
  document.getElementById('trainingId').value=t?.id||'';
  document.getElementById('title').value=t?.title||'';
- document.getElementById('trainingDate').value=t?.training_date||'';
- document.getElementById('startTime').value=t?.start_time||'';
  document.getElementById('description').value=t?.description||'';
+ if(!instructorRows.length)await loadInstructors();
+ refreshInstructorSelect(t?.instructor||'');
 }
 function closeTraining(){document.getElementById('trainingModal').classList.remove('open')}
 async function saveTraining(){
  const modalMsg=document.getElementById('trainingMsg');
  const title=document.getElementById('title').value.trim();
- const training_date=document.getElementById('trainingDate').value;
- const start_time=document.getElementById('startTime').value;
  const description=document.getElementById('description').value.trim();
+ const instructor=document.getElementById('instructor').value.trim();
 
- const required=[['title','研修名'],['trainingDate','日にち'],['startTime','時間']];
- for(const [id,label] of required){
-   const el=document.getElementById(id);
-   if(!el.value){
-     modalMsg.innerHTML='<div class="notice error">'+label+'を入力してください。</div>';
-     el.focus();el.scrollIntoView({behavior:'smooth',block:'center'});return;
-   }
+ if(!title){
+   modalMsg.innerHTML='<div class="notice error">研修名を入力してください。</div>';
+   document.getElementById('title').focus();return;
  }
 
+ const id=document.getElementById('trainingId').value;
+ const existing=id?trainings.find(x=>String(x.id)===String(id)):null;
+
+ // DBの必須項目は画面に出さず内部値で保持
  const body={
    category:'一般研修',
    title,
    description,
-   training_date,
+   training_date:existing?.training_date||'2099-12-31',
    capacity:999,
-   start_time,
+   start_time:existing?.start_time||'00:00',
    end_time:'',
-   instructor:'',
+   instructor,
    location:''
  };
 
- const id=document.getElementById('trainingId').value;
  const saveBtn=document.getElementById('trainingSaveBtn');
  const oldText=saveBtn.textContent;
  saveBtn.disabled=true;saveBtn.textContent='保存中...';
@@ -616,6 +683,7 @@ function updateFileInfo(){
 document.getElementById('trainingSaveBtn')?.addEventListener('click',saveTraining);
 document.getElementById('traineeSearch')?.addEventListener('input',renderTrainees);
 document.getElementById('createProgramBtn')?.addEventListener('click',createProgram);
+document.getElementById('createInstructorBtn')?.addEventListener('click',createInstructor);
 async function uploadToGitHub(){
   const files=[...document.getElementById('gitFile').files];
   const out=document.getElementById('gitMsg');
@@ -904,6 +972,34 @@ async function handle(request, env) {
    const stats={pending:0,reserved:0,completed:0,absent:0,cancelled:0};
    for(const x of results)if(stats[x.status]!==undefined)stats[x.status]++;
    return json({profile,stats,history:results});
+ }
+
+ if(path==="/api/admin/instructors" && method==="GET"){
+   await ensureInstructors(env);
+   const {results}=await env.DB.prepare("SELECT id,name,created_at FROM instructors ORDER BY name COLLATE NOCASE").all();
+   return json(results);
+ }
+
+ if(path==="/api/admin/instructors" && method==="POST"){
+   await ensureInstructors(env);
+   const b=await request.json().catch(()=>({}));
+   const name=String(b.name||"").trim();
+   if(!name)return json({error:"教官名は必須です"},400);
+   try{
+     const r=await env.DB.prepare("INSERT INTO instructors(name) VALUES(?)").bind(name).run();
+     return json({ok:true,id:r.meta?.last_row_id||null},201);
+   }catch(e){
+     const message=String(e?.message||e);
+     if(message.toLowerCase().includes("unique"))return json({error:"同じ教官名がすでに登録されています"},409);
+     return json({error:"教官を登録できませんでした",detail:message},500);
+   }
+ }
+
+ let im=path.match(/^\/api\/admin\/instructors\/(\d+)$/);
+ if(im && method==="DELETE"){
+   await ensureInstructors(env);
+   await env.DB.prepare("DELETE FROM instructors WHERE id=?").bind(Number(im[1])).run();
+   return json({ok:true});
  }
 
  if(path==="/api/admin/programs" && method==="GET"){
