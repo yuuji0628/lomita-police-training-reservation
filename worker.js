@@ -22,15 +22,41 @@ input,textarea,select{width:100%;border:1px solid #cbd5e1;border-radius:12px;pad
 @media(max-width:700px){.grid{grid-template-columns:1fr 1fr}.formgrid{grid-template-columns:1fr}.header .between{align-items:flex-start}.top{align-items:flex-start}}
 </style></head><body>${body}<script>${script}</script></body></html>`, {headers:{"content-type":"text/html; charset=utf-8"}});
 
+
+const LANDING_BODY = `
+<div class="wrap" style="max-width:620px">
+  <div class="header" style="margin-top:35px">
+    <span class="badge">LOMITA POLICE</span>
+    <div class="brand">研修予約システム</div>
+    <div class="sub">利用する画面を選択してください</div>
+  </div>
+
+  <div class="card" style="padding:20px">
+    <div class="title">研修生用</div>
+    <div class="sub" style="margin:7px 0 16px">研修予定の確認・参加申請はこちら</div>
+    <a href="/trainee" class="btn primary" style="display:block;text-align:center;width:100%">研修生画面を開く</a>
+  </div>
+
+  <div class="card" style="padding:20px">
+    <div class="title">管理者用</div>
+    <div class="sub" style="margin:7px 0 16px">研修作成・申請承認・受講状況の管理</div>
+    <a href="/admin" class="btn dark" style="display:block;text-align:center;width:100%">管理画面を開く</a>
+  </div>
+</div>`;
+
 const PUBLIC_BODY = `
 <div class="wrap">
   <div class="header">
     <div class="between">
-      <div><span class="badge">LOMITA POLICE</span><div class="brand">警察研修予約</div><div class="sub">研修日程を確認して参加申請してください</div></div>
-      <a class="btn small" href="/admin">管理</a>
+      <div><span class="badge">TRAINEE</span><div class="brand">研修生ページ</div><div class="sub">研修日程を確認して参加申請してください</div></div>
+      <a class="btn small" href="/">トップへ</a>
     </div>
   </div>
-  <div id="msg"></div><div id="list"><div class="empty">読み込み中...</div></div>
+  <div class="card" style="margin-top:0">
+    <div class="title" style="font-size:16px">研修生メニュー</div>
+    <div class="sub" style="margin-top:6px">受付中の研修から希望する研修を選び、「申請する」から申し込んでください。</div>
+  </div>
+  <div id="msg"></div><div class="section">受付中の研修</div><div id="list"><div class="empty">読み込み中...</div></div>
 </div>
 <div id="booking" class="modal"><div class="sheet">
   <button class="btn small" style="float:right" onclick="closeBooking()">閉じる</button>
@@ -76,14 +102,14 @@ const ADMIN_BODY = `
  <span class="badge">LOMITA POLICE</span><div class="title" style="font-size:24px">研修管理</div><div class="sub" style="margin:5px 0 16px">共通パスワードを入力してください</div>
  <div id="loginMsg"></div><input id="password" type="password" placeholder="パスワード" onkeydown="if(event.key==='Enter')login()">
  <button class="btn dark" style="width:100%;margin-top:10px" onclick="login()">管理画面を開く</button>
- <a href="/" class="btn" style="display:block;text-align:center;margin-top:8px">予約ページへ戻る</a>
+ <a href="/" class="btn" style="display:block;text-align:center;margin-top:8px">トップへ戻る</a>
 </div></div>
 <div id="adminView" style="display:none"><div class="wrap">
  <div class="header"><div class="between"><div><span class="badge">LOMITA POLICE</span><div class="brand">研修管理本部</div><div class="sub">研修・参加申請・受講状況を一括管理</div></div><div class="row"><button class="btn small" onclick="logout()">ログアウト</button><button class="btn primary small" onclick="openTraining()">＋研修追加</button></div></div></div>
  <div id="msg"></div>
  <div class="grid"><div class="stat"><span class="sub">今後の研修</span><b id="sTrain">0</b></div><div class="stat"><span class="sub">承認待ち</span><b id="sPending">0</b></div><div class="stat"><span class="sub">予約確定</span><b id="sReserved">0</b></div><div class="stat"><span class="sub">受講済み</span><b id="sCompleted">0</b></div></div>
  <div class="section">研修一覧</div><div id="adminList"></div>
-</div><div class="footerNav"><a href="/">予約ページ</a><a class="active" href="/admin">管理画面</a></div></div>
+</div><div class="footerNav"><a href="/">トップ</a><a class="active" href="/admin">管理画面</a></div></div>
 <div id="trainingModal" class="modal"><div class="sheet">
  <button class="btn small" style="float:right" onclick="closeTraining()">閉じる</button><div class="title" id="trainingModalTitle">研修を追加</div>
  <input type="hidden" id="trainingId">
@@ -135,7 +161,8 @@ async function handle(request, env) {
  const adminPass=env.ADMIN_PASSWORD || "game1234";
  const isAdmin=()=>request.headers.get("x-admin-password")===adminPass;
 
- if(path==="/" && method==="GET") return html("警察研修予約",PUBLIC_BODY,PUBLIC_SCRIPT);
+ if(path==="/" && method==="GET") return html("研修予約システム",LANDING_BODY,"");
+ if(path==="/trainee" && method==="GET") return html("研修生ページ",PUBLIC_BODY,PUBLIC_SCRIPT);
  if(path==="/admin" && method==="GET") return html("研修管理",ADMIN_BODY,ADMIN_SCRIPT);
 
  if(path==="/api/trainings" && method==="GET"){
