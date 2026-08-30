@@ -521,7 +521,6 @@ textarea{min-height:90px}
   border-radius:14px;
   font-weight:900;
 }
-.ownerOnly{display:none}
 .menuTabs .btn.dark{
   box-shadow:inset 0 -3px 0 #d7ad454d,0 6px 16px #06182d20;
 }
@@ -745,7 +744,7 @@ const ADMIN_BODY = `
  </div>
 </div>
 <div id="adminView" style="display:none"><div class="wrap">
- <div class="header"><div class="between"><div><span class="badge">LOMITA POLICE</span><div class="brand">研修管理本部</div><div class="sub">研修・参加申請・受講状況を一括管理</div><div id="adminRoleLabel" class="sub" style="margin-top:4px"></div></div><div class="row"><button class="btn small" onclick="logout()">ログアウト</button><button class="btn small ownerOnly" onclick="openManageMenu()">⚙ 管理メニュー</button><button class="btn primary small" onclick="openTraining()">＋研修追加</button></div></div></div>
+ <div class="header"><div class="between"><div><span class="badge">LOMITA POLICE</span><div class="brand">研修管理本部</div><div class="sub">研修・参加申請・受講状況を一括管理</div><div id="adminRoleLabel" class="sub" style="margin-top:4px"></div></div><div class="row"><button class="btn small" onclick="logout()">ログアウト</button><button class="btn small" onclick="openManageMenu()">⚙ 管理メニュー</button><button class="btn primary small" onclick="openTraining()">＋研修追加</button></div></div></div>
  <div id="msg"></div>
  <div class="grid"><div class="stat"><span class="sub">今後の研修</span><b id="sTrain">0</b></div><div class="stat"><span class="sub">承認待ち</span><b id="sPending">0</b></div><div class="stat"><span class="sub">予約確定</span><b id="sReserved">0</b></div><div class="stat"><span class="sub">受講済み</span><b id="sCompleted">0</b></div></div>
 
@@ -756,7 +755,7 @@ const ADMIN_BODY = `
    <button id="tabTrainees" class="btn" type="button" onclick="showAdminSection('trainees')">研修生管理</button>
    <button id="tabApplicationHistory" class="btn" type="button" onclick="showAdminSection('applicationHistory')">申請履歴</button>
    <button id="tabConfirmedReservations" class="btn" type="button" onclick="showAdminSection('confirmedReservations')">予約確定一覧</button>
-   <button class="btn ownerOnly" type="button" onclick="openManageMenu()">管理メニュー</button>
+   <button class="btn" type="button" onclick="openManageMenu()">管理メニュー</button>
  </div>
 
  <div id="trainingSection">
@@ -869,7 +868,7 @@ const ADMIN_BODY = `
 </div></div>`;
 
 const ADMIN_SCRIPT = String.raw`
-let adminPassword='', trainings=[], activeTrainingId=null, buildTimer=null, currentAdminRole='';
+let adminPassword='', trainings=[], activeTrainingId=null, buildTimer=null, currentAdminRole='owner';
 const labels={pending:'承認待ち',reserved:'予約確定',completed:'受講済み',absent:'欠席',cancelled:'キャンセル'};
 function esc(s){return String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 function auth(){const h={'content-type':'application/json'};if(adminPassword)h['x-admin-password']=adminPassword;return h}
@@ -896,21 +895,16 @@ async function logout(){
 }
 function showAdmin(){document.getElementById('loginView').style.display='none';document.getElementById('adminView').style.display='block'}
 async function loadCurrentAdminRole(){
- try{
-   const r=await fetch('/api/admin/role',{headers:auth()});
-   const d=await r.json().catch(()=>({}));
-   if(!r.ok)return;
-   currentAdminRole=d.role||'manager';
-   document.querySelectorAll('.ownerOnly').forEach(el=>el.style.display=d.can_github?'':'none');
-   const label=document.getElementById('adminRoleLabel');
-   if(label)label.textContent=d.can_github?'システム管理者':'認証済み管理ユーザー';
- }catch(_){}
+ currentAdminRole='owner';
+ document.querySelectorAll('.ownerOnly').forEach(el=>el.style.display='');
+ const label=document.getElementById('adminRoleLabel');
+ if(label)label.textContent='システム管理者';
 }
 async function restoreAdmin(){
  const r=await fetch('/api/admin/check');
  if(r.ok){showAdmin();await loadCurrentAdminRole();await loadAdmin()}
 }
-function openManageMenu(){if(currentAdminRole!=='owner'){alert('システム管理者のみ利用できます');return}document.getElementById('manageModal').classList.add('open');setTimeout(()=>loadBuildStatus(),150)}
+function openManageMenu(){document.getElementById('manageModal').classList.add('open');setTimeout(()=>loadBuildStatus(),150)}
 function closeManageMenu(){document.getElementById('manageModal').classList.remove('open')}
 function showAdminSection(section){
  const training=section==='training';
