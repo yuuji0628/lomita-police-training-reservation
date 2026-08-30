@@ -753,8 +753,7 @@ const ADMIN_BODY = `
    <button id="tabPrograms" class="btn" type="button" onclick="showAdminSection('programs')">研修プログラム管理</button>
    <button id="tabInstructors" class="btn" type="button" onclick="showAdminSection('instructors')">教官管理</button>
    <button id="tabTrainees" class="btn" type="button" onclick="showAdminSection('trainees')">研修生管理</button>
-   <button id="tabApplicationHistory" class="btn" type="button" onclick="showAdminSection('applicationHistory')">申請履歴</button>
-   <button id="tabConfirmedReservations" class="btn" type="button" onclick="showAdminSection('confirmedReservations')">予約確定一覧</button>
+   <button id="tabReservations" class="btn" type="button" onclick="showAdminSection('reservations')">予約一覧</button>
    <button class="btn" type="button" onclick="openManageMenu()">管理メニュー</button>
  </div>
 
@@ -786,24 +785,18 @@ const ADMIN_BODY = `
    <div id="programList"><div class="empty">研修プログラムを読み込んでいます...</div></div>
  </div>
 
- <div id="confirmedReservationsSection" style="display:none">
-   <div class="section">予約確定一覧・CONFIRMED RESERVATIONS</div>
+ <div id="reservationsSection" style="display:none">
+   <div class="section">予約一覧・RESERVATION CONTROL</div>
    <div class="card">
      <div class="between">
        <div>
-         <div class="title" style="font-size:16px">予約確定済みの研修</div>
-         <div class="sub" style="margin-top:5px">承認して予約確定になった研修を一覧で確認できます。</div>
+         <div class="title" style="font-size:16px">承認待ち・予約確定</div>
+         <div class="sub" style="margin-top:5px">承認待ちの申請は、担当教官を選んでこの画面から承認できます。</div>
        </div>
-       <button class="btn small" type="button" onclick="loadConfirmedReservations()">更新</button>
+       <button class="btn small" type="button" onclick="loadReservationControl()">更新</button>
      </div>
    </div>
-   <div id="confirmedReservationsList"><div class="empty">予約確定一覧を読み込んでいます...</div></div>
- </div>
-
- <div id="applicationHistorySection" style="display:none">
-   <div class="section">申請履歴・APPLICATION LOG</div>
-   <div class="card"><div class="sub">全研修の申請・承認・受講済み・欠席・取消を新しい順に確認できます。</div></div>
-   <div id="applicationHistoryList"><div class="empty">申請履歴を読み込んでいます...</div></div>
+   <div id="reservationControlList"><div class="empty">予約一覧を読み込んでいます...</div></div>
  </div>
 
  <div id="traineeSection" style="display:none">
@@ -911,60 +904,100 @@ function showAdminSection(section){
  const programs=section==='programs';
  const instructors=section==='instructors';
  const trainees=section==='trainees';
- const applicationHistory=section==='applicationHistory';
- const confirmedReservations=section==='confirmedReservations';
+ const reservations=section==='reservations';
  document.getElementById('trainingSection').style.display=training?'block':'none';
  document.getElementById('programSection').style.display=programs?'block':'none';
  document.getElementById('instructorSection').style.display=instructors?'block':'none';
  document.getElementById('traineeSection').style.display=trainees?'block':'none';
- document.getElementById('applicationHistorySection').style.display=applicationHistory?'block':'none';
- document.getElementById('confirmedReservationsSection').style.display=confirmedReservations?'block':'none';
+ document.getElementById('reservationsSection').style.display=reservations?'block':'none';
  document.getElementById('tabTraining').className='btn '+(training?'dark':'');
  document.getElementById('tabPrograms').className='btn '+(programs?'dark':'');
  document.getElementById('tabInstructors').className='btn '+(instructors?'dark':'');
  document.getElementById('tabTrainees').className='btn '+(trainees?'dark':'');
- document.getElementById('tabApplicationHistory').className='btn '+(applicationHistory?'dark':'');
- document.getElementById('tabConfirmedReservations').className='btn '+(confirmedReservations?'dark':'');
+ document.getElementById('tabReservations').className='btn '+(reservations?'dark':'');
  if(programs)loadPrograms();
  if(instructors)loadInstructors();
  if(trainees)loadTrainees();
- if(applicationHistory)loadApplicationHistory();
- if(confirmedReservations)loadConfirmedReservations();
+ if(reservations)loadReservationControl();
 }
-async function loadConfirmedReservations(){
- const e=document.getElementById('confirmedReservationsList');
+async function loadReservationControl(){
+ const e=document.getElementById('reservationControlList');
  if(!e)return;
- e.innerHTML='<div class="empty">予約確定一覧を読み込んでいます...</div>';
- const r=await fetch('/api/admin/confirmed-reservations',{headers:auth()});
- const d=await r.json().catch(()=>({}));
- if(!r.ok){e.innerHTML='<div class="notice error">'+esc(d.error||'予約確定一覧を取得できませんでした')+'</div>';return}
- if(!d.length){e.innerHTML='<div class="empty">現在、予約確定済みの研修はありません。</div>';return}
+ e.innerHTML='<div class="empty">予約一覧を読み込んでいます...</div>';
+
+ // Approval requires an instructor. Load the latest instructor list first.
+ if(!instructorRows.length){
+   try{
+     const ir=await fetch('/api/admin/instructors',{headers:auth()});
+     const id=await ir.json().catch(()=>[]);
+     if(ir.ok && Array.isArray(id))instructorRows=id;
+   }catch(_){}
+ }
+
+ const r=await fetch('/api/admin/reservation-control',{headers:auth()});
+ const d=await r.json().catch(()=>[]);
+ if(!r.ok){
+   e.innerHTML='<div class="notice error">'+esc(d.error||'予約一覧を取得できませんでした')+'</div>';
+   return;
+ }
+ if(!d.length){
+   e.innerHTML='<div class="empty">現在、承認待ち・予約確定の予約はありません。</div>';
+   return;
+ }
+
  e.innerHTML=d.map(x=>{
+   const isPending=x.status==='pending';
    const dateText=[x.training_date||'',x.start_time||''].filter(Boolean).join(' ');
-   return '<div class="card">'+
-     '<div class="between">'+
-       '<div>'+
-         '<span class="pill reserved">予約確定</span>'+
+   const instructorOptions='<option value="">担当教官を選択</option>'+
+     instructorRows.map(i=>'<option value="'+esc(i.name)+'" '+(x.assigned_instructor===i.name?'selected':'')+'>'+esc(i.name)+'</option>').join('');
+
+   return '<div class="card" style="border-left:4px solid '+(isPending?'#d9b33b':'#0b4fa3')+'">'+
+     '<div class="between" style="gap:12px;align-items:flex-start">'+
+       '<div style="min-width:0">'+
+         '<span class="pill '+esc(x.status)+'">'+(isPending?'承認待ち':'予約確定')+'</span>'+
          '<div class="title" style="margin-top:7px">'+esc(x.title||'研修')+'</div>'+
          '<div class="sub" style="margin-top:5px">研修生：'+esc(x.player_name||'')+'</div>'+
+         (x.affiliation?'<div class="sub">所属：'+esc(x.affiliation)+'</div>':'')+
        '</div>'+
-       '<div class="sub" style="text-align:right">'+esc(dateText||'日時未設定')+'</div>'+
+       '<div class="sub" style="text-align:right;white-space:nowrap">'+esc(dateText||'日時未設定')+'</div>'+
      '</div>'+
-     '<div class="sub" style="margin-top:9px">担当教官：'+esc(x.assigned_instructor||x.instructor||'未設定')+'</div>'+
-     (x.affiliation?'<div class="sub">所属：'+esc(x.affiliation)+'</div>':'')+
-     (x.note?'<div class="sub">備考：'+esc(x.note)+'</div>':'')+
+     (isPending
+       ? '<div class="field" style="margin-top:12px"><label>担当教官</label><select id="reservationControlInstructor_'+x.id+'">'+instructorOptions+'</select></div>'+
+         '<button class="btn primary" style="width:100%" type="button" onclick="approveReservationFromList('+Number(x.id)+')">担当を決めて承認</button>'
+       : '<div class="sub" style="margin-top:10px">担当教官：'+esc(x.assigned_instructor||'未設定')+'</div>'
+     )+
+     (x.note?'<div class="sub" style="margin-top:6px">備考：'+esc(x.note)+'</div>':'')+
    '</div>';
  }).join('');
 }
 
-async function loadApplicationHistory(){
- const e=document.getElementById('applicationHistoryList');
- const r=await fetch('/api/admin/application-history',{headers:auth()});
- const d=await r.json().catch(()=>({}));
- if(!r.ok){e.innerHTML='<div class="notice error">'+esc(d.error||'申請履歴を取得できませんでした')+'</div>';return}
- if(!d.length){e.innerHTML='<div class="empty">申請履歴はありません。</div>';return}
- e.innerHTML=d.map(x=>'<div class="card"><div class="between"><div><span class="pill '+esc(x.status)+'">'+esc(labels[x.status]||x.status)+'</span><div class="title" style="margin-top:7px">'+esc(x.title)+'</div><div class="sub" style="margin-top:4px">'+esc(x.player_name)+' / '+esc(x.discord_id||'')+'</div></div><div class="sub">'+esc(x.created_at||'')+'</div></div>'+(x.assigned_instructor?'<div class="sub" style="margin-top:7px">担当教官：'+esc(x.assigned_instructor)+'</div>':'')+(x.note?'<div class="sub">備考：'+esc(x.note)+'</div>':'')+'</div>').join('');
+async function approveReservationFromList(id){
+ const sel=document.getElementById('reservationControlInstructor_'+id);
+ const assigned_instructor=sel?sel.value.trim():'';
+ if(!assigned_instructor){
+   alert('担当教官を選択してから承認してください。');
+   return;
+ }
+ if(!confirm('この申請を予約確定にしますか？'))return;
+
+ try{
+   const r=await fetch('/api/admin/reservations/'+id,{
+     method:'PATCH',
+     headers:auth(),
+     body:JSON.stringify({status:'reserved',assigned_instructor})
+   });
+   const d=await r.json().catch(()=>({}));
+   if(!r.ok){
+     alert((d.error||'承認できませんでした')+(d.detail?'\n'+d.detail:''));
+     return;
+   }
+   await loadReservationControl();
+   await loadAdmin();
+ }catch(e){
+   alert('通信エラーで承認できませんでした。');
+ }
 }
+
 let instructorRows=[];
 async function loadInstructors(){
  const r=await fetch('/api/admin/instructors',{headers:auth()});
@@ -1568,7 +1601,7 @@ async function handle(request, env) {
    return json({profile,stats,history:results});
  }
 
- if(path==="/api/admin/confirmed-reservations" && method==="GET"){
+ if(path==="/api/admin/reservation-control" && method==="GET"){
    if(!(await isAdmin()))return json({error:"unauthorized"},401);
    await ensureReservationInstructor(env);
    const {results}=await env.DB.prepare(`
@@ -1588,8 +1621,9 @@ async function handle(request, env) {
        t.instructor
      FROM reservations r
      JOIN trainings t ON t.id=r.training_id
-     WHERE r.status='reserved'
+     WHERE r.status IN ('pending','reserved')
      ORDER BY
+       CASE WHEN r.status='pending' THEN 0 ELSE 1 END,
        CASE WHEN t.training_date IS NULL OR t.training_date='' THEN 1 ELSE 0 END,
        t.training_date ASC,
        t.start_time ASC,
@@ -1598,17 +1632,7 @@ async function handle(request, env) {
    return json(results||[]);
  }
 
- if(path==="/api/admin/application-history" && method==="GET"){
-   await ensureReservationInstructor(env);
-   const {results}=await env.DB.prepare(`
-     SELECT r.id,r.training_id,r.player_name,r.discord_id,r.affiliation,r.note,r.status,r.assigned_instructor,r.created_at,t.title
-     FROM reservations r
-     JOIN trainings t ON t.id=r.training_id
-     ORDER BY r.id DESC
-     LIMIT 500
-   `).all();
-   return json(results||[]);
- }
+
 
  if(path==="/api/admin/instructors" && method==="GET"){
    await ensureInstructors(env);
