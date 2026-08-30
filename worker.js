@@ -1,3 +1,4 @@
+const APP_VERSION="1.02";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -593,7 +594,7 @@ const PUBLIC_BODY = `
 <div class="wrap" id="traineeApp">
   <div class="header">
     <div class="between">
-      <div><span class="badge">TRAINEE PORTAL</span><div class="brand">研修生ポータル</div><div class="sub">研修申請・承認状況・受講履歴</div></div>
+      <div><span class="badge">TRAINEE PORTAL</span><div class="brand">研修生ポータル</div><div class="sub">研修申請・承認状況・受講履歴</div><div class="sub" style="margin-top:6px;opacity:.78">Version ${APP_VERSION}</div></div>
       <a class="btn small" href="/" onclick="window.location.href='/';return false">トップへ</a>
     </div>
   </div>
@@ -732,7 +733,7 @@ const ADMIN_BODY = `
  </div>
 </div>
 <div id="adminView" style="display:none"><div class="wrap">
- <div class="header"><div class="between"><div><span class="badge">LOMITA POLICE</span><div class="brand">研修管理本部</div><div class="sub">研修・参加申請・受講状況を一括管理</div><div id="adminRoleLabel" class="sub" style="margin-top:4px"></div></div><div class="row"><button class="btn small" onclick="logout()">ログアウト</button><button class="btn small" onclick="openManageMenu()">⚙ 管理メニュー</button><button class="btn primary small" onclick="openTraining()">＋研修追加</button></div></div></div>
+ <div class="header"><div class="between"><div><span class="badge">LOMITA POLICE</span><div class="brand">研修管理本部</div><div class="sub">研修・参加申請・受講状況を一括管理</div><div class="sub" style="margin-top:6px;opacity:.78">Version ${APP_VERSION}</div><div id="adminRoleLabel" class="sub" style="margin-top:4px"></div></div><div class="row"><button class="btn small" onclick="logout()">ログアウト</button><button class="btn small" onclick="openManageMenu()">⚙ 管理メニュー</button><button class="btn primary small" onclick="openTraining()">＋研修追加</button></div></div></div>
  <div id="msg"></div>
  <div class="grid"><div class="stat"><span class="sub">今後の研修</span><b id="sTrain">0</b></div><div class="stat"><span class="sub">承認待ち</span><b id="sPending">0</b></div><div class="stat"><span class="sub">予約確定</span><b id="sReserved">0</b></div><div class="stat"><span class="sub">受講済み</span><b id="sCompleted">0</b></div></div>
 
@@ -1349,7 +1350,8 @@ restoreAdmin();
 
 async function handle(request, env) {
  const url=new URL(request.url), path=url.pathname, method=request.method;
- const adminPass=env.ADMIN_PASSWORD || "game1234";
+ const adminPass=env.ADMIN_PASSWORD || "lomita2026";
+ if(path==="/api/version" && method==="GET") return json({version:APP_VERSION});
  const getAdminRole=async()=>{
    if(request.headers.get("x-admin-password")===adminPass)return "owner";
    return await getAdminSessionRole(request,adminPass);
