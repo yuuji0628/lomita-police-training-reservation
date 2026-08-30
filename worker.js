@@ -1,4 +1,4 @@
-const APP_VERSION="1.03";
+const APP_VERSION="1.04";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -188,24 +188,6 @@ async function ensureTrainingPrograms(env) {
         .bind(tid,p.id).run();
     }
   }
-  // Keep the linked legacy training row synchronized with the current program name.
-  // This preserves reservation/history IDs while reflecting renamed subjects immediately.
-  try {
-    await env.DB.prepare(`
-      UPDATE trainings
-      SET title = (
-        SELECT p.name FROM training_programs p
-        WHERE p.training_id = trainings.id
-      ),
-      description = COALESCE((
-        SELECT p.description FROM training_programs p
-        WHERE p.training_id = trainings.id
-      ), description)
-      WHERE id IN (
-        SELECT training_id FROM training_programs WHERE training_id IS NOT NULL
-      )
-    `).run();
-  } catch (_) {}
 
   const sortInfo=await env.DB.prepare("PRAGMA table_info(training_programs)").all();
   const sortCols=(sortInfo.results||[]).map(x=>String(x.name||"").toLowerCase());
@@ -1432,6 +1414,8 @@ async function handle(request, env) {
  if(path==="/trainee" && method==="GET") return html("研修生ページ",PUBLIC_BODY,PUBLIC_SCRIPT);
  if(path==="/admin" && method==="GET") return html("研修管理",ADMIN_BODY,ADMIN_SCRIPT);
 
+ // The configured training title is the source of truth for trainee-facing subject names.
+ // Never overwrite trainings.title from training_programs.name.
  if(path==="/api/trainings" && method==="GET"){
    try{
      await ensureTrainingPrograms(env);
@@ -1439,7 +1423,7 @@ async function handle(request, env) {
      if(!profile)return json({error:"ログインが必要です"},401);
      const key=String(profile.discord_id||profile.login_name||profile.player_name||"").trim();
 
-     const {results:programs}=await env.DB.prepare("SELECT id,training_id,name AS title,description FROM training_programs WHERE active=1 AND training_id IS NOT NULL ORDER BY sort_order,id").all();
+     const {results:programs}=await env.DB.prepare("SELECT p.id,p.training_id,t.title,COALESCE(NULLIF(t.description,''),p.description) AS description FROM training_programs p JOIN trainings t ON t.id=p.training_id WHERE p.active=1 AND p.training_id IS NOT NULL ORDER BY p.sort_order,p.id").all();
      const {results:history}=await env.DB.prepare("SELECT training_id,status FROM reservations WHERE lower(trim(COALESCE(discord_id,'')))=lower(trim(?)) ORDER BY id DESC").bind(key).all();
 
      const latestByTraining=new Map();
