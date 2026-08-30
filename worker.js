@@ -602,13 +602,13 @@ const PUBLIC_BODY = `
   <div id="authView">
     <div class="card">
       <div class="title">研修生ログイン</div>
-      <div class="sub" style="margin:6px 0 12px">名前とパスワードでログインしてください。</div>
+      <div class="sub" style="margin:6px 0 12px">してください。</div>
       <div class="notice">ログイン後、この端末では12時間パスワード入力なしで表示できます。</div>
       <div id="loginMsg"></div>
-      <div class="field"><label>名前</label><input id="loginName" maxlength="40" autocomplete="username" placeholder="登録した名前"></div>
-      <div class="field"><label>パスワード</label><input id="loginPassword" type="password" maxlength="100" autocomplete="current-password" placeholder="パスワード"></div>
+      
+      
       <button id="traineeLoginBtn" class="btn dark" type="button" style="width:100%">ログイン</button>
-      <a id="discordTraineeLoginBtn" href="/auth/discord?role=trainee" class="btn primary" style="display:none;text-align:center;width:100%;margin-top:10px">Discordでログイン</a>
+      <div class="notice" style="margin-bottom:12px">研修生はDiscordアカウントでログインしてください。</div><a id="discordTraineeLoginBtn" href="/auth/discord?role=trainee" class="btn primary" style="display:none;text-align:center;width:100%;margin-top:10px">Discordでログイン</a>
       <button id="openRegisterBtn" class="btn" type="button" style="width:100%;margin-top:10px">名前＋パスワードで登録</button>
     </div>
   </div>
@@ -631,11 +631,11 @@ const PUBLIC_BODY = `
   <button class="btn small" style="float:right" onclick="closeRegister()">閉じる</button>
   <span class="badge">NEW TRAINEE</span>
   <div class="title">研修生登録</div>
-  <div class="sub" style="margin:5px 0 12px">名前とパスワードを登録します。</div>
+  <div class="sub" style="margin:5px 0 12px">を登録します。</div>
   <div id="registerMsg"></div>
-  <div class="field"><label>名前 *</label><input id="regPlayerName" maxlength="40" autocomplete="username" placeholder="名前"></div>
-  <div class="field"><label>パスワード *</label><input id="regPassword" type="password" maxlength="100" autocomplete="new-password" placeholder="6文字以上"></div>
-  <div class="field"><label>パスワード確認 *</label><input id="regPassword2" type="password" maxlength="100" autocomplete="new-password" placeholder="もう一度入力"></div>
+  
+  
+  
   <button id="registerSubmitBtn" type="button" class="btn primary" style="width:100%">登録してログイン</button>
 </div></div>
 
@@ -672,33 +672,6 @@ async function restoreTrainee(){
  const r=await fetch('/api/trainee/session');
  if(!r.ok){showAuth();return}
  const d=await r.json();myProfile=d.profile;showLoggedIn();await loadMyPage();
-}
-async function registerTrainee(){
- const name=document.getElementById('regPlayerName').value.trim();
- const password=document.getElementById('regPassword').value;
- const password2=document.getElementById('regPassword2').value;
- if(!name){noticeIn('registerMsg','名前を入力してください','error');return}
- if(password.length<6){noticeIn('registerMsg','パスワードは6文字以上にしてください','error');return}
- if(password!==password2){noticeIn('registerMsg','確認用パスワードが一致しません','error');return}
- const btn=document.getElementById('registerSubmitBtn');btn.disabled=true;btn.textContent='登録中...';
- try{
-   const r=await fetch('/api/trainee/register',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({name,password})});
-   const d=await r.json().catch(()=>({}));
-   if(!r.ok){noticeIn('registerMsg',d.error||'登録できませんでした','error');return}
-   myProfile=d.profile;closeRegister();showLoggedIn();await loadMyPage();
- }finally{btn.disabled=false;btn.textContent='登録してログイン'}
-}
-async function traineeLogin(){
- const name=document.getElementById('loginName').value.trim();
- const password=document.getElementById('loginPassword').value;
- if(!name||!password){noticeIn('loginMsg','名前とパスワードを入力してください','error');return}
- const btn=document.getElementById('traineeLoginBtn');btn.disabled=true;btn.textContent='ログイン中...';
- try{
-   const r=await fetch('/api/trainee/login',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({name,password})});
-   const d=await r.json().catch(()=>({}));
-   if(!r.ok){noticeIn('loginMsg',d.error||'ログインできませんでした','error');return}
-   myProfile=d.profile;document.getElementById('loginPassword').value='';showLoggedIn();await loadMyPage();
- }finally{btn.disabled=false;btn.textContent='ログイン'}
 }
 async function traineeLogout(){
  await fetch('/api/trainee/logout',{method:'POST'});
@@ -782,6 +755,7 @@ const ADMIN_BODY = `
    <button id="tabInstructors" class="btn" type="button" onclick="showAdminSection('instructors')">教官管理</button>
    <button id="tabTrainees" class="btn" type="button" onclick="showAdminSection('trainees')">研修生管理</button>
    <button id="tabApplicationHistory" class="btn" type="button" onclick="showAdminSection('applicationHistory')">申請履歴</button>
+   <button id="tabConfirmedReservations" class="btn" type="button" onclick="showAdminSection('confirmedReservations')">予約確定一覧</button>
    <button class="btn ownerOnly" type="button" onclick="openManageMenu()">管理メニュー</button>
  </div>
 
@@ -811,6 +785,20 @@ const ADMIN_BODY = `
      <div id="programMsg"></div>
    </div>
    <div id="programList"><div class="empty">研修プログラムを読み込んでいます...</div></div>
+ </div>
+
+ <div id="confirmedReservationsSection" style="display:none">
+   <div class="section">予約確定一覧・CONFIRMED RESERVATIONS</div>
+   <div class="card">
+     <div class="between">
+       <div>
+         <div class="title" style="font-size:16px">予約確定済みの研修</div>
+         <div class="sub" style="margin-top:5px">承認して予約確定になった研修を一覧で確認できます。</div>
+       </div>
+       <button class="btn small" type="button" onclick="loadConfirmedReservations()">更新</button>
+     </div>
+   </div>
+   <div id="confirmedReservationsList"><div class="empty">予約確定一覧を読み込んでいます...</div></div>
  </div>
 
  <div id="applicationHistorySection" style="display:none">
@@ -930,21 +918,51 @@ function showAdminSection(section){
  const instructors=section==='instructors';
  const trainees=section==='trainees';
  const applicationHistory=section==='applicationHistory';
+ const confirmedReservations=section==='confirmedReservations';
  document.getElementById('trainingSection').style.display=training?'block':'none';
  document.getElementById('programSection').style.display=programs?'block':'none';
  document.getElementById('instructorSection').style.display=instructors?'block':'none';
  document.getElementById('traineeSection').style.display=trainees?'block':'none';
  document.getElementById('applicationHistorySection').style.display=applicationHistory?'block':'none';
+ document.getElementById('confirmedReservationsSection').style.display=confirmedReservations?'block':'none';
  document.getElementById('tabTraining').className='btn '+(training?'dark':'');
  document.getElementById('tabPrograms').className='btn '+(programs?'dark':'');
  document.getElementById('tabInstructors').className='btn '+(instructors?'dark':'');
  document.getElementById('tabTrainees').className='btn '+(trainees?'dark':'');
  document.getElementById('tabApplicationHistory').className='btn '+(applicationHistory?'dark':'');
+ document.getElementById('tabConfirmedReservations').className='btn '+(confirmedReservations?'dark':'');
  if(programs)loadPrograms();
  if(instructors)loadInstructors();
  if(trainees)loadTrainees();
  if(applicationHistory)loadApplicationHistory();
+ if(confirmedReservations)loadConfirmedReservations();
 }
+async function loadConfirmedReservations(){
+ const e=document.getElementById('confirmedReservationsList');
+ if(!e)return;
+ e.innerHTML='<div class="empty">予約確定一覧を読み込んでいます...</div>';
+ const r=await fetch('/api/admin/confirmed-reservations',{headers:auth()});
+ const d=await r.json().catch(()=>({}));
+ if(!r.ok){e.innerHTML='<div class="notice error">'+esc(d.error||'予約確定一覧を取得できませんでした')+'</div>';return}
+ if(!d.length){e.innerHTML='<div class="empty">現在、予約確定済みの研修はありません。</div>';return}
+ e.innerHTML=d.map(x=>{
+   const dateText=[x.training_date||'',x.start_time||''].filter(Boolean).join(' ');
+   return '<div class="card">'+
+     '<div class="between">'+
+       '<div>'+
+         '<span class="pill reserved">予約確定</span>'+
+         '<div class="title" style="margin-top:7px">'+esc(x.title||'研修')+'</div>'+
+         '<div class="sub" style="margin-top:5px">研修生：'+esc(x.player_name||'')+'</div>'+
+       '</div>'+
+       '<div class="sub" style="text-align:right">'+esc(dateText||'日時未設定')+'</div>'+
+     '</div>'+
+     '<div class="sub" style="margin-top:9px">担当教官：'+esc(x.assigned_instructor||x.instructor||'未設定')+'</div>'+
+     (x.affiliation?'<div class="sub">所属：'+esc(x.affiliation)+'</div>':'')+
+     (x.note?'<div class="sub">備考：'+esc(x.note)+'</div>':'')+
+   '</div>';
+ }).join('');
+}
+
 async function loadApplicationHistory(){
  const e=document.getElementById('applicationHistoryList');
  const r=await fetch('/api/admin/application-history',{headers:auth()});
@@ -1054,7 +1072,7 @@ function renderTrainees(){
  if(!rows.length){e.innerHTML='<div class="empty">該当する研修生はいません。</div>';return}
  e.innerHTML=rows.map(x=>{
    const done=Number(x.progress_completed||0),total=Number(x.progress_total||0),pct=Number(x.progress_percent||0);
-   return '<div class="card traineeCard"><div class="between"><div class="profileHead"><div class="avatar">'+esc((x.player_name||'?').slice(0,1))+'</div><div><div class="title">'+esc(x.player_name||'名前未登録')+'</div>'+(x.login_name?'<div class="sub">ログイン名：'+esc(x.login_name)+'</div>':'')+'</div></div><button class="btn small danger traineeDeleteBtn" data-id="'+x.id+'" data-name="'+encodeURIComponent(x.player_name||'研修生')+'">研修生を削除</button></div><div style="margin-top:14px"><div class="between"><b>研修進捗</b><b>'+done+'/'+total+' 完了</b></div><div style="height:10px;background:#e5e7eb;border-radius:999px;overflow:hidden;margin-top:7px"><div style="height:100%;width:'+pct+'%;background:#0b4fa3"></div></div><div class="sub" style="margin-top:7px">'+(x.current_training?'次の研修：'+esc(x.current_training):'全研修修了')+'</div></div><div class="meta"><span>承認待ち '+x.pending+'</span><span>予約 '+x.reserved+'</span><span>欠席 '+x.absent+'</span></div><button class="btn small traineeOpenBtn" style="margin-top:8px" data-discord="'+encodeURIComponent(x.discord_id||x.login_name||x.player_name)+'">受講履歴を見る</button></div>';
+   return '<div class="card traineeCard"><div class="between"><div class="profileHead"><div class="avatar">'+esc((x.player_name||'?').slice(0,1))+'</div><div><div class="title">'+esc(x.player_name||'名前未登録')+'</div>'+(x.login_name?'<div class="sub">：'+esc(x.login_name)+'</div>':'')+'</div></div><button class="btn small danger traineeDeleteBtn" data-id="'+x.id+'" data-name="'+encodeURIComponent(x.player_name||'研修生')+'">研修生を削除</button></div><div style="margin-top:14px"><div class="between"><b>研修進捗</b><b>'+done+'/'+total+' 完了</b></div><div style="height:10px;background:#e5e7eb;border-radius:999px;overflow:hidden;margin-top:7px"><div style="height:100%;width:'+pct+'%;background:#0b4fa3"></div></div><div class="sub" style="margin-top:7px">'+(x.current_training?'次の研修：'+esc(x.current_training):'全研修修了')+'</div></div><div class="meta"><span>承認待ち '+x.pending+'</span><span>予約 '+x.reserved+'</span><span>欠席 '+x.absent+'</span></div><button class="btn small traineeOpenBtn" style="margin-top:8px" data-discord="'+encodeURIComponent(x.discord_id||x.login_name||x.player_name)+'">受講履歴を見る</button></div>';
  }).join('');
  document.querySelectorAll('.traineeOpenBtn').forEach(btn=>btn.addEventListener('click',()=>openTraineeDetail(decodeURIComponent(btn.dataset.discord))));
  document.querySelectorAll('.traineeDeleteBtn').forEach(btn=>btn.addEventListener('click',()=>deleteTrainee(Number(btn.dataset.id),decodeURIComponent(btn.dataset.name))));
@@ -1164,7 +1182,7 @@ async function loadReservations(){
  const e=document.getElementById('resList');
  if(!r.ok){e.innerHTML='<div class="notice error">'+esc(data.error||'参加者を取得できませんでした')+'</div>';return}
  if(!data.length){e.innerHTML='<div class="empty">申請者はいません。</div>';return}
- e.innerHTML=data.map(x=>'<div class="res"><div class="between"><div><b>'+esc(x.player_name)+'</b> <span class="pill '+esc(x.status)+'">'+esc(labels[x.status]||x.status)+'</span><div class="sub">ログイン名：'+esc(x.discord_id||'未登録')+'</div></div></div>'+(x.note?'<div class="sub" style="margin-top:6px">備考：'+esc(x.note)+'</div>':'')+'<div class="field" style="margin:10px 0"><label>担当教官</label><select id="reservationInstructor_'+x.id+'"><option value="">担当教官を選択</option>'+instructorRows.map(i=>'<option value="'+esc(i.name)+'" '+(x.assigned_instructor===i.name?'selected':'')+'>'+esc(i.name)+'</option>').join('')+'</select></div><div class="statusButtons">'+(x.status==='pending'?'<button class="btn primary small statusBtn" data-id="'+x.id+'" data-status="reserved">担当を決めて承認</button>':'')+'<button class="btn small statusBtn" data-id="'+x.id+'" data-status="completed">受講済み</button><button class="btn small statusBtn" data-id="'+x.id+'" data-status="absent">欠席</button><button class="btn danger small statusBtn" data-id="'+x.id+'" data-status="cancelled">取消</button><button class="btn danger small hardDeleteReservationBtn" data-id="'+x.id+'">申請を完全削除</button></div></div>').join('');
+ e.innerHTML=data.map(x=>'<div class="res"><div class="between"><div><b>'+esc(x.player_name)+'</b> <span class="pill '+esc(x.status)+'">'+esc(labels[x.status]||x.status)+'</span><div class="sub">：'+esc(x.discord_id||'未登録')+'</div></div></div>'+(x.note?'<div class="sub" style="margin-top:6px">備考：'+esc(x.note)+'</div>':'')+'<div class="field" style="margin:10px 0"><label>担当教官</label><select id="reservationInstructor_'+x.id+'"><option value="">担当教官を選択</option>'+instructorRows.map(i=>'<option value="'+esc(i.name)+'" '+(x.assigned_instructor===i.name?'selected':'')+'>'+esc(i.name)+'</option>').join('')+'</select></div><div class="statusButtons">'+(x.status==='pending'?'<button class="btn primary small statusBtn" data-id="'+x.id+'" data-status="reserved">担当を決めて承認</button>':'')+'<button class="btn small statusBtn" data-id="'+x.id+'" data-status="completed">受講済み</button><button class="btn small statusBtn" data-id="'+x.id+'" data-status="absent">欠席</button><button class="btn danger small statusBtn" data-id="'+x.id+'" data-status="cancelled">取消</button><button class="btn danger small hardDeleteReservationBtn" data-id="'+x.id+'">申請を完全削除</button></div></div>').join('');
  document.querySelectorAll('.statusBtn').forEach(btn=>btn.addEventListener('click',()=>setStatus(Number(btn.dataset.id),btn.dataset.status)));
  document.querySelectorAll('.hardDeleteReservationBtn').forEach(btn=>btn.addEventListener('click',()=>hardDeleteReservation(Number(btn.dataset.id))));
  if(sheet)requestAnimationFrame(()=>{sheet.scrollTop=oldScroll});
@@ -1401,37 +1419,7 @@ async function handle(request, env) {
      return json({error:"研修を取得できませんでした",detail:String(e?.message||e)},500);
    }
  }
- if(path==="/api/trainee/register" && method==="POST"){
-   await ensureTraineeProfiles(env);
-   const b=await request.json().catch(()=>({}));
-   const name=String(b.name||"").trim();
-   const password=String(b.password||"");
-   if(!name)return json({error:"名前を入力してください"},400);
-   if(password.length<6)return json({error:"パスワードは6文字以上にしてください"},400);
-   const exists=await env.DB.prepare("SELECT id FROM trainee_profiles WHERE lower(trim(login_name))=lower(trim(?)) OR (trim(login_name)='' AND lower(trim(player_name))=lower(trim(?)))").bind(name,name).first();
-   if(exists)return json({error:"この名前はすでに登録されています"},409);
-   const salt=randomToken(16);
-   const hash=await traineePasswordHash(password,salt);
-   const r=await env.DB.prepare("INSERT INTO trainee_profiles(player_name,discord_id,login_name,password_hash,password_salt,affiliation,rank) VALUES(?,?,?,?,?,'','')").bind(name,name,name,hash,salt).run();
-   const id=Number(r.meta?.last_row_id||0);
-   const profile={id,player_name:name,login_name:name,discord_id:name,affiliation:"",rank:""};
-   const cookie=await createTraineeSessionCookie(env,id);
-   return new Response(JSON.stringify({ok:true,profile}),{status:201,headers:{"content-type":"application/json; charset=utf-8","cache-control":"no-store","set-cookie":cookie}});
- }
 
- if(path==="/api/trainee/login" && method==="POST"){
-   await ensureTraineeProfiles(env);
-   const b=await request.json().catch(()=>({}));
-   const name=String(b.name||"").trim(),password=String(b.password||"");
-   if(!name||!password)return json({error:"名前とパスワードを入力してください"},400);
-   const p=await env.DB.prepare("SELECT id,player_name,login_name,discord_id,affiliation,rank,password_hash,password_salt FROM trainee_profiles WHERE lower(trim(login_name))=lower(trim(?))").bind(name).first();
-   if(!p||!p.password_hash||!p.password_salt)return json({error:"名前またはパスワードが違います"},401);
-   const hash=await traineePasswordHash(password,p.password_salt);
-   if(hash!==p.password_hash)return json({error:"名前またはパスワードが違います"},401);
-   const cookie=await createTraineeSessionCookie(env,p.id);
-   const profile={id:p.id,player_name:p.player_name,login_name:p.login_name,discord_id:p.discord_id,affiliation:p.affiliation||"",rank:p.rank||""};
-   return new Response(JSON.stringify({ok:true,profile}),{headers:{"content-type":"application/json; charset=utf-8","cache-control":"no-store","set-cookie":cookie}});
- }
 
  if(path==="/api/trainee/session" && method==="GET"){
    const p=await getTraineeSession(request,env);
@@ -1584,6 +1572,36 @@ async function handle(request, env) {
    const stats={pending:0,reserved:0,completed:0,absent:0,cancelled:0};
    for(const x of results)if(stats[x.status]!==undefined)stats[x.status]++;
    return json({profile,stats,history:results});
+ }
+
+ if(path==="/api/admin/confirmed-reservations" && method==="GET"){
+   if(!(await isAdmin()))return json({error:"unauthorized"},401);
+   await ensureReservationInstructor(env);
+   const {results}=await env.DB.prepare(`
+     SELECT
+       r.id,
+       r.training_id,
+       r.player_name,
+       r.discord_id,
+       r.affiliation,
+       r.note,
+       r.status,
+       r.assigned_instructor,
+       r.created_at,
+       t.title,
+       t.training_date,
+       t.start_time,
+       t.instructor
+     FROM reservations r
+     JOIN trainings t ON t.id=r.training_id
+     WHERE r.status='reserved'
+     ORDER BY
+       CASE WHEN t.training_date IS NULL OR t.training_date='' THEN 1 ELSE 0 END,
+       t.training_date ASC,
+       t.start_time ASC,
+       r.id DESC
+   `).all();
+   return json(results||[]);
  }
 
  if(path==="/api/admin/application-history" && method==="GET"){
