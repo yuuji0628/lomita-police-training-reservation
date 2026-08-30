@@ -1,4 +1,4 @@
-const APP_VERSION="1.02";
+const APP_VERSION="1.03";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -188,6 +188,25 @@ async function ensureTrainingPrograms(env) {
         .bind(tid,p.id).run();
     }
   }
+  // Keep the linked legacy training row synchronized with the current program name.
+  // This preserves reservation/history IDs while reflecting renamed subjects immediately.
+  try {
+    await env.DB.prepare(`
+      UPDATE trainings
+      SET title = (
+        SELECT p.name FROM training_programs p
+        WHERE p.training_id = trainings.id
+      ),
+      description = COALESCE((
+        SELECT p.description FROM training_programs p
+        WHERE p.training_id = trainings.id
+      ), description)
+      WHERE id IN (
+        SELECT training_id FROM training_programs WHERE training_id IS NOT NULL
+      )
+    `).run();
+  } catch (_) {}
+
   const sortInfo=await env.DB.prepare("PRAGMA table_info(training_programs)").all();
   const sortCols=(sortInfo.results||[]).map(x=>String(x.name||"").toLowerCase());
   if(!sortCols.includes("sort_order")){
