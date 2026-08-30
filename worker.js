@@ -601,14 +601,10 @@ const PUBLIC_BODY = `
   <div id="authView">
     <div class="card">
       <div class="title">研修生ログイン</div>
-      <div class="sub" style="margin:6px 0 12px">してください。</div>
-      <div class="notice">ログイン後、この端末では12時間パスワード入力なしで表示できます。</div>
-      <div id="loginMsg"></div>
-      
-      
-      <button id="traineeLoginBtn" class="btn dark" type="button" style="width:100%">ログイン</button>
-      <div class="notice" style="margin-bottom:12px">研修生はDiscordアカウントでログインしてください。</div><a id="discordTraineeLoginBtn" href="/auth/discord?role=trainee" class="btn primary" style="display:none;text-align:center;width:100%;margin-top:10px">Discordでログイン</a>
-      <button id="openRegisterBtn" class="btn" type="button" style="width:100%;margin-top:10px">名前＋パスワードで登録</button>
+      <div class="sub" style="margin:6px 0 14px">Discordアカウントでログインしてください。</div>
+      <div id="discordLoginMsg" class="notice" style="margin-bottom:12px">Discord連携を確認しています...</div>
+      <a id="discordTraineeLoginBtn" href="/auth/discord" class="btn primary" style="display:block;text-align:center;width:100%">Discordでログイン</a>
+      <div class="sub" style="margin-top:12px;text-align:center">ログイン状態はこの端末で12時間保持されます。</div>
     </div>
   </div>
 
@@ -625,18 +621,6 @@ const PUBLIC_BODY = `
     <div id="list"><div class="empty">読み込み中...</div></div>
   </div>
 </div>
-
-<div id="registerModal" class="modal"><div class="sheet">
-  <button class="btn small" style="float:right" onclick="closeRegister()">閉じる</button>
-  <span class="badge">NEW TRAINEE</span>
-  <div class="title">研修生登録</div>
-  <div class="sub" style="margin:5px 0 12px">を登録します。</div>
-  <div id="registerMsg"></div>
-  
-  
-  
-  <button id="registerSubmitBtn" type="button" class="btn primary" style="width:100%">登録してログイン</button>
-</div></div>
 
 <div id="booking" class="modal"><div class="sheet">
   <button class="btn small" style="float:right" onclick="closeBooking()">閉じる</button>
@@ -656,16 +640,23 @@ function show(t,c){const e=document.getElementById('msg');e.innerHTML='<div clas
 
 function showAuth(){document.getElementById('authView').style.display='block';document.getElementById('loggedInView').style.display='none'}
 function showLoggedIn(){document.getElementById('authView').style.display='none';document.getElementById('loggedInView').style.display='block'}
-function openRegister(){document.getElementById('registerMsg').innerHTML='';document.getElementById('registerModal').classList.add('open')}
-function closeRegister(){document.getElementById('registerModal').classList.remove('open')}
 
 async function loadDiscordLoginConfig(){
+ const b=document.getElementById('discordTraineeLoginBtn');
+ const msg=document.getElementById('discordLoginMsg');
  try{
-   const r=await fetch('/api/auth/discord/config');
+   const r=await fetch('/api/auth/discord/config',{cache:'no-store'});
    const d=await r.json().catch(()=>({}));
-   const b=document.getElementById('discordTraineeLoginBtn');
-   if(b&&d.enabled)b.style.display='block';
- }catch(_){}
+   if(d.enabled){
+     if(b){b.style.display='block';b.style.pointerEvents='auto';b.style.opacity='1'}
+     if(msg){msg.className='notice success';msg.textContent='Discordログインを利用できます。'}
+   }else{
+     if(b){b.style.pointerEvents='none';b.style.opacity='.55'}
+     if(msg){msg.className='notice error';msg.textContent='Discord連携の設定が未完了です。管理者にお問い合わせください。'}
+   }
+ }catch(_){
+   if(msg){msg.className='notice error';msg.textContent='Discord連携状態を確認できませんでした。再読み込みしてください。'}
+ }
 }
 async function restoreTrainee(){
  const r=await fetch('/api/trainee/session');
@@ -719,9 +710,6 @@ async function submitBooking(){
    closeBooking();document.getElementById('note').value='';show('申請しました。承認をお待ちください。','success');await loadMyPage();
  }finally{btn.disabled=false;btn.textContent='申請する'}
 }
-document.getElementById('openRegisterBtn')?.addEventListener('click',openRegister);
-document.getElementById('registerSubmitBtn')?.addEventListener('click',registerTrainee);
-document.getElementById('traineeLoginBtn')?.addEventListener('click',traineeLogin);
 document.getElementById('traineeLogoutBtn')?.addEventListener('click',traineeLogout);
 document.getElementById('bookingSubmitBtn')?.addEventListener('click',submitBooking);
 loadDiscordLoginConfig();restoreTrainee();`;
