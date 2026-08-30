@@ -1,4 +1,4 @@
-const APP_VERSION="1.04";
+const APP_VERSION="1.07";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -780,8 +780,8 @@ const ADMIN_BODY = `
    <div class="card">
      <div class="between">
        <div>
-         <div class="title" style="font-size:16px">承認待ち・予約確定</div>
-         <div class="sub" style="margin-top:5px">承認待ちの申請は、担当教官を選んでこの画面から承認できます。</div>
+         <div class="title" style="font-size:16px">予約ステータス管理</div>
+         <div class="sub" style="margin-top:5px">承認待ち・予約確定・受講済み・欠席を、この画面から変更できます。</div>
        </div>
        <button class="btn small" type="button" onclick="loadReservationControl()">更新</button>
      </div>
@@ -915,7 +915,6 @@ async function loadReservationControl(){
  if(!e)return;
  e.innerHTML='<div class="empty">予約一覧を読み込んでいます...</div>';
 
- // Approval requires an instructor. Load the latest instructor list first.
  if(!instructorRows.length){
    try{
      const ir=await fetch('/api/admin/instructors',{headers:auth()});
@@ -931,60 +930,69 @@ async function loadReservationControl(){
    return;
  }
  if(!d.length){
-   e.innerHTML='<div class="empty">現在、承認待ち・予約確定の予約はありません。</div>';
+   e.innerHTML='<div class="empty">現在、予約データはありません。</div>';
    return;
  }
 
  e.innerHTML=d.map(x=>{
-   const isPending=x.status==='pending';
    const dateText=[x.training_date||'',x.start_time||''].filter(Boolean).join(' ');
-   const instructorOptions='<option value="">担当教官を選択</option>'+
+   const statusLabel=labels[x.status]||x.status;
+   const statusOptions=[
+     ['pending','承認待ち'],
+     ['reserved','予約確定'],
+     ['completed','受講済み'],
+     ['absent','欠席']
+   ].map(s=>'<option value="'+s[0]+'" '+(x.status===s[0]?'selected':'')+'>'+s[1]+'</option>').join('');
+   const instructorOptions='<option value="">担当教官なし</option>'+
      instructorRows.map(i=>'<option value="'+esc(i.name)+'" '+(x.assigned_instructor===i.name?'selected':'')+'>'+esc(i.name)+'</option>').join('');
+   const border=x.status==='pending'?'#d9b33b':x.status==='reserved'?'#0b4fa3':x.status==='completed'?'#147d43':'#a15c00';
 
-   return '<div class="card" style="border-left:4px solid '+(isPending?'#d9b33b':'#0b4fa3')+'">'+
+   return '<div class="card" style="border-left:4px solid '+border+'">'+
      '<div class="between" style="gap:12px;align-items:flex-start">'+
        '<div style="min-width:0">'+
-         '<span class="pill '+esc(x.status)+'">'+(isPending?'承認待ち':'予約確定')+'</span>'+
+         '<span class="pill '+esc(x.status)+'">'+esc(statusLabel)+'</span>'+
          '<div class="title" style="margin-top:7px">'+esc(x.title||'研修')+'</div>'+
          '<div class="sub" style="margin-top:5px">研修生：'+esc(x.player_name||'')+'</div>'+
          (x.affiliation?'<div class="sub">所属：'+esc(x.affiliation)+'</div>':'')+
        '</div>'+
        '<div class="sub" style="text-align:right;white-space:nowrap">'+esc(dateText||'日時未設定')+'</div>'+
      '</div>'+
-     (isPending
-       ? '<div class="field" style="margin-top:12px"><label>担当教官</label><select id="reservationControlInstructor_'+x.id+'">'+instructorOptions+'</select></div>'+
-         '<button class="btn primary" style="width:100%" type="button" onclick="approveReservationFromList('+Number(x.id)+')">担当を決めて承認</button>'
-       : '<div class="sub" style="margin-top:10px">担当教官：'+esc(x.assigned_instructor||'未設定')+'</div>'
-     )+
-     (x.note?'<div class="sub" style="margin-top:6px">備考：'+esc(x.note)+'</div>':'')+
+     '<div class="field" style="margin-top:12px"><label>状態</label><select id="reservationStatus_'+x.id+'">'+statusOptions+'</select></div>'+
+     '<div class="field"><label>担当教官</label><select id="reservationInstructor_'+x.id+'">'+instructorOptions+'</select></div>'+
+     '<button class="btn primary" style="width:100%" type="button" onclick="saveReservationFromList('+Number(x.id)+')">変更を保存</button>'+
+     (x.note?'<div class="sub" style="margin-top:8px">備考：'+esc(x.note)+'</div>':'')+
    '</div>';
  }).join('');
 }
 
-async function approveReservationFromList(id){
- const sel=document.getElementById('reservationControlInstructor_'+id);
- const assigned_instructor=sel?sel.value.trim():'';
- if(!assigned_instructor){
-   alert('担当教官を選択してから承認してください。');
+async function saveReservationFromList(id){
+ const statusEl=document.getElementById('reservationStatus_'+id);
+ const instructorEl=document.getElementById('reservationInstructor_'+id);
+ const status=statusEl?statusEl.value:'';
+ const assigned_instructor=instructorEl?instructorEl.value.trim():'';
+
+ if(status==='reserved' && !assigned_instructor){
+   alert('予約確定にする場合は担当教官を選択してください。');
    return;
  }
- if(!confirm('この申請を予約確定にしますか？'))return;
+ const label=labels[status]||status;
+ if(!confirm('この予約を「'+label+'」に変更しますか？'))return;
 
  try{
    const r=await fetch('/api/admin/reservations/'+id,{
      method:'PATCH',
      headers:auth(),
-     body:JSON.stringify({status:'reserved',assigned_instructor})
+     body:JSON.stringify({status,assigned_instructor})
    });
    const d=await r.json().catch(()=>({}));
    if(!r.ok){
-     alert((d.error||'承認できませんでした')+(d.detail?'\n'+d.detail:''));
+     alert((d.error||'変更できませんでした')+(d.detail?'\n'+d.detail:''));
      return;
    }
    await loadReservationControl();
    await loadAdmin();
  }catch(e){
-   alert('通信エラーで承認できませんでした。');
+   alert('通信エラーで変更できませんでした。');
  }
 }
 
@@ -1042,9 +1050,25 @@ async function loadPrograms(){
 function renderPrograms(){
  const e=document.getElementById('programList');
  if(!programRows.length){e.innerHTML='<div class="empty">まだ研修プログラムはありません。</div>';return}
- e.innerHTML=programRows.map((p,i)=>'<div class="card"><div class="between"><div><div class="title">'+esc(p.name)+'</div>'+(p.description?'<div class="sub" style="margin-top:6px;white-space:pre-wrap">'+esc(p.description)+'</div>':'')+'<div class="sub" style="margin-top:7px">研修生はこのプログラムへ直接申請します。</div></div><div class="row"><button class="btn small" data-move-program="'+p.id+'" data-dir="-1" '+(i===0?'disabled':'')+'>↑</button><button class="btn small" data-move-program="'+p.id+'" data-dir="1" '+(i===programRows.length-1?'disabled':'')+'>↓</button><button class="btn small danger" data-delete-program="'+p.id+'">削除</button></div></div></div>').join('');
+ e.innerHTML=programRows.map((p,i)=>'<div class="card"><div class="between"><div><div class="title">'+esc(p.display_name||p.name)+'</div>'+((p.display_description||p.description)?'<div class="sub" style="margin-top:6px;white-space:pre-wrap">'+esc(p.display_description||p.description)+'</div>':'')+'<div class="sub" style="margin-top:7px">研修生はこのプログラムへ直接申請します。</div></div><div class="row"><button class="btn small" data-move-program="'+p.id+'" data-dir="-1" '+(i===0?'disabled':'')+'>↑</button><button class="btn small" data-move-program="'+p.id+'" data-dir="1" '+(i===programRows.length-1?'disabled':'')+'>↓</button><button class="btn small" data-edit-program="'+p.id+'">編集</button><button class="btn small danger" data-delete-program="'+p.id+'">削除</button></div></div></div>').join('');
  document.querySelectorAll('[data-move-program]').forEach(b=>b.addEventListener('click',()=>moveProgram(Number(b.dataset.moveProgram),Number(b.dataset.dir))));
+ document.querySelectorAll('[data-edit-program]').forEach(b=>b.addEventListener('click',()=>editProgram(Number(b.dataset.editProgram))));
  document.querySelectorAll('[data-delete-program]').forEach(b=>b.addEventListener('click',()=>deleteProgram(Number(b.dataset.deleteProgram))));
+}
+async function editProgram(id){
+ const p=programRows.find(x=>Number(x.id)===Number(id));
+ if(!p)return;
+ const name=prompt('学科名を編集',p.display_name||p.name||'');
+ if(name===null)return;
+ const cleanName=name.trim();
+ if(!cleanName){alert('学科名は空にできません');return}
+ const description=prompt('フリー記入欄を編集',p.display_description||p.description||'');
+ if(description===null)return;
+ const r=await fetch('/api/admin/programs/'+id,{method:'PATCH',headers:auth(),body:JSON.stringify({name:cleanName,description:description.trim()})});
+ const d=await r.json().catch(()=>({}));
+ if(!r.ok){alert(d.error||'編集できませんでした');return}
+ await loadPrograms();
+ alert('学科名を更新しました');
 }
 async function createProgram(){
  const name=document.getElementById('programName').value.trim();
@@ -1614,9 +1638,9 @@ async function handle(request, env) {
        t.instructor
      FROM reservations r
      JOIN trainings t ON t.id=r.training_id
-     WHERE r.status IN ('pending','reserved')
+     WHERE r.status IN ('pending','reserved','completed','absent')
      ORDER BY
-       CASE WHEN r.status='pending' THEN 0 ELSE 1 END,
+       CASE r.status WHEN 'pending' THEN 0 WHEN 'reserved' THEN 1 WHEN 'completed' THEN 2 WHEN 'absent' THEN 3 ELSE 4 END,
        CASE WHEN t.training_date IS NULL OR t.training_date='' THEN 1 ELSE 0 END,
        t.training_date ASC,
        t.start_time ASC,
@@ -1657,7 +1681,15 @@ async function handle(request, env) {
 
  if(path==="/api/admin/programs" && method==="GET"){
    await ensureTrainingPrograms(env);
-   const {results:programs}=await env.DB.prepare("SELECT * FROM training_programs ORDER BY sort_order,id").all();
+   const {results:programs}=await env.DB.prepare(`
+     SELECT
+       p.*,
+       COALESCE(NULLIF(TRIM(t.title),''), p.name) AS display_name,
+       COALESCE(t.description, p.description, '') AS display_description
+     FROM training_programs p
+     LEFT JOIN trainings t ON t.id=p.training_id
+     ORDER BY p.sort_order,p.id
+   `).all();
    const {results:steps}=await env.DB.prepare(`
      SELECT ps.id,ps.program_id,ps.training_id,ps.step_order,t.title,t.description,t.instructor
      FROM training_program_steps ps JOIN trainings t ON t.id=ps.training_id
@@ -1705,6 +1737,22 @@ async function handle(request, env) {
  }
 
  let pm=path.match(/^\/api\/admin\/programs\/(\d+)$/);
+ if(pm && method==="PATCH"){
+   await ensureTrainingPrograms(env);
+   const id=Number(pm[1]);
+   const b=await request.json().catch(()=>({}));
+   const name=String(b.name||"").trim();
+   const description=String(b.description||"").trim();
+   if(!name)return json({error:"研修名は必須です"},400);
+   const p=await env.DB.prepare("SELECT id,training_id FROM training_programs WHERE id=?").bind(id).first();
+   if(!p)return json({error:"研修プログラムが見つかりません"},404);
+   await env.DB.prepare("UPDATE training_programs SET name=?,description=? WHERE id=?").bind(name,description,id).run();
+   if(p.training_id){
+     await env.DB.prepare("UPDATE trainings SET title=?,description=? WHERE id=?").bind(name,description,Number(p.training_id)).run();
+   }
+   return json({ok:true,name,description});
+ }
+ pm=path.match(/^\/api\/admin\/programs\/(\d+)$/);
  if(pm && method==="DELETE"){
    await ensureTrainingPrograms(env);
    const p=await env.DB.prepare("SELECT training_id FROM training_programs WHERE id=?").bind(Number(pm[1])).first();
@@ -1882,14 +1930,13 @@ async function handle(request, env) {
    const b=await request.json().catch(()=>({}));
    if(!['pending','reserved','completed','absent','cancelled'].includes(b.status))return json({error:"invalid status"},400);
    const assigned=String(b.assigned_instructor||"").trim();
-   if(b.status==="reserved"){
-     if(!assigned)return json({error:"担当教官を選択してください"},400);
+   if(b.status==="reserved" && !assigned)return json({error:"担当教官を選択してください"},400);
+   if(assigned){
      const ok=await env.DB.prepare("SELECT id FROM instructors WHERE lower(trim(name))=lower(trim(?))").bind(assigned).first();
      if(!ok)return json({error:"登録されていない教官です"},400);
-     await env.DB.prepare("UPDATE reservations SET status=?,assigned_instructor=? WHERE id=?").bind(b.status,assigned,Number(m[1])).run();
-   }else{
-     await env.DB.prepare("UPDATE reservations SET status=? WHERE id=?").bind(b.status,Number(m[1])).run();
    }
+   await env.DB.prepare("UPDATE reservations SET status=?,assigned_instructor=? WHERE id=?")
+     .bind(b.status,assigned,Number(m[1])).run();
    return json({ok:true});
  }
 
