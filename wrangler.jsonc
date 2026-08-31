@@ -2,6 +2,10 @@
   "name": "lomita-police-training-reservation",
   "main": "worker.js",
   "compatibility_date": "2026-08-28",
+  "keep_vars": true,
+  "vars": {
+    "DISCORD_CLIENT_ID": "1543402684630048870"
+  },
   "d1_databases": [
     {
       "binding": "DB",
