@@ -1,4 +1,4 @@
-const APP_VERSION="1.10";
+const APP_VERSION="1.11";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -559,7 +559,104 @@ textarea{min-height:90px}
 #traineeApp .meta{margin:5px 0;font-size:12px}
 #traineeApp .pill{padding:4px 8px;font-size:11px}
 
+
+/* Smart compact admin dashboard - v1.11 */
+#adminView .wrap{max-width:760px;padding-bottom:88px}
+#adminView .header{
+  padding:14px 16px;
+  border-radius:17px;
+  margin-bottom:10px;
+}
+#adminView .header .brand{font-size:22px;line-height:1.15}
+#adminView .header .badge{
+  padding:4px 9px;
+  margin-bottom:5px;
+  font-size:10px;
+}
+#adminView .header .sub{font-size:12px;line-height:1.35}
+#adminView .header .between{gap:8px}
+#adminView .header .row{
+  gap:6px;
+  justify-content:flex-end;
+  max-width:255px;
+}
+#adminView .header .btn.small{
+  padding:7px 9px;
+  font-size:11px;
+  border-radius:10px;
+}
+#adminView > .wrap > .grid{
+  gap:7px;
+  grid-template-columns:repeat(4,1fr);
+}
+#adminView > .wrap > .grid .stat{
+  min-height:68px;
+  padding:9px 10px;
+  border-radius:13px;
+}
+#adminView > .wrap > .grid .stat .sub{
+  font-size:10px;
+  white-space:nowrap;
+}
+#adminView > .wrap > .grid .stat b{
+  font-size:22px;
+  margin-top:2px;
+  line-height:1.05;
+}
+#adminView .menuTabs{
+  gap:7px;
+  margin:9px 0 10px;
+}
+#adminView .menuTabs .btn{
+  min-height:42px;
+  padding:9px 7px;
+  border-radius:12px;
+  font-size:12px;
+}
+#adminView .section{
+  margin:13px 2px 7px;
+  font-size:16px;
+}
+#adminView .section:before{width:4px;height:17px}
+#adminView #reservationsSection > .section{
+  margin-top:10px;
+  font-size:17px;
+}
+#adminView #reservationsSection > .card{
+  margin-top:7px;
+  margin-bottom:8px;
+  padding:12px;
+  border-radius:15px;
+}
+#adminView #reservationControlList .card{
+  margin:8px 0;
+  padding:12px;
+  border-radius:15px;
+}
+#adminView #reservationControlList .title{font-size:16px}
+#adminView #reservationControlList .field{margin:9px 0}
+#adminView #reservationControlList input,
+#adminView #reservationControlList select{padding:10px 11px}
+#adminView #reservationControlList .btn.primary{padding:10px 12px}
+#adminView .footerNav{
+  padding-top:5px;
+  padding-bottom:calc(5px + env(safe-area-inset-bottom));
+  gap:8px;
+}
+#adminView .footerNav a{
+  padding:9px;
+  border-radius:11px;
+  font-size:14px;
+}
+
 @media(max-width:700px){
+  #adminView > .wrap > .grid{grid-template-columns:repeat(4,1fr);gap:6px}
+  #adminView > .wrap > .grid .stat{min-width:0;padding:8px 7px;min-height:64px}
+  #adminView > .wrap > .grid .stat .sub{font-size:9px;letter-spacing:-.02em}
+  #adminView > .wrap > .grid .stat b{font-size:20px}
+  #adminView .header .between{align-items:flex-start}
+  #adminView .header .row{max-width:220px}
+
   .grid{grid-template-columns:1fr 1fr}
   .formgrid{grid-template-columns:1fr}
   .header .between{align-items:flex-start}
