@@ -1,4 +1,4 @@
-const APP_VERSION="1.49";
+const APP_VERSION="1.50";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -437,22 +437,36 @@ async function ensureTrainingPrograms(env) {
   ).all();
 
   for (const p of (orphans || [])) {
-    const tr = await env.DB.prepare(`
-      INSERT INTO trainings(title,description,training_date,start_time,capacity,instructor,location)
-      VALUES(?,?,?,?,?,?,?)
-    `).bind(
-      p.name,
-      p.description || "",
-      "2099-12-31",
-      "00:00",
-      999,
-      "",
-      ""
-    ).run();
+    // First reuse an existing training with the exact same title.
+    // This prevents a program from appearing in the progress ledger
+    // while being missing from the application sequence.
+    let existing=await env.DB.prepare(`
+      SELECT id FROM trainings
+      WHERE lower(trim(title))=lower(trim(?))
+      ORDER BY id ASC
+      LIMIT 1
+    `).bind(p.name).first();
 
-    const tid = Number(tr.meta?.last_row_id || 0);
-    if (tid) {
-      await env.DB.prepare("UPDATE training_programs SET training_id=? WHERE id=?")
+    let tid=Number(existing?.id||0);
+
+    if(!tid){
+      const tr = await env.DB.prepare(`
+        INSERT INTO trainings(title,description,training_date,start_time,capacity,instructor,location)
+        VALUES(?,?,?,?,?,?,?)
+      `).bind(
+        p.name,
+        p.description || "",
+        "2099-12-31",
+        "00:00",
+        999,
+        "",
+        ""
+      ).run();
+      tid=Number(tr.meta?.last_row_id||0);
+    }
+
+    if(tid){
+      await env.DB.prepare("UPDATE training_programs SET training_id=? WHERE id=? AND training_id IS NULL")
         .bind(tid,p.id).run();
     }
   }
@@ -1499,7 +1513,7 @@ async function load(){
  if(r.status===401){showAuth();return}
  if(!r.ok){el.innerHTML='<div class="notice error">'+esc((data.error||'研修を取得できませんでした')+(data.detail?'：'+data.detail:''))+'</div>';return}
  if(!data.length){el.innerHTML='<div class="empty">すべての研修を受講済みです。</div>';return}
- el.innerHTML=data.map(t=>'<div class="card profileCard"><div class="title">'+esc(t.title)+'</div>'+(t.description?'<div class="sub" style="margin:10px 0 12px;white-space:pre-wrap">'+esc(t.description)+'</div>':'')+'<div class="between"><span class="sub">'+(t.manual_only?'オリエンテーションは管理者が受講済みを登録します。':t.current_status==='pending'?'現在、承認待ちです。':t.current_status==='reserved'?'承認済みです。受講完了後に次の研修が表示されます。':'申請後、管理者が担当教官を選んで承認します。')+'</span><button class="btn primary bookingBtn" data-id="'+t.id+'" data-title="'+encodeURIComponent(t.title)+'" '+(t.already_applied?'disabled':'')+'>'+(t.manual_only?'管理者確認待ち':t.current_status==='pending'?'承認待ち':t.current_status==='reserved'?'受講待ち':'申請する')+'</button></div></div>').join('');
+ el.innerHTML=data.map(t=>'<div class="card profileCard"><div class="title">'+esc(t.title)+'</div>'+(t.description?'<div class="sub" style="margin:10px 0 12px;white-space:pre-wrap">'+esc(t.description)+'</div>':'')+'<div class="between"><span class="sub">'+(t.manual_only?'オリエンテーションは管理者が受講済みを登録します。':t.setup_required?'この研修は管理側で準備中です。修了扱いにはなっていません。':t.current_status==='pending'?'現在、承認待ちです。':t.current_status==='reserved'?'承認済みです。受講完了後に次の研修が表示されます。':'申請後、管理者が担当教官を選んで承認します。')+'</span><button class="btn primary bookingBtn" data-id="'+t.id+'" data-title="'+encodeURIComponent(t.title)+'" '+(t.already_applied?'disabled':'')+'>'+(t.manual_only?'管理者確認待ち':t.setup_required?'準備中':t.current_status==='pending'?'承認待ち':t.current_status==='reserved'?'受講待ち':'申請する')+'</button></div></div>').join('');
  document.querySelectorAll('.bookingBtn:not([disabled])').forEach(btn=>btn.addEventListener('click',()=>openBooking(Number(btn.dataset.id),decodeURIComponent(btn.dataset.title))));
 }
 function openBooking(id,title){
@@ -2418,7 +2432,14 @@ async function loadAdmin(){
  document.getElementById('sTrain').textContent=st.trainings;document.getElementById('sPending').textContent=st.pending;document.getElementById('sReserved').textContent=st.reserved;document.getElementById('sCompleted').textContent=st.completed;
 }
 function render(){const e=document.getElementById('adminList');if(!trainings.length){e.innerHTML='<div class="empty">研修がありません。「＋研修追加」から作成してください。</div>';return}
- e.innerHTML=trainings.map(t=>'<div class="card"><div class="between"><div><span class="pill">'+esc(t.category||'一般研修')+'</span><div class="title" style="margin-top:7px">'+esc(t.title)+(Number(t.pending_count)>0?' <span class="pill pending">申請 '+t.pending_count+'</span>':'')+'</div><div class="meta"><span>📅 '+fmt(t.training_date)+'</span><span>🕒 '+esc(t.start_time)+(t.end_time?'〜'+esc(t.end_time):'')+'</span>'+(t.location?'<span>📍 '+esc(t.location)+'</span>':'')+'</div></div><span class="pill">'+t.active_count+'/'+t.capacity+'名</span></div><div class="row" style="margin-top:12px"><button class="btn small resBtn" data-id="'+t.id+'" data-title="'+encodeURIComponent(t.title)+'">参加者管理</button><button class="btn small editBtn" data-id="'+t.id+'">編集</button><button class="btn danger small delBtn" data-id="'+t.id+'">削除</button></div></div>').join('');
+ e.innerHTML=trainings.map(t=>{
+   const placeholder=String(t.training_date||'')==='2099-12-31' && String(t.start_time||'')==='00:00' && Number(t.capacity||0)===999;
+   const schedule=placeholder
+     ?'<div class="meta"><span>📅 申請時に希望日時を指定</span></div>'
+     :'<div class="meta"><span>📅 '+fmt(t.training_date)+'</span><span>🕒 '+esc(t.start_time)+(t.end_time?'〜'+esc(t.end_time):'')+'</span>'+(t.location?'<span>📍 '+esc(t.location)+'</span>':'')+'</div>';
+   const count=placeholder?'':'<span class="pill">'+t.active_count+'/'+t.capacity+'名</span>';
+   return '<div class="card"><div class="between"><div><span class="pill">'+esc(t.category||'一般研修')+'</span><div class="title" style="margin-top:7px">'+esc(t.title)+(Number(t.pending_count)>0?' <span class="pill pending">申請 '+t.pending_count+'</span>':'')+'</div>'+schedule+'</div>'+count+'</div><div class="row" style="margin-top:12px"><button class="btn small resBtn" data-id="'+t.id+'" data-title="'+encodeURIComponent(t.title)+'">参加者管理</button><button class="btn small editBtn" data-id="'+t.id+'">編集</button><button class="btn danger small delBtn" data-id="'+t.id+'">削除</button></div></div>';
+ }).join('');
  document.querySelectorAll('.resBtn').forEach(btn=>btn.addEventListener('click',()=>openReservations(Number(btn.dataset.id),decodeURIComponent(btn.dataset.title))));
  document.querySelectorAll('.editBtn').forEach(btn=>btn.addEventListener('click',()=>openTraining(Number(btn.dataset.id))));
  document.querySelectorAll('.delBtn').forEach(btn=>btn.addEventListener('click',()=>deleteTraining(Number(btn.dataset.id))));
@@ -2844,17 +2865,26 @@ async function handle(request, env) {
      if(!profile)return json({error:"ログインが必要です"},401);
      const key=String(profile.discord_id||profile.login_name||profile.player_name||"").trim();
 
-     const {results:programs}=await env.DB.prepare("SELECT p.id,p.training_id,t.title,COALESCE(NULLIF(t.description,''),p.description) AS description FROM training_programs p JOIN trainings t ON t.id=p.training_id WHERE p.active=1 AND p.training_id IS NOT NULL ORDER BY p.sort_order,p.id").all();
+     const {results:programs}=await env.DB.prepare("SELECT p.id,p.training_id,COALESCE(t.title,p.name) AS title,COALESCE(NULLIF(t.description,''),p.description) AS description FROM training_programs p LEFT JOIN trainings t ON t.id=p.training_id WHERE COALESCE(p.active,1)=1 ORDER BY COALESCE(p.sort_order,0),p.id").all();
      const {results:history}=await env.DB.prepare("SELECT training_id,status FROM reservations WHERE lower(trim(COALESCE(discord_id,'')))=lower(trim(?)) ORDER BY id DESC").bind(key).all();
 
      const latestByTraining=new Map();
      for(const h of (history||[])){const tid=Number(h.training_id);if(!latestByTraining.has(tid))latestByTraining.set(tid,String(h.status||""))}
      for(const p of (programs||[])){
-       const tid=Number(p.training_id),status=latestByTraining.get(tid)||"";
+       const tid=Number(p.training_id||0);
+       const status=tid?(latestByTraining.get(tid)||""):"";
        if(status==="completed")continue;
+
        if(isOrientationTitle(p.title)){
          return json([{id:tid,title:p.title,description:p.description,current_status:"orientation_waiting",already_applied:true,manual_only:true}]);
        }
+
+       // An active program without a training link is NOT completed.
+       // Surface it as preparation-needed instead of saying all training is finished.
+       if(!tid){
+         return json([{id:0,title:p.title,description:p.description,current_status:"setup_required",already_applied:true,setup_required:true}]);
+       }
+
        if(status==="pending"||status==="reserved")return json([{id:tid,title:p.title,description:p.description,current_status:status,already_applied:true}]);
        return json([{id:tid,title:p.title,description:p.description,current_status:status,already_applied:false}]);
      }
@@ -2918,6 +2948,7 @@ async function handle(request, env) {
      FROM training_programs p
      LEFT JOIN trainings t ON t.id=p.training_id
      WHERE COALESCE(p.active,1)=1
+       AND p.training_id IS NOT NULL
      ORDER BY COALESCE(p.sort_order,0),p.id
    `).bind(key,key,key).all();
 
