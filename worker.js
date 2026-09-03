@@ -1,4 +1,4 @@
-const APP_VERSION="1.22";
+const APP_VERSION="1.23";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -761,6 +761,73 @@ textarea{min-height:90px}
 .instructorStamp .stDone{font-size:5px!important;letter-spacing:.5px!important}
 .historyLauncher{margin:9px 0 2px!important}
 
+
+/* training ledger / driving-school style record */
+.trainingLedger{
+  background:#fff;border:1px solid #d5dde8;border-radius:14px;
+  overflow:hidden;box-shadow:0 2px 8px rgba(10,34,61,.05);
+}
+.trainingLedgerHeader{
+  padding:10px 12px;background:#f7f9fc;border-bottom:1px solid #d9e1ec;
+}
+.trainingLedgerTitle{font-weight:950;font-size:14px;color:#0d223c}
+.trainingLedgerMeta{display:flex;flex-wrap:wrap;gap:8px 14px;margin-top:4px;font-size:10px;color:#6f7d8f}
+.trainingLedgerMeta b{color:#0d223c}
+.trainingLedgerRows{display:block}
+.trainingLedgerRow{
+  display:grid;grid-template-columns:minmax(0,1fr) 64px 76px 58px;
+  align-items:center;gap:6px;padding:8px 9px;border-bottom:1px solid #e7ebf0;
+  min-height:62px;
+}
+.trainingLedgerRow:last-child{border-bottom:0}
+.trainingLedgerRow.done{background:#fffdf6}
+.trainingLedgerName{min-width:0}
+.trainingLedgerName .main{font-size:12px;font-weight:900;line-height:1.3;color:#0d223c}
+.trainingLedgerName .sub{font-size:9px;color:#8490a0;margin-top:2px}
+.trainingLedgerStatus{text-align:center;font-size:9px;font-weight:900}
+.trainingLedgerStatus .doneLabel{
+  display:inline-block;padding:4px 6px;border-radius:999px;
+  background:#edf8f1;color:#187a42;border:1px solid #bfe5cc;
+}
+.trainingLedgerStatus .pendingLabel{
+  display:inline-block;padding:4px 6px;border-radius:999px;
+  background:#f5f6f8;color:#7f8a99;border:1px solid #dde2e8;
+}
+.trainingLedgerInstructor{
+  font-size:9px;line-height:1.25;color:#5f6d7e;text-align:center;
+  word-break:break-word;
+}
+.trainingLedgerStamp{display:flex;justify-content:center}
+.trainingLedger .instructorStamp{
+  width:48px!important;height:48px!important;flex-basis:48px!important;
+  border-width:2px!important;
+  box-shadow:inset 0 0 0 2px #fff,inset 0 0 0 4px #d6ae35,inset 0 0 0 5px #0a2748!important;
+  transform:rotate(-4deg)!important;
+}
+.trainingLedger .instructorStamp:before,.trainingLedger .instructorStamp:after{
+  left:8px!important;right:8px!important;
+}
+.trainingLedger .instructorStamp:before{top:15px!important}
+.trainingLedger .instructorStamp:after{bottom:14px!important}
+.trainingLedger .instructorStamp .stStar{font-size:7px!important}
+.trainingLedger .instructorStamp .stTop{font-size:3.7px!important;letter-spacing:.4px!important}
+.trainingLedger .instructorStamp .stName{font-size:6px!important;max-width:36px!important;margin:1px 0!important}
+.trainingLedger .instructorStamp .stName.long{font-size:5px!important;max-width:38px!important}
+.trainingLedger .instructorStamp .stDone{font-size:4px!important;letter-spacing:.35px!important}
+.trainingLedgerEmptyStamp{
+  width:46px;height:46px;border:1.5px dashed #d5dce5;border-radius:50%;
+  display:flex;align-items:center;justify-content:center;font-size:8px;color:#a5afbc;
+}
+@media(max-width:520px){
+  .trainingLedgerRow{
+    grid-template-columns:minmax(0,1fr) 52px 66px 50px;
+    gap:4px;padding:7px 7px;min-height:58px;
+  }
+  .trainingLedgerName .main{font-size:11px}
+  .trainingLedgerName .sub{font-size:8px}
+  .trainingLedgerInstructor{font-size:8px}
+}
+
 </style></head><body>${body}<script>${script}</script></body></html>`, {headers:{"content-type":"text/html; charset=utf-8"}});
 
 
@@ -806,7 +873,7 @@ const PUBLIC_BODY = `
 
   <div id="loggedInView" style="display:none">
     <div class="between">
-      <div class="section" style="margin-top:8px">研修進捗</div>
+      <div class="section" style="margin-top:8px">研修記録</div>
       <button id="traineeLogoutBtn" class="btn small" type="button">ログアウト</button>
     </div>
     <div id="mySummary"></div>
@@ -938,16 +1005,36 @@ async function loadProgress(){
      el.innerHTML='<div class="empty">研修プログラムが登録されていません。</div>';
      return;
    }
-   el.innerHTML=rows.map((p,i)=>{
-     const done=p.status==='completed';
-     return '<div class="trainingProgressCard '+(done?'done':'')+'"><div class="trainingProgressRow">'+
-       '<div class="trainingProgressMain">'+
-         '<div class="trainingProgressTitle">'+esc(p.title||('研修 '+(i+1)))+'</div>'+
-         '<div class="trainingProgressMeta">'+(done?'受講済み・担当教官：'+esc(p.assigned_instructor||'未設定'):'未完了')+'</div>'+
-       '</div>'+
-       (done?instructorStamp(p.assigned_instructor):'<div class="trainingProgressEmpty">未完了</div>')+
-     '</div></div>';
-   }).join('');
+   const completed=rows.filter(p=>p.status==='completed').length;
+   const traineeName=(window.myProfile&&window.myProfile.player_name)||'研修生';
+   el.innerHTML=
+    '<div class="trainingLedger">'+
+      '<div class="trainingLedgerHeader">'+
+        '<div class="trainingLedgerTitle">研修原簿</div>'+
+        '<div class="trainingLedgerMeta">'+
+          '<span>研修生：<b>'+esc(traineeName)+'</b></span>'+
+          '<span>修了：<b>'+completed+' / '+rows.length+'</b></span>'+
+        '</div>'+
+      '</div>'+
+      '<div class="trainingLedgerRows">'+
+        rows.map((p,i)=>{
+          const done=p.status==='completed';
+          return '<div class="trainingLedgerRow '+(done?'done':'')+'">'+
+            '<div class="trainingLedgerName">'+
+              '<div class="main">'+esc(p.title||('研修 '+(i+1)))+'</div>'+
+              '<div class="sub">項目 '+(i+1)+'</div>'+
+            '</div>'+
+            '<div class="trainingLedgerStatus">'+
+              (done?'<span class="doneLabel">修了</span>':'<span class="pendingLabel">未修了</span>')+
+            '</div>'+
+            '<div class="trainingLedgerInstructor">'+(done?esc(p.assigned_instructor||'未設定'):'—')+'</div>'+
+            '<div class="trainingLedgerStamp">'+
+              (done?instructorStamp(p.assigned_instructor):'<div class="trainingLedgerEmptyStamp">印</div>')+
+            '</div>'+
+          '</div>';
+        }).join('')+
+      '</div>'+
+    '</div>';
  }catch(_){
    el.innerHTML='<div class="notice error">進捗を取得できませんでした。</div>';
  }
@@ -966,7 +1053,7 @@ async function loadMyPage(){
     '<div><div class="compactUserName">'+esc(d.profile.player_name||'研修生')+'</div><div class="compactUserSub">ログイン中</div></div>'+
   '</div>'+
   '<div class="dashboardProgressBox">'+
-    '<div class="dashboardProgressHead"><div class="dashboardProgressTitle">研修プログラム進捗</div><div class="sub">完了スタンプ</div></div>'+
+    '<div class="dashboardProgressHead"><div class="dashboardProgressTitle">研修原簿</div><div class="sub">修了記録</div></div>'+
     '<div id="trainingProgressList" class="trainingProgressGrid"><div class="empty">進捗を読み込み中...</div></div>'+
   '</div>';
  loadProgress();
