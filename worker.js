@@ -1,4 +1,4 @@
-const APP_VERSION="1.64";
+const APP_VERSION="1.65";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -2242,6 +2242,11 @@ const ADMIN_BODY = `
      <div id="completedAdminList"><div class="empty">受講済み履歴はありません。</div></div>
    </div>
    <div class="completedAdminBox">
+     <div class="completedAdminHead"><div class="completedAdminTitle">希望日時超過履歴</div><div id="expiredAdminCount" class="completedAdminCount">0</div></div>
+     <div class="sub" style="margin-bottom:8px">期限切れになった過去申請です。再申請後は新しい申請だけが上の予約一覧に表示されます。</div>
+     <div id="expiredAdminList"><div class="empty">希望日時超過の履歴はありません。</div></div>
+   </div>
+   <div class="completedAdminBox">
      <div class="completedAdminHead"><div class="completedAdminTitle">教官 講師回数ランキング</div></div>
      <div class="sub">受講済みになった研修を担当教官ごとに自動集計</div>
      <div id="instructorRankingList" class="instructorRanking"><div class="empty">まだ実績はありません。</div></div>
@@ -2496,6 +2501,8 @@ async function loadReservationControl(){
  const e=document.getElementById('reservationControlList');
  const completedEl=document.getElementById('completedAdminList');
  const completedCount=document.getElementById('completedAdminCount');
+ const expiredEl=document.getElementById('expiredAdminList');
+ const expiredCount=document.getElementById('expiredAdminCount');
  const rankingEl=document.getElementById('instructorRankingList');
  if(!e)return;
  e.innerHTML='<div class="empty">予約一覧を読み込んでいます...</div>';
@@ -2516,9 +2523,11 @@ async function loadReservationControl(){
  }
  const all=Array.isArray(d)?d:[];
  const completed=all.filter(x=>x.status==='completed');
- const active=all.filter(x=>x.status!=='completed');
+ const expiredHistory=all.filter(x=>x.status==='expired');
+ const active=all.filter(x=>x.status!=='completed' && x.status!=='expired');
 
  if(completedCount)completedCount.textContent=String(completed.length);
+ if(expiredCount)expiredCount.textContent=String(expiredHistory.length);
 
  if(completedEl){
    completedEl.innerHTML=completed.length?completed.map(x=>{
@@ -2533,6 +2542,20 @@ async function loadReservationControl(){
        '<button type="button" class="btn small danger undoCompletedBtn" data-id="'+x.id+'" style="margin-top:9px">受講済みを取り消す</button>'+
        '</div>';
    }).join(''):'<div class="empty">受講済み履歴はありません。</div>';
+ }
+
+ if(expiredEl){
+   expiredEl.innerHTML=expiredHistory.length?expiredHistory.map(x=>{
+     return '<div class="completedHistoryRow">'+
+       '<div class="name">'+esc(x.title||'研修')+'</div>'+
+       '<div class="meta">研修生：'+esc(x.player_name||'')+
+       (x.preferred_date?' ／ 第1希望：'+esc([x.preferred_date,x.preferred_time].filter(Boolean).join(' ')):'')+
+       (x.preferred_date2?' ／ 第2希望：'+esc([x.preferred_date2,x.preferred_time2].filter(Boolean).join(' ')):'')+
+       (x.preferred_date3?' ／ 第3希望：'+esc([x.preferred_date3,x.preferred_time3].filter(Boolean).join(' ')):'')+
+       '</div>'+
+       '<div class="sub" style="margin-top:5px">期限切れ・過去申請</div>'+
+       '</div>';
+   }).join(''):'<div class="empty">希望日時超過の履歴はありません。</div>';
  }
 
  if(rankingEl){
