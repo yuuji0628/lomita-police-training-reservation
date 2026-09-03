@@ -1,4 +1,4 @@
-const APP_VERSION="1.17";
+const APP_VERSION="1.18";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -682,6 +682,12 @@ textarea{min-height:90px}
   .header:after{font-size:48px;right:-18px;top:14px}
   .menuTabs{grid-template-columns:repeat(2,1fr)}
 }
+
+/* automatic instructor completion stamp */
+.instructorStamp{width:78px;height:78px;border:3px solid #9f1d1d;border-radius:50%;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;color:#9f1d1d;background:rgba(255,255,255,.92);font-weight:950;line-height:1.05;transform:rotate(-7deg);box-shadow:inset 0 0 0 3px #fff,inset 0 0 0 5px #9f1d1d;flex:0 0 78px}
+.instructorStamp .stTop{font-size:7px;letter-spacing:.8px}.instructorStamp .stName{font-size:11px;max-width:58px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin:4px 0}.instructorStamp .stDone{font-size:8px;letter-spacing:.5px}.instructorStamp .stStar{font-size:11px}
+.completedHistory{display:flex;gap:10px;align-items:center}.completedHistoryMain{min-width:0;flex:1}
+@media(max-width:520px){.instructorStamp{width:68px;height:68px;flex-basis:68px}.instructorStamp .stName{font-size:10px;max-width:50px}}
 </style></head><body>${body}<script>${script}</script></body></html>`, {headers:{"content-type":"text/html; charset=utf-8"}});
 
 
@@ -825,6 +831,11 @@ function openBooking(id,title){
  document.getElementById('booking').classList.add('open')
 }
 function closeBooking(){document.getElementById('booking').classList.remove('open')}
+function instructorStamp(name){
+ const n=String(name||'担当教官').trim()||'担当教官';
+ return '<div class="instructorStamp" title="担当教官：'+esc(n)+'"><div class="stStar">★</div><div class="stTop">LOMITA POLICE</div><div class="stName">'+esc(n)+'</div><div class="stDone">COMPLETED</div></div>';
+}
+
 async function loadMyPage(){
  const r=await fetch('/api/trainee/profile');
  const d=await r.json().catch(()=>({}));
@@ -833,9 +844,9 @@ async function loadMyPage(){
  myProfile=d.profile;
  document.getElementById('mySummary').innerHTML='<div class="card"><div class="profileHead"><div class="avatar">'+esc((d.profile.player_name||'?').slice(0,1))+'</div><div><div class="title">'+esc(d.profile.player_name)+'</div><div class="sub">ログイン中</div></div></div><div class="grid" style="margin-top:14px"><div class="stat"><span class="sub">承認待ち</span><b>'+d.stats.pending+'</b></div><div class="stat"><span class="sub">予約確定</span><b>'+d.stats.reserved+'</b></div><div class="stat"><span class="sub">受講済み</span><b>'+d.stats.completed+'</b></div><div class="stat"><span class="sub">欠席</span><b>'+d.stats.absent+'</b></div></div></div>';
  const h=document.getElementById('myHistory');
- h.innerHTML=d.history.length?d.history.map(x=>'<div class="card"><div class="between"><div><span class="pill '+esc(x.status)+'">'+esc(statusLabels[x.status]||x.status)+'</span><div class="title" style="margin-top:7px">'+esc(x.title)+'</div></div>'+(x.status==='pending'||x.status==='reserved'?'<button class="btn danger small traineeCancelBtn" data-id="'+x.id+'">申請キャンセル</button>':'')+'</div>'+(x.preferred_date||x.preferred_time?'<div class="sub" style="margin-top:7px">第1希望：'+esc([x.preferred_date||'',x.preferred_time||''].filter(Boolean).join(' '))+'</div>':'')+
+ h.innerHTML=d.history.length?d.history.map(x=>'<div class="card">'+(x.status==='completed'?'<div class="completedHistory"><div class="completedHistoryMain">':'')+'<div class="between"><div><span class="pill '+esc(x.status)+'">'+esc(statusLabels[x.status]||x.status)+'</span><div class="title" style="margin-top:7px">'+esc(x.title)+'</div></div>'+(x.status==='pending'||x.status==='reserved'?'<button class="btn danger small traineeCancelBtn" data-id="'+x.id+'">申請キャンセル</button>':'')+'</div>'+(x.preferred_date||x.preferred_time?'<div class="sub" style="margin-top:7px">第1希望：'+esc([x.preferred_date||'',x.preferred_time||''].filter(Boolean).join(' '))+'</div>':'')+
 (x.preferred_date2||x.preferred_time2?'<div class="sub"><b>第2希望：</b>'+esc([x.preferred_date2||'',x.preferred_time2||''].filter(Boolean).join(' '))+'</div>':'')+
-(x.preferred_date3||x.preferred_time3?'<div class="sub"><b>第3希望：</b>'+esc([x.preferred_date3||'',x.preferred_time3||''].filter(Boolean).join(' '))+'</div>':'')+(x.confirmed_date||x.confirmed_time?'<div style="margin-top:7px;font-weight:900">✅ 確定日時：'+esc([x.confirmed_date||'',x.confirmed_time||''].filter(Boolean).join(' '))+'</div>':'')+(x.assigned_instructor?'<div class="sub" style="margin-top:7px">担当教官：'+esc(x.assigned_instructor)+'</div>':'')+(x.note?'<div class="sub">備考：'+esc(x.note)+'</div>':'')+'</div>').join(''):'<div class="empty">まだ申請・受講履歴はありません。</div>';
+(x.preferred_date3||x.preferred_time3?'<div class="sub"><b>第3希望：</b>'+esc([x.preferred_date3||'',x.preferred_time3||''].filter(Boolean).join(' '))+'</div>':'')+(x.confirmed_date||x.confirmed_time?'<div style="margin-top:7px;font-weight:900">✅ 確定日時：'+esc([x.confirmed_date||'',x.confirmed_time||''].filter(Boolean).join(' '))+'</div>':'')+(x.assigned_instructor?'<div class="sub" style="margin-top:7px">担当教官：'+esc(x.assigned_instructor)+'</div>':'')+(x.note?'<div class="sub">備考：'+esc(x.note)+'</div>':'')+(x.status==='completed'?'</div>'+instructorStamp(x.assigned_instructor)+'</div>':'')+'</div>').join(''):'<div class="empty">まだ申請・受講履歴はありません。</div>';
  document.querySelectorAll('.traineeCancelBtn').forEach(b=>b.addEventListener('click',()=>cancelMyReservation(Number(b.dataset.id))));
  await load();
 }
