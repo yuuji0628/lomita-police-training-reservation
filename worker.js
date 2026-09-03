@@ -1,4 +1,4 @@
-const APP_VERSION="1.33";
+const APP_VERSION="1.34";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -114,12 +114,15 @@ async function sendTrainingApplicationDiscordNotification(env,payload){
   }
   if(payload.note)fields.push({name:"備考",value:String(payload.note).slice(0,1000),inline:false});
 
+  const roleId=String(env.DISCORD_TRAINING_ROLE_ID||"").trim();
+  const validRoleId=/^\d{15,25}$/.test(roleId);
   const body={
     username:"LOMITA POLICE 研修管理",
-    allowed_mentions:{parse:[]},
+    content:validRoleId?("<@&"+roleId+"> 新しい研修申請が届きました。"):"",
+    allowed_mentions:validRoleId?{parse:[],roles:[roleId]}:{parse:[]},
     embeds:[{
       title:"📘 新しい研修申請",
-      description:"研修申請が届きました。",
+      description:validRoleId?"学科講師の確認をお願いします。":"研修申請が届きました。",
       color:13610549,
       fields,
       timestamp:new Date().toISOString(),
@@ -1454,7 +1457,7 @@ const ADMIN_BODY = `
  
 <div class="card" style="margin-bottom:12px">
   <div class="title">Discord 研修申請通知</div>
-  <div class="sub" style="margin-top:4px">研修申請Webhookの接続状態を確認できます。</div>
+  <div class="sub" style="margin-top:4px">研修申請Webhookと「@学科講師」自動メンションの接続状態を確認できます。</div>
   <div id="discordWebhookStatus" style="margin-top:10px;font-weight:900">確認中...</div>
   <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
     <button id="checkDiscordWebhookBtn" class="btn small" type="button">設定を確認</button>
@@ -1573,7 +1576,13 @@ async function checkDiscordWebhookStatus(){
      if(msg)noticeIn('discordWebhookMsg',d.error||'Webhook設定を確認できませんでした','error');
      return;
    }
-   el.textContent=d.configured?'✅ Discord通知：設定済み':'❌ Discord通知：未設定';
+   if(!d.configured){
+     el.textContent='❌ Discord通知：未設定';
+   }else if(!d.role_configured){
+     el.textContent='⚠️ Discord通知：設定済み ／ @学科講師：未設定';
+   }else{
+     el.textContent='✅ Discord通知：設定済み ／ @学科講師：自動メンションON';
+   }
  }catch(_){
    el.textContent='⚠️ 確認できません';
  }
@@ -2587,7 +2596,12 @@ async function handle(request, env) {
 
  if(path==="/api/admin/discord-training-webhook/status" && method==="GET"){
    if(!(await isAdmin()))return json({error:"unauthorized"},401);
-   return json({configured:!!String(env.DISCORD_TRAINING_WEBHOOK_URL||"").trim()});
+   const webhookConfigured=!!String(env.DISCORD_TRAINING_WEBHOOK_URL||"").trim();
+   const roleId=String(env.DISCORD_TRAINING_ROLE_ID||"").trim();
+   return json({
+     configured:webhookConfigured,
+     role_configured:/^\d{15,25}$/.test(roleId)
+   });
  }
 
  if(path==="/api/admin/discord-training-webhook/test" && method==="POST"){
