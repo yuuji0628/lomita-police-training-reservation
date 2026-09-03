@@ -1,4 +1,4 @@
-const APP_VERSION="1.54";
+const APP_VERSION="1.55";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -2261,7 +2261,9 @@ async function loadReservationControl(){
        (confirmed?' ／ '+esc(confirmed):'')+
        (x.exam_result?(' ／ 判定：'+(x.exam_result==='pass'?'合格':'不合格')):'')+
        ((x.exam_score===null||x.exam_score===undefined)?'':' ／ 得点：'+esc(String(x.exam_score))+'点')+
-       '</div></div>';
+       '</div>'+
+       '<button type="button" class="btn small danger undoCompletedBtn" data-id="'+x.id+'" style="margin-top:9px">受講済みを取り消す</button>'+
+       '</div>';
    }).join(''):'<div class="empty">受講済み履歴はありません。</div>';
  }
 
@@ -2361,6 +2363,30 @@ document.addEventListener('click',e=>{
  if(e.target?.id==='checkDiscordWebhookBtn')checkDiscordWebhookStatus();
  if(e.target?.id==='testDiscordWebhookBtn')testDiscordWebhook();
 });
+document.addEventListener('click',e=>{
+ const btn=e.target.closest?.('.undoCompletedBtn');
+ if(!btn)return;
+ undoCompletedReservation(Number(btn.dataset.id||0));
+});
+
+async function undoCompletedReservation(id){
+ if(!id)return;
+ if(!confirm('この研修の「受講済み」を取り消しますか？\n\n予約確定へ戻し、修了印・受講日・試験判定を解除します。\n本人へのDiscord DMは送信しません。'))return;
+
+ const r=await fetch('/api/admin/reservations/'+id+'/undo-completed',{
+   method:'POST',
+   headers:auth()
+ });
+ const d=await r.json().catch(()=>({}));
+ if(!r.ok){
+   alert(d.error||'受講済みを取り消せませんでした');
+   return;
+ }
+ alert('受講済みを取り消し、予約確定へ戻しました。');
+ await loadReservationControl();
+ await loadAdmin();
+}
+
 document.addEventListener('click',e=>{
  const btn=e.target.closest?.('.finalExamBtn');
  if(!btn)return;
@@ -3838,6 +3864,45 @@ async function handle(request, env) {
    await ensureReservationPreferredSchedule(env);
    await ensureReservationInstructor(env);
    const {results}=await env.DB.prepare("SELECT * FROM reservations WHERE training_id=? ORDER BY CASE status WHEN 'pending' THEN 0 WHEN 'reserved' THEN 1 ELSE 2 END, created_at").bind(Number(m[1])).all(); return json(results);
+ }
+
+ let undoCompletedMatch=path.match(/^\/api\/admin\/reservations\/(\d+)\/undo-completed$/);
+ if(undoCompletedMatch && method==="POST"){
+   if(!(await isAdmin()))return json({error:"unauthorized"},401);
+   await ensureReservationInstructor(env);
+   await ensureReservationPreferredSchedule(env);
+   await ensureReservationNotifications(env);
+
+   const reservationId=Number(undoCompletedMatch[1]);
+   const before=await env.DB.prepare(`
+     SELECT r.id,r.status,r.discord_id,r.player_name,r.training_id,t.title
+     FROM reservations r
+     LEFT JOIN trainings t ON t.id=r.training_id
+     WHERE r.id=?
+   `).bind(reservationId).first();
+
+   if(!before)return json({error:"予約が見つかりません"},404);
+   if(String(before.status||"")!=="completed"){
+     return json({error:"受講済みの研修だけ取り消せます"},400);
+   }
+
+   await env.DB.prepare(`
+     UPDATE reservations
+     SET status='reserved',
+         completed_at='',
+         exam_result='',
+         exam_score=NULL
+     WHERE id=?
+   `).bind(reservationId).run();
+
+   await refreshTraineeFullCompletionByDiscord(env,String(before.discord_id||""));
+
+   return json({
+     ok:true,
+     status:"reserved",
+     message:"受講済みを取り消し、予約確定へ戻しました",
+     dm_sent:false
+   });
  }
 
  m=path.match(/^\/api\/admin\/reservations\/(\d+)$/);
