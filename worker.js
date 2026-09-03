@@ -1,4 +1,4 @@
-const APP_VERSION="1.52";
+const APP_VERSION="1.53";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -145,6 +145,12 @@ async function ensureReservationNotifications(env){
     if(!cols.includes("same_day_reminder_sent_at")){
       try{await env.DB.prepare("ALTER TABLE reservations ADD COLUMN same_day_reminder_sent_at TEXT DEFAULT ''").run()}catch(_){}
     }
+    if(!cols.includes("exam_result")){
+      try{await env.DB.prepare("ALTER TABLE reservations ADD COLUMN exam_result TEXT DEFAULT ''").run()}catch(_){}
+    }
+    if(!cols.includes("exam_score")){
+      try{await env.DB.prepare("ALTER TABLE reservations ADD COLUMN exam_score INTEGER").run()}catch(_){}
+    }
   }catch(_){}
 }
 
@@ -213,6 +219,46 @@ async function sendReservationCancelledDM(env,payload){
     "",
     "必要な場合は、研修生ポータルから改めて申請してください。"
   ]);
+}
+
+async function sendFinalEmploymentExamResultDM(env,payload){
+  const score=payload.exam_score===null || payload.exam_score===undefined || payload.exam_score===""
+    ? ""
+    : String(payload.exam_score)+" / 100点";
+
+  if(String(payload.exam_result)==="pass"){
+    const lines=[
+      "🎉 **本採用試験 合格**",
+      "",
+      "**研修生**："+String(payload.player_name||"研修生"),
+      "**試験**："+String(payload.training_title||"本採用試験")
+    ];
+    if(score)lines.push("**得点**："+score);
+    lines.push(
+      "",
+      "おめでとうございます。",
+      "**正式にLOMITA POLICEへ本採用となりました。**",
+      "今後も警察官としての責任と自覚を持ち、日々の業務に励んでください。"
+    );
+    return await sendDiscordDM(env,payload.discord_user_id,lines);
+  }
+
+  if(String(payload.exam_result)==="fail"){
+    const lines=[
+      "📘 **本採用試験 不合格**",
+      "",
+      "**研修生**："+String(payload.player_name||"研修生"),
+      "**試験**："+String(payload.training_title||"本採用試験")
+    ];
+    if(score)lines.push("**得点**："+score);
+    lines.push(
+      "",
+      "再度内容を復習し、教官の指示に従って再受験をお願いします。"
+    );
+    return await sendDiscordDM(env,payload.discord_user_id,lines);
+  }
+
+  return {ok:false,skipped:true,reason:"invalid_exam_result"};
 }
 
 async function sendReservationStatusDM(env,payload){
@@ -373,6 +419,11 @@ async function refreshTraineeFullCompletionByDiscord(env,key){
   await ensureTraineeProfiles(env);
   const p=await env.DB.prepare("SELECT id FROM trainee_profiles WHERE lower(trim(COALESCE(discord_id,'')))=lower(trim(?)) OR lower(trim(COALESCE(login_name,'')))=lower(trim(?)) OR lower(trim(COALESCE(player_name,'')))=lower(trim(?)) LIMIT 1").bind(key,key,key).first();
   return p?await refreshTraineeFullCompletion(env,p.id):{completed:false,date:""};
+}
+
+function isFinalEmploymentExamTitle(v){
+  const s=String(v||"").trim();
+  return s.includes("本採用") && s.includes("試験");
 }
 
 function isOrientationTitle(v){
@@ -1339,6 +1390,14 @@ textarea{min-height:90px}
 .adminStatusBtn.active[data-status="absent"]{background:#b42318;color:#fff;border-color:#b42318}
 .adminStatusBtn.active[data-status="cancelled"]{background:#5b6470;color:#fff;border-color:#5b6470}
 .adminStatusBtn.active[data-status="retake"]{background:#9a6700;color:#fff;border-color:#9a6700}
+.finalExamBox{margin-top:12px;padding:12px;border:1px solid #d7ad45;border-radius:14px;background:#fffaf0}
+.finalExamTitle{font-size:14px;font-weight:1000;color:#0d223c}
+.finalExamButtons{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:9px}
+.finalExamBtn{min-height:46px;border-radius:12px;border:1px solid #cfd8e4;background:#fff;font-weight:1000}
+.finalExamBtn.pass.active{background:#16834c;color:#fff;border-color:#16834c}
+.finalExamBtn.fail.active{background:#b42318;color:#fff;border-color:#b42318}
+.finalExamScore{margin-top:10px}
+
 
 
 .completedAdminBox{margin-top:14px;background:#fff;border:1px solid #d8e0ea;border-radius:15px;padding:12px;box-shadow:0 2px 7px rgba(10,34,61,.05)}
@@ -2167,7 +2226,10 @@ async function loadReservationControl(){
      return '<div class="completedHistoryRow"><div class="name">'+esc(x.title||'研修')+'</div>'+
        '<div class="meta">研修生：'+esc(x.player_name||'')+
        (x.assigned_instructor?' ／ 担当教官：'+esc(x.assigned_instructor):'')+
-       (confirmed?' ／ '+esc(confirmed):'')+'</div></div>';
+       (confirmed?' ／ '+esc(confirmed):'')+
+       (x.exam_result?(' ／ 判定：'+(x.exam_result==='pass'?'合格':'不合格')):'')+
+       ((x.exam_score===null||x.exam_score===undefined)?'':' ／ 得点：'+esc(String(x.exam_score))+'点')+
+       '</div></div>';
    }).join(''):'<div class="empty">受講済み履歴はありません。</div>';
  }
 
@@ -2203,7 +2265,22 @@ async function loadReservationControl(){
    const statusLabel=labels[x.status]||x.status;
    const instructorOptions='<option value="">担当教官なし</option>'+
      instructorRows.map(i=>'<option value="'+esc(i.name)+'" '+(x.assigned_instructor===i.name?'selected':'')+'>'+esc(i.name)+'</option>').join('');
-   const border=x.status==='pending'?'#d9b33b':x.status==='reserved'?'#0b4fa3':'#a15c00';
+   const border=x.status==='pending'?'#d9b33b':x.status==='reserved'?'#0b4fa3':x.status==='retake'?'#9a6700':'#a15c00';
+   const isFinalExam=isFinalEmploymentExamName(x.title);
+   const examResult=String(x.exam_result||'');
+   const examScore=(x.exam_score===null||x.exam_score===undefined)?'':String(x.exam_score);
+   const examBox=isFinalExam
+     ?'<div class="finalExamBox">'+
+        '<div class="finalExamTitle">本採用試験 判定</div>'+
+        '<div class="sub" style="margin-top:3px">試験終了後に「合格 / 不合格」を選択してください。</div>'+
+        '<input type="hidden" id="examResult_'+x.id+'" value="'+esc(examResult)+'">'+
+        '<div class="finalExamButtons">'+
+          '<button type="button" class="finalExamBtn pass '+(examResult==='pass'?'active':'')+'" data-exam-id="'+x.id+'" data-exam-result="pass">合格</button>'+
+          '<button type="button" class="finalExamBtn fail '+(examResult==='fail'?'active':'')+'" data-exam-id="'+x.id+'" data-exam-result="fail">不合格</button>'+
+        '</div>'+
+        '<div class="field finalExamScore"><label>得点（任意・100点満点）</label><input id="examScore_'+x.id+'" type="number" inputmode="numeric" min="0" max="100" step="1" placeholder="例：85" value="'+esc(examScore)+'"></div>'+
+       '</div>'
+     :'';
 
    return '<div class="card" style="border-left:4px solid '+border+'">'+
      '<div class="between" style="gap:12px;align-items:flex-start"><div style="min-width:0">'+
@@ -2219,6 +2296,7 @@ async function loadReservationControl(){
      '<div class="field" style="margin-top:12px"><label>承認する日時</label><select id="reservationPreference_'+x.id+'"><option value="">希望日時を選択</option>'+preferenceOptions+'</select></div>'+
      '<div class="field"><label>状態</label>'+renderReservationStatusButtons(x.id,x.status)+'</div>'+
      '<div class="field"><label>担当教官</label><select id="reservationInstructor_'+x.id+'">'+instructorOptions+'</select></div>'+
+     examBox+
      '<button class="btn primary" style="width:100%" type="button" onclick="saveReservationFromList('+Number(x.id)+')">変更を保存</button>'+
      (x.note?'<div class="sub" style="margin-top:8px">備考：'+esc(x.note)+'</div>':'')+
    '</div>';
@@ -2250,6 +2328,21 @@ document.addEventListener('click',e=>{
  if(e.target?.id==='testDiscordWebhookBtn')testDiscordWebhook();
 });
 document.addEventListener('click',e=>{
+ const btn=e.target.closest?.('.finalExamBtn');
+ if(!btn)return;
+ const id=Number(btn.dataset.examId||0);
+ const result=String(btn.dataset.examResult||'');
+ if(!id || !['pass','fail'].includes(result))return;
+ const hidden=document.getElementById('examResult_'+id);
+ if(hidden)hidden.value=result;
+ document.querySelectorAll('.finalExamBtn[data-exam-id="'+id+'"]').forEach(b=>{
+   b.classList.toggle('active',b.dataset.examResult===result);
+ });
+ // 合格 = 受講済み / 不合格 = 再受講
+ chooseReservationStatus(id,result==='pass'?'completed':'retake');
+});
+
+document.addEventListener('click',e=>{
  const btn=e.target.closest?.('.adminStatusBtn');
  if(!btn)return;
  const id=Number(btn.dataset.reservationId||0);
@@ -2264,6 +2357,21 @@ async function saveReservationFromList(id){
  const status=statusEl?statusEl.value:'';
  const assigned_instructor=instructorEl?instructorEl.value.trim():'';
  const confirmed_preference=preferenceEl?Number(preferenceEl.value||0):0;
+ const examResultEl=document.getElementById('examResult_'+id);
+ const examScoreEl=document.getElementById('examScore_'+id);
+ const exam_result=examResultEl?String(examResultEl.value||''):'';
+ const examScoreRaw=examScoreEl?String(examScoreEl.value||'').trim():'';
+ const exam_score=examScoreRaw===''?null:Number(examScoreRaw);
+
+ if(examScoreRaw!=='' && (!Number.isInteger(exam_score) || exam_score<0 || exam_score>100)){
+   alert('得点は0〜100の整数で入力してください。');
+   return;
+ }
+
+ if(examResultEl && ['completed','retake'].includes(status) && !['pass','fail'].includes(exam_result)){
+   alert('本採用試験の「合格 / 不合格」を選択してください。');
+   return;
+ }
 
  if(status==='reserved' && !confirmed_preference){
    alert('予約確定にする場合は、第1〜第3希望から承認する日時を選択してください。');
@@ -2283,7 +2391,7 @@ async function saveReservationFromList(id){
    const r=await fetch('/api/admin/reservations/'+id,{
      method:'PATCH',
      headers:auth(),
-     body:JSON.stringify({status,assigned_instructor,confirmed_preference})
+     body:JSON.stringify({status,assigned_instructor,confirmed_preference,exam_result,exam_score})
    });
    const d=await r.json().catch(()=>({}));
    if(!r.ok){
@@ -2340,6 +2448,7 @@ async function deleteInstructor(id){
  await loadInstructors();
 }
 
+function isFinalEmploymentExamName(v){const s=String(v||'').trim();return s.includes('本採用')&&s.includes('試験')}
 function isOrientationProgramName(v){return String(v||'').trim()==='オリエンテーション'}
 let programRows=[];
 async function loadPrograms(){
@@ -3385,6 +3494,7 @@ async function handle(request, env) {
    if(!(await isAdmin()))return json({error:"unauthorized"},401);
    await ensureReservationInstructor(env);
    await ensureReservationPreferredSchedule(env);
+   await ensureReservationNotifications(env);
    const {results}=await env.DB.prepare(`
      SELECT
        r.id,
@@ -3404,6 +3514,8 @@ async function handle(request, env) {
        r.confirmed_date,
        r.confirmed_time,
        r.confirmed_preference,
+       COALESCE(r.exam_result,'') AS exam_result,
+       r.exam_score,
        r.created_at,
        t.title,
        t.training_date,
@@ -3411,9 +3523,9 @@ async function handle(request, env) {
        t.instructor
      FROM reservations r
      JOIN trainings t ON t.id=r.training_id
-     WHERE r.status IN ('pending','reserved','completed','absent')
+     WHERE r.status IN ('pending','reserved','completed','retake','absent')
      ORDER BY
-       CASE r.status WHEN 'pending' THEN 0 WHEN 'reserved' THEN 1 WHEN 'completed' THEN 2 WHEN 'absent' THEN 3 ELSE 4 END,
+       CASE r.status WHEN 'pending' THEN 0 WHEN 'reserved' THEN 1 WHEN 'retake' THEN 2 WHEN 'completed' THEN 3 WHEN 'absent' THEN 4 ELSE 5 END,
        CASE WHEN t.training_date IS NULL OR t.training_date='' THEN 1 ELSE 0 END,
        t.training_date ASC,
        t.start_time ASC,
@@ -3719,6 +3831,17 @@ async function handle(request, env) {
 
    const assigned=String(b.assigned_instructor||"").trim();
    const confirmedPreference=Number(b.confirmed_preference||0);
+   const finalExam=isFinalEmploymentExamTitle(before.title);
+   const examResult=String(b.exam_result||"").trim();
+   const examScoreRaw=b.exam_score;
+   const examScore=(examScoreRaw===null || examScoreRaw===undefined || examScoreRaw==="")?null:Number(examScoreRaw);
+
+   if(finalExam && (b.status==="completed" || b.status==="retake")){
+     if(!["pass","fail"].includes(examResult))return json({error:"本採用試験の合格・不合格を選択してください"},400);
+     if(examResult==="pass" && b.status!=="completed")return json({error:"合格判定は受講済みとして保存してください"},400);
+     if(examResult==="fail" && b.status!=="retake")return json({error:"不合格判定は再受講として保存してください"},400);
+     if(examScore!==null && (!Number.isInteger(examScore) || examScore<0 || examScore>100))return json({error:"得点は0〜100の整数で入力してください"},400);
+   }
 
    if(b.status==="reserved" && ![1,2,3].includes(confirmedPreference))return json({error:"承認する希望日時を選択してください"},400);
    if(b.status==="reserved" && !assigned)return json({error:"担当教官を選択してください"},400);
@@ -3758,11 +3881,11 @@ async function handle(request, env) {
    }
 
    if(completedAt){
-     await env.DB.prepare("UPDATE reservations SET status=?,assigned_instructor=?,confirmed_date=?,confirmed_time=?,confirmed_preference=?,completed_at=? WHERE id=?")
-       .bind(b.status,assigned,confirmedDate,confirmedTime,confirmedPref,completedAt,reservationId).run();
+     await env.DB.prepare("UPDATE reservations SET status=?,assigned_instructor=?,confirmed_date=?,confirmed_time=?,confirmed_preference=?,completed_at=?,exam_result=?,exam_score=? WHERE id=?")
+       .bind(b.status,assigned,confirmedDate,confirmedTime,confirmedPref,completedAt,finalExam?examResult:"",finalExam?examScore:null,reservationId).run();
    }else{
-     await env.DB.prepare("UPDATE reservations SET status=?,assigned_instructor=?,confirmed_date=?,confirmed_time=?,confirmed_preference=? WHERE id=?")
-       .bind(b.status,assigned,confirmedDate,confirmedTime,confirmedPref,reservationId).run();
+     await env.DB.prepare("UPDATE reservations SET status=?,assigned_instructor=?,confirmed_date=?,confirmed_time=?,confirmed_preference=?,exam_result=?,exam_score=? WHERE id=?")
+       .bind(b.status,assigned,confirmedDate,confirmedTime,confirmedPref,finalExam?examResult:"",finalExam?examScore:null,reservationId).run();
    }
 
    let dmResult={ok:false,skipped:true};
@@ -3781,7 +3904,15 @@ async function handle(request, env) {
        Number(before.confirmed_preference||0)!==confirmedPref
      );
 
-   if(b.status==="reserved" && previousStatus!=="reserved"){
+   if(finalExam && ["pass","fail"].includes(examResult) && previousStatus!==b.status){
+     dmResult=await sendFinalEmploymentExamResultDM(env,{
+       discord_user_id:String(before.discord_id||""),
+       player_name:String(before.player_name||"研修生"),
+       training_title:String(before.title||"本採用試験"),
+       exam_result:examResult,
+       exam_score:examScore
+     });
+   }else if(b.status==="reserved" && previousStatus!=="reserved"){
      dmResult=await sendReservationConfirmedDM(env,{
        discord_user_id:String(before.discord_id||""),
        training_title:String(before.title||"研修"),
@@ -3821,6 +3952,8 @@ async function handle(request, env) {
      confirmed_date:confirmedDate,
      confirmed_time:confirmedTime,
      confirmed_preference:confirmedPref,
+     exam_result:finalExam?examResult:"",
+     exam_score:finalExam?examScore:null,
      dm_sent:!!dmResult.ok,
      dm_skipped:!!dmResult.skipped
    });
