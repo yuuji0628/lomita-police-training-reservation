@@ -1,4 +1,4 @@
-const APP_VERSION="1.21";
+const APP_VERSION="1.22";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -736,6 +736,31 @@ textarea{min-height:90px}
  .instructorStamp .stName.long{font-size:6px;max-width:52px}
  .trainingProgressEmpty{width:60px;height:60px;flex-basis:60px}
 }
+
+/* compact trainee progress dashboard */
+#mySummary.compactSummary{background:transparent!important;border:0!important;box-shadow:none!important;padding:0!important;margin:0!important}
+.compactUserRow{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:0 0 7px;padding:0 2px}
+.compactUserName{font-weight:900;font-size:13px;color:#0d223c}
+.compactUserSub{font-size:10px;color:#7a8798;margin-top:1px}
+.dashboardProgressBox{margin-top:0!important;padding-top:0!important;border-top:0!important}
+.dashboardProgressHead{margin:0 0 6px!important}
+.dashboardProgressTitle{font-size:14px!important}
+.trainingProgressGrid{gap:7px!important;margin-top:6px!important}
+.trainingProgressCard{padding:8px 10px!important;border-radius:12px!important;min-height:62px}
+.trainingProgressRow{gap:8px!important}
+.trainingProgressTitle{font-size:13px!important}
+.trainingProgressMeta{font-size:10px!important;margin-top:3px!important}
+.trainingProgressEmpty{width:50px!important;height:50px!important;flex-basis:50px!important;font-size:8px!important}
+.instructorStamp{width:56px!important;height:56px!important;flex-basis:56px!important;border-width:2px!important;box-shadow:inset 0 0 0 2px #fff,inset 0 0 0 4px #d6ae35,inset 0 0 0 6px #0a2748,0 3px 8px rgba(10,39,72,.14)!important}
+.instructorStamp:before,.instructorStamp:after{left:9px!important;right:9px!important}
+.instructorStamp:before{top:18px!important}.instructorStamp:after{bottom:16px!important}
+.instructorStamp .stStar{font-size:8px!important}
+.instructorStamp .stTop{font-size:4px!important;letter-spacing:.6px!important}
+.instructorStamp .stName{font-size:7px!important;max-width:42px!important;margin:2px 0!important}
+.instructorStamp .stName.long{font-size:6px!important;max-width:44px!important}
+.instructorStamp .stDone{font-size:5px!important;letter-spacing:.5px!important}
+.historyLauncher{margin:9px 0 2px!important}
+
 </style></head><body>${body}<script>${script}</script></body></html>`, {headers:{"content-type":"text/html; charset=utf-8"}});
 
 
@@ -781,11 +806,11 @@ const PUBLIC_BODY = `
 
   <div id="loggedInView" style="display:none">
     <div class="between">
-      <div class="section" style="margin-top:8px">自分の研修状況</div>
+      <div class="section" style="margin-top:8px">研修進捗</div>
       <button id="traineeLogoutBtn" class="btn small" type="button">ログアウト</button>
     </div>
     <div id="mySummary"></div>
-    <div class="historyLauncher"><button id="openHistoryBtn" class="btn" type="button">申請・受講履歴を見る</button></div>
+    <div class="historyLauncher"><button id="openHistoryBtn" class="btn small" type="button">申請・受講履歴を見る</button></div>
 
 <div id="historyModal" class="modal">
   <div class="modalCard">
@@ -934,14 +959,16 @@ async function loadMyPage(){
  if(r.status===401){showAuth();return}
  if(!r.ok)return;
  myProfile=d.profile;
- document.getElementById('mySummary').innerHTML='<div class="card"><div class="profileHead"><div class="avatar">'+esc((d.profile.player_name||'?').slice(0,1))+'</div><div><div class="title">'+esc(d.profile.player_name)+'</div><div class="sub">ログイン中</div></div></div><div class="grid" style="margin-top:14px"><div class="stat"><span class="sub">承認待ち</span><b>'+d.stats.pending+'</b></div><div class="stat"><span class="sub">予約確定</span><b>'+d.stats.reserved+'</b></div><div class="stat"><span class="sub">受講済み</span><b>'+d.stats.completed+'</b></div><div class="stat"><span class="sub">欠席</span><b>'+d.stats.absent+'</b></div></div></div>';
-
- document.getElementById('mySummary').insertAdjacentHTML('beforeend',
+ const summaryEl=document.getElementById('mySummary');
+ summaryEl.classList.add('compactSummary');
+ summaryEl.innerHTML=
+  '<div class="compactUserRow">'+
+    '<div><div class="compactUserName">'+esc(d.profile.player_name||'研修生')+'</div><div class="compactUserSub">ログイン中</div></div>'+
+  '</div>'+
   '<div class="dashboardProgressBox">'+
-   '<div class="dashboardProgressHead"><div class="dashboardProgressTitle">研修プログラム進捗</div><div class="sub">完了スタンプ</div></div>'+
-   '<div id="trainingProgressList" class="trainingProgressGrid"><div class="empty">進捗を読み込み中...</div></div>'+
-  '</div>'
- );
+    '<div class="dashboardProgressHead"><div class="dashboardProgressTitle">研修プログラム進捗</div><div class="sub">完了スタンプ</div></div>'+
+    '<div id="trainingProgressList" class="trainingProgressGrid"><div class="empty">進捗を読み込み中...</div></div>'+
+  '</div>';
  loadProgress();
  const h=document.getElementById('myHistory');
  h.innerHTML=d.history.length?d.history.map(x=>'<div class="card">'+(x.status==='completed'?'<div class="completedHistory"><div class="completedHistoryMain">':'')+'<div class="between"><div><span class="pill '+esc(x.status)+'">'+esc(statusLabels[x.status]||x.status)+'</span><div class="title" style="margin-top:7px">'+esc(x.title)+'</div></div>'+(x.status==='pending'||x.status==='reserved'?'<button class="btn danger small traineeCancelBtn" data-id="'+x.id+'">申請キャンセル</button>':'')+'</div>'+(x.preferred_date||x.preferred_time?'<div class="sub" style="margin-top:7px">第1希望：'+esc([x.preferred_date||'',x.preferred_time||''].filter(Boolean).join(' '))+'</div>':'')+
