@@ -1,4 +1,4 @@
-const APP_VERSION="1.14";
+const APP_VERSION="1.15";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -1090,7 +1090,6 @@ async function loadReservationControl(){
  }
 
  e.innerHTML=d.map(x=>{
-   const dateText=[x.training_date||'',x.start_time||''].filter(Boolean).join(' ');
    const preferredText=[x.preferred_date||'',x.preferred_time||''].filter(Boolean).join(' ');
    const preferredText2=[x.preferred_date2||'',x.preferred_time2||''].filter(Boolean).join(' ');
    const preferredText3=[x.preferred_date3||'',x.preferred_time3||''].filter(Boolean).join(' ');
@@ -1115,7 +1114,6 @@ async function loadReservationControl(){
          (preferredText2?'<div class="sub" style="font-weight:800">第2希望：'+esc(preferredText2)+'</div>':'')+
          (preferredText3?'<div class="sub" style="font-weight:800">第3希望：'+esc(preferredText3)+'</div>':'')+
        '</div>'+
-       '<div class="sub" style="text-align:right;white-space:nowrap">研修設定<br>'+esc(dateText||'日時未設定')+'</div>'+
      '</div>'+
      '<div class="field" style="margin-top:12px"><label>状態</label><select id="reservationStatus_'+x.id+'">'+statusOptions+'</select></div>'+
      '<div class="field"><label>担当教官</label><select id="reservationInstructor_'+x.id+'">'+instructorOptions+'</select></div>'+
