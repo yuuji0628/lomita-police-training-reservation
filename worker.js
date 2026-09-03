@@ -1,4 +1,4 @@
-const APP_VERSION="1.23";
+const APP_VERSION="1.24";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -828,6 +828,102 @@ textarea{min-height:90px}
   .trainingLedgerInstructor{font-size:8px}
 }
 
+
+/* mobile driving-school style ledger grid */
+.ledgerScroll{
+  overflow-x:auto;
+  -webkit-overflow-scrolling:touch;
+  padding-bottom:6px;
+  border:1px solid #cfd7e1;
+  border-radius:12px;
+  background:#fff;
+}
+.ledgerPaper{
+  min-width:760px;
+  background:#fff;
+  color:#111827;
+}
+.ledgerTop{
+  display:flex;justify-content:space-between;align-items:center;
+  padding:8px 10px;border-bottom:2px solid #111;
+  font-size:11px;background:#fafafa;
+}
+.ledgerTop b{font-size:13px}
+.ledgerTable{
+  display:grid;
+  grid-template-columns:72px repeat(8, 86px);
+  border-top:1px solid #111;
+  border-left:1px solid #111;
+}
+.ledgerCell{
+  min-height:56px;
+  border-right:1px solid #111;
+  border-bottom:1px solid #111;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  text-align:center;
+  padding:4px;
+  font-size:10px;
+  line-height:1.2;
+  background:#fff;
+  position:relative;
+}
+.ledgerCell.label{
+  font-weight:900;
+  background:#f7f7f7;
+  font-size:10px;
+}
+.ledgerCell.item{
+  flex-direction:column;
+  gap:2px;
+}
+.ledgerCell .itemNo{
+  position:absolute;
+  top:2px;right:4px;
+  font-size:8px;color:#6b7280;
+}
+.ledgerCell .itemTitle{
+  font-weight:900;
+  font-size:9px;
+  max-width:74px;
+  line-height:1.15;
+}
+.ledgerCell .itemTeacher{
+  font-size:7px;
+  color:#64748b;
+  margin-top:1px;
+}
+.ledgerCell.done{background:#fffdf5}
+.ledgerCell.pending{background:#fff}
+.ledgerCell.empty{background:#fbfbfb;color:#c0c6cf}
+.ledgerStampMini{
+  width:44px;height:44px;border-radius:50%;
+  border:2px solid #0a2748;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  color:#0a2748;background:#fff;
+  box-shadow:inset 0 0 0 2px #fff,inset 0 0 0 4px #d6ae35,inset 0 0 0 5px #0a2748;
+  transform:rotate(-4deg);
+  font-weight:950;
+  line-height:1;
+}
+.ledgerStampMini .s1{font-size:4px;letter-spacing:.5px}
+.ledgerStampMini .s2{font-size:6px;max-width:32px;line-height:1.05;margin:2px 0;word-break:break-word}
+.ledgerStampMini .s3{font-size:4px;letter-spacing:.4px}
+.ledgerLegend{
+  display:flex;gap:8px;align-items:center;
+  padding:7px 9px;
+  font-size:9px;color:#64748b;background:#fafafa;
+  border-top:1px solid #d9dee6;
+}
+@media(max-width:520px){
+ .ledgerScroll{margin-left:-2px;margin-right:-2px}
+ .ledgerPaper{min-width:720px}
+ .ledgerTable{grid-template-columns:66px repeat(8,82px)}
+ .ledgerCell{min-height:52px}
+ .ledgerCell .itemTitle{font-size:8px;max-width:70px}
+}
+
 </style></head><body>${body}<script>${script}</script></body></html>`, {headers:{"content-type":"text/html; charset=utf-8"}});
 
 
@@ -988,6 +1084,15 @@ function instructorStamp(name){
  const cls=n.length>=9?'stName long':'stName';
  return '<div class="instructorStamp" title="担当教官：'+esc(n)+'"><div class="stStar">★</div><div class="stTop">LOMITA POLICE</div><div class="'+cls+'">'+esc(n)+'</div><div class="stDone">CERTIFIED</div></div>';
 }
+function ledgerStamp(name){
+ const n=String(name||'担当教官').trim()||'担当教官';
+ return '<div class="ledgerStampMini" title="担当教官：'+esc(n)+'">'+
+   '<div class="s1">LOMITA POLICE</div>'+
+   '<div class="s2">'+esc(n)+'</div>'+
+   '<div class="s3">CERTIFIED</div>'+
+ '</div>';
+}
+
 
 async function loadProgress(){
  const el=document.getElementById('trainingProgressList');
@@ -1007,35 +1112,56 @@ async function loadProgress(){
    }
    const completed=rows.filter(p=>p.status==='completed').length;
    const traineeName=(window.myProfile&&window.myProfile.player_name)||'研修生';
+   const perRow=8;
+   const groups=[];
+   for(let i=0;i<rows.length;i+=perRow)groups.push(rows.slice(i,i+perRow));
+
+   const makeCells=(group,offset)=>{
+     const filled=[...group];
+     while(filled.length<perRow)filled.push(null);
+
+     const stampRow=
+       '<div class="ledgerCell label">月日<br>指導員印</div>'+
+       filled.map((p,j)=>{
+         if(!p)return '<div class="ledgerCell empty">—</div>';
+         const done=p.status==='completed';
+         return '<div class="ledgerCell item '+(done?'done':'pending')+'">'+
+           '<div class="itemNo">'+(offset+j+1)+'</div>'+
+           (done?ledgerStamp(p.assigned_instructor):'<span style="color:#b6bec9">未修了</span>')+
+         '</div>';
+       }).join('');
+
+     const itemRow=
+       '<div class="ledgerCell label">研修項目名</div>'+
+       filled.map((p,j)=>{
+         if(!p)return '<div class="ledgerCell empty">—</div>';
+         return '<div class="ledgerCell item">'+
+           '<div class="itemTitle">'+esc(p.title||('研修 '+(offset+j+1)))+'</div>'+
+           (p.status==='completed'?'<div class="itemTeacher">'+esc(p.assigned_instructor||'')+'</div>':'')+
+         '</div>';
+       }).join('');
+
+     const statusRow=
+       '<div class="ledgerCell label">修了状況</div>'+
+       filled.map(p=>{
+         if(!p)return '<div class="ledgerCell empty">—</div>';
+         return '<div class="ledgerCell">'+(p.status==='completed'?'修了':'未修了')+'</div>';
+       }).join('');
+
+     return stampRow+itemRow+statusRow;
+   };
+
    el.innerHTML=
-    '<div class="trainingLedger">'+
-      '<div class="trainingLedgerHeader">'+
-        '<div class="trainingLedgerTitle">研修原簿</div>'+
-        '<div class="trainingLedgerMeta">'+
-          '<span>研修生：<b>'+esc(traineeName)+'</b></span>'+
-          '<span>修了：<b>'+completed+' / '+rows.length+'</b></span>'+
+    '<div class="ledgerScroll">'+
+      '<div class="ledgerPaper">'+
+        '<div class="ledgerTop">'+
+          '<div><b>研修原簿</b>　研修生：'+esc(traineeName)+'</div>'+
+          '<div>修了 '+completed+' / '+rows.length+'</div>'+
         '</div>'+
+        groups.map((g,idx)=>'<div class="ledgerTable">'+makeCells(g,idx*perRow)+'</div>').join('')+
+        '<div class="ledgerLegend">横にスワイプして原簿全体を確認できます。</div>'+
       '</div>'+
-      '<div class="trainingLedgerRows">'+
-        rows.map((p,i)=>{
-          const done=p.status==='completed';
-          return '<div class="trainingLedgerRow '+(done?'done':'')+'">'+
-            '<div class="trainingLedgerName">'+
-              '<div class="main">'+esc(p.title||('研修 '+(i+1)))+'</div>'+
-              '<div class="sub">項目 '+(i+1)+'</div>'+
-            '</div>'+
-            '<div class="trainingLedgerStatus">'+
-              (done?'<span class="doneLabel">修了</span>':'<span class="pendingLabel">未修了</span>')+
-            '</div>'+
-            '<div class="trainingLedgerInstructor">'+(done?esc(p.assigned_instructor||'未設定'):'—')+'</div>'+
-            '<div class="trainingLedgerStamp">'+
-              (done?instructorStamp(p.assigned_instructor):'<div class="trainingLedgerEmptyStamp">印</div>')+
-            '</div>'+
-          '</div>';
-        }).join('')+
-      '</div>'+
-    '</div>';
- }catch(_){
+    '</div>' }catch(_){
    el.innerHTML='<div class="notice error">進捗を取得できませんでした。</div>';
  }
 }
@@ -1053,7 +1179,7 @@ async function loadMyPage(){
     '<div><div class="compactUserName">'+esc(d.profile.player_name||'研修生')+'</div><div class="compactUserSub">ログイン中</div></div>'+
   '</div>'+
   '<div class="dashboardProgressBox">'+
-    '<div class="dashboardProgressHead"><div class="dashboardProgressTitle">研修原簿</div><div class="sub">修了記録</div></div>'+
+    '<div class="dashboardProgressHead"><div class="dashboardProgressTitle">研修原簿</div><div class="sub">教習原簿形式</div></div>'+
     '<div id="trainingProgressList" class="trainingProgressGrid"><div class="empty">進捗を読み込み中...</div></div>'+
   '</div>';
  loadProgress();
