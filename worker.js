@@ -1,4 +1,4 @@
-const APP_VERSION="1.46";
+const APP_VERSION="1.47";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -2261,13 +2261,45 @@ async function deleteTrainee(id,name){
  await loadAdmin();
 }
 async function openTraineeDetail(discord){
- document.getElementById('traineeModal').classList.add('open');
- document.getElementById('traineeDetail').innerHTML='<div class="empty">読み込み中...</div>';
- const r=await fetch('/api/admin/trainee-history?discord_id='+encodeURIComponent(discord),{headers:auth()});
- const d=await r.json();
- if(!r.ok){document.getElementById('traineeDetail').innerHTML='<div class="notice error">'+esc(d.error||'取得できませんでした')+'</div>';return}
- document.getElementById('traineeDetailTitle').textContent=(d.profile.player_name||'研修生')+' / 研修履歴';
- document.getElementById('traineeDetail').innerHTML='<div class="card"><div class="sub">Discord</div><b>'+esc(d.profile.discord_id)+'</b><div class="sub" style="margin-top:8px">'+esc([d.profile.affiliation,d.profile.rank].filter(Boolean).join(' / ')||'所属・階級 未登録')+'</div><div class="grid" style="margin-top:14px"><div class="stat"><span class="sub">承認待ち</span><b>'+d.stats.pending+'</b></div><div class="stat"><span class="sub">予約確定</span><b>'+d.stats.reserved+'</b></div><div class="stat"><span class="sub">受講済み</span><b>'+d.stats.completed+'</b></div><div class="stat"><span class="sub">欠席</span><b>'+d.stats.absent+'</b></div></div></div><div class="section">履歴</div>'+(d.history.length?d.history.map(x=>'<div class="card"><div class="between"><div><span class="pill '+esc(x.status)+'">'+esc(labels[x.status]||x.status)+'</span><div class="title" style="margin-top:7px">'+esc(x.title)+'</div><div class="meta"><span>📅 '+fmt(x.training_date)+'</span><span>🕒 '+esc(x.start_time||'')+(x.end_time?'〜'+esc(x.end_time):'')+'</span></div></div></div>'+(x.note?'<div class="sub">備考：'+esc(x.note)+'</div>':'')+'</div>').join(''):'<div class="empty">履歴がありません。</div>');
+ const modal=document.getElementById('traineeModal');
+ const detail=document.getElementById('traineeDetail');
+ modal.classList.add('open');
+ detail.innerHTML='<div class="empty">読み込み中...</div>';
+ try{
+   const r=await fetch('/api/admin/trainee-history?discord_id='+encodeURIComponent(discord),{headers:auth(),cache:'no-store'});
+   const text=await r.text();
+   let d={};
+   try{d=text?JSON.parse(text):{}}catch(_){d={error:'研修履歴データを読み取れませんでした'};}
+   if(!r.ok){
+     detail.innerHTML='<div class="notice error">'+esc(d.error||('取得できませんでした（HTTP '+r.status+'）'))+'</div>';
+     return;
+   }
+   document.getElementById('traineeDetailTitle').textContent=(d.profile?.player_name||'研修生')+' / 研修履歴';
+   const s=d.stats||{};
+   const history=Array.isArray(d.history)?d.history:[];
+   detail.innerHTML=
+     '<div class="card"><div class="sub">Discord</div><b>'+esc(d.profile?.discord_id||'未登録')+'</b>'+
+     '<div class="sub" style="margin-top:8px">'+esc([d.profile?.affiliation,d.profile?.rank].filter(Boolean).join(' / ')||'所属・階級 未登録')+'</div>'+
+     (d.profile?.all_completed_at?'<div style="margin-top:10px;padding:10px;border:1px solid #d7ad45;border-radius:12px;background:#fff9df"><b>🏅 全研修修了</b><div class="sub">修了日：'+esc(String(d.profile.all_completed_at).replaceAll('-','/'))+'</div></div>':'')+
+     '<div class="grid" style="margin-top:14px">'+
+       '<div class="stat"><span class="sub">承認待ち</span><b>'+(s.pending||0)+'</b></div>'+
+       '<div class="stat"><span class="sub">予約確定</span><b>'+(s.reserved||0)+'</b></div>'+
+       '<div class="stat"><span class="sub">受講済み</span><b>'+(s.completed||0)+'</b></div>'+
+       '<div class="stat"><span class="sub">再受講</span><b>'+(s.retake||0)+'</b></div>'+
+     '</div></div>'+
+     '<div class="section">履歴</div>'+
+     (history.length?history.map(x=>
+       '<div class="card"><div class="between"><div><span class="pill '+esc(x.status)+'">'+esc(labels[x.status]||x.status)+'</span>'+
+       '<div class="title" style="margin-top:7px">'+esc(x.title||'研修')+'</div>'+
+       '<div class="meta">'+
+         (x.training_date?'<span>📅 '+fmt(x.training_date)+'</span>':'')+
+         ((x.start_time||x.confirmed_time)?'<span>🕒 '+esc(x.start_time||x.confirmed_time||'')+(x.end_time?'〜'+esc(x.end_time):'')+'</span>':'')+
+       '</div></div></div>'+
+       (x.note?'<div class="sub">備考：'+esc(x.note)+'</div>':'')+
+       '</div>').join(''):'<div class="empty">履歴がありません。</div>');
+ }catch(err){
+   detail.innerHTML='<div class="notice error">研修履歴を取得できませんでした。再読み込みしてお試しください。</div>';
+ }
 }
 function closeTraineeDetail(){document.getElementById('traineeModal').classList.remove('open')}
 function fmt(d){return new Date(d+'T00:00:00').toLocaleDateString('ja-JP',{month:'numeric',day:'numeric',weekday:'short'})}
@@ -3009,23 +3041,55 @@ async function handle(request, env) {
 
  if(path==="/api/admin/trainee-history" && method==="GET"){
    await ensureTraineeProfiles(env);
-   const discordId=(url.searchParams.get("discord_id")||"").trim();
-   if(!discordId)return json({error:"Discord IDが必要です"},400);
-   let profile=await env.DB.prepare("SELECT player_name,discord_id,affiliation,rank FROM trainee_profiles WHERE lower(trim(discord_id))=lower(trim(?))").bind(discordId).first();
+   await ensureReservationNotifications(env);
+   const key=(url.searchParams.get("discord_id")||"").trim();
+   if(!key)return json({error:"研修生の識別情報が必要です"},400);
+
+   let profile=await env.DB.prepare(`
+     SELECT id,player_name,discord_id,login_name,affiliation,rank,
+            COALESCE(admin_memo,'') AS admin_memo,
+            COALESCE(all_completed_at,'') AS all_completed_at
+     FROM trainee_profiles
+     WHERE lower(trim(COALESCE(discord_id,'')))=lower(trim(?))
+        OR lower(trim(COALESCE(login_name,'')))=lower(trim(?))
+        OR lower(trim(COALESCE(player_name,'')))=lower(trim(?))
+     LIMIT 1
+   `).bind(key,key,key).first();
+
+   const canonical=String(profile?.discord_id||profile?.login_name||profile?.player_name||key).trim();
    const {results}=await env.DB.prepare(`
      SELECT r.*,t.title,t.training_date,t.start_time,t.end_time,t.location,t.category
-     FROM reservations r JOIN trainings t ON t.id=r.training_id
-     WHERE lower(trim(r.discord_id))=lower(trim(?))
-     ORDER BY t.training_date DESC,t.start_time DESC,r.id DESC
-   `).bind(discordId).all();
-   if(!profile && !results.length)return json({error:"研修生が見つかりません"},404);
+     FROM reservations r
+     LEFT JOIN trainings t ON t.id=r.training_id
+     WHERE lower(trim(COALESCE(r.discord_id,'')))=lower(trim(?))
+        OR lower(trim(COALESCE(r.player_name,'')))=lower(trim(?))
+     ORDER BY COALESCE(NULLIF(r.completed_at,''),r.confirmed_date,t.training_date,'') DESC,
+              COALESCE(r.confirmed_time,t.start_time,'') DESC,
+              r.id DESC
+   `).bind(canonical,String(profile?.player_name||key)).all();
+
+   const history=Array.isArray(results)?results:[];
+   if(!profile && !history.length)return json({error:"研修生が見つかりません"},404);
+
    if(!profile){
-     const latest=results[0];
-     profile={player_name:latest.player_name,discord_id:latest.discord_id,affiliation:latest.affiliation||"",rank:""};
+     const latest=history[0]||{};
+     profile={
+       player_name:latest.player_name||"研修生",
+       discord_id:latest.discord_id||"",
+       affiliation:latest.affiliation||"",
+       rank:"",
+       admin_memo:"",
+       all_completed_at:""
+     };
+   }else{
+     const refreshed=await refreshTraineeFullCompletion(env,Number(profile.id));
+     profile.all_completed_at=refreshed.completed?String(refreshed.date||profile.all_completed_at||""):"";
    }
-   const stats={pending:0,reserved:0,completed:0,absent:0,cancelled:0};
-   for(const x of results)if(stats[x.status]!==undefined)stats[x.status]++;
-   return json({profile,stats,history:results});
+
+   const stats={pending:0,reserved:0,completed:0,retake:0,absent:0,cancelled:0};
+   for(const x of history)if(stats[x.status]!==undefined)stats[x.status]++;
+
+   return json({profile,stats,history});
  }
 
  if(path==="/api/training-policy" && method==="GET"){
