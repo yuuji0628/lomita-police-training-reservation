@@ -1,13 +1,17 @@
-LOMITA POLICE Training Reservation - Version 1.63
+LOMITA POLICE Training Reservation - Version 1.64
 
-緊急修正
-- Version 1.62で管理画面が開けなくなる問題を修正
-- 原因: 期限切れカード表示部分のJavaScript文字列の引用符ミス
-- 管理者ログインを復旧
-- 「希望日時超過」の読み取り専用カード仕様は維持
-- 研修生の再申請導線も維持
+変更
+- 承認待ち・担当教官未決定のDiscord定期通知
+  3時間ごと → 1時間ごと に変更
+
+動作
+- Cloudflare Cronは既存の毎時実行を使用
+- 承認待ち + 担当教官未決定の申請がある場合、
+  前回通知から1時間以上経過していれば再通知
+- @学科講師ロールの自動メンション維持
+- 希望日時超過処理・再申請導線・既存DM通知も維持
 
 検証
 - worker.js 構文チェック
-- ADMIN_SCRIPT（管理画面JavaScript）を抽出して個別構文チェック
-を実施済み
+- 管理画面JavaScript単体構文チェック
+- 既存主要機能の回帰チェック
