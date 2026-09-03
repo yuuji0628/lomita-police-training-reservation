@@ -1,10 +1,15 @@
-LOMITA POLICE Training Reservation - Version 1.49
+LOMITA POLICE Training Reservation - Version 1.50
 
 修正
-- 「受講履歴を見る」で「研修履歴データを読み取れませんでした」となる問題を修正
-- 研修履歴APIから環境差の出やすい trainings の補助列参照を削除
-- 履歴取得を confirmed_date / completed_at / preferred_date ベースに統一
-- API内部エラー時も必ずJSONで返却
-- WorkerのHTMLエラー画面が返ってフロントがJSON解析失敗する問題を防止
+1. 研修進捗表に未修了が残っているのに「すべての研修を受講済み」と表示される不整合を修正
+- training_programs と trainings の紐付けを安定化
+- 同名trainingが既にある場合は再利用
+- 未紐付けプログラムを全修了扱いしない
+- 進捗表と「現在の研修」の判定母集団を統一
 
-Version 1.48の修了証デザインを維持
+2. 管理画面の内部仮データ表示を整理
+- 2099-12-31 / 00:00 / 999名を画面にそのまま出さない
+- 仮データの場合は「申請時に希望日時を指定」と表示
+- 0/999名表示を非表示
+
+Version 1.49までの機能を維持
