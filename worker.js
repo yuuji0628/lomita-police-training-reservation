@@ -1,4 +1,4 @@
-const APP_VERSION="1.15";
+const APP_VERSION="1.16";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -741,20 +741,26 @@ const PUBLIC_BODY = `
   <div class="title" id="bookTitle">研修申請</div>
   <div class="sub" style="margin-top:4px">申請後、管理者が担当教官を選んで承認します。</div>
   <div id="bookingMsg"></div>
-  <div style="margin-top:14px">
-    <div style="font-weight:900;margin-bottom:7px">第1希望 <span style="color:#b42318;font-size:12px">必須</span></div>
-    <div class="field"><label>希望日</label><input id="preferredDate" type="date" required style="min-height:52px;font-size:16px"></div>
-    <div class="field"><label>希望時間</label><input id="preferredTime" type="time" required style="min-height:52px;font-size:16px"></div>
+  <div style="margin-top:12px">
+    <div style="font-weight:900;margin-bottom:6px">第1希望 <span style="color:#b42318;font-size:12px">必須</span></div>
+    <div class="grid" style="grid-template-columns:1.35fr 1fr;gap:8px">
+      <div class="field" style="margin:0"><label style="font-size:11px">日付</label><input id="preferredDate" type="date" required style="min-height:44px;font-size:15px;padding:9px 10px"></div>
+      <div class="field" style="margin:0"><label style="font-size:11px">時間</label><input id="preferredTime" type="time" required style="min-height:44px;font-size:15px;padding:9px 10px"></div>
+    </div>
   </div>
-  <div style="margin-top:14px;padding-top:12px;border-top:1px solid #e5e7eb">
-    <div style="font-weight:900;margin-bottom:7px">第2希望 <span class="sub">任意</span></div>
-    <div class="field"><label>希望日</label><input id="preferredDate2" type="date" style="min-height:52px;font-size:16px"></div>
-    <div class="field"><label>希望時間</label><input id="preferredTime2" type="time" style="min-height:52px;font-size:16px"></div>
+  <div style="margin-top:10px;padding-top:10px;border-top:1px solid #e5e7eb">
+    <div style="font-weight:900;margin-bottom:6px">第2希望 <span class="sub" style="font-size:11px">任意</span></div>
+    <div class="grid" style="grid-template-columns:1.35fr 1fr;gap:8px">
+      <div class="field" style="margin:0"><label style="font-size:11px">日付</label><input id="preferredDate2" type="date" style="min-height:44px;font-size:15px;padding:9px 10px"></div>
+      <div class="field" style="margin:0"><label style="font-size:11px">時間</label><input id="preferredTime2" type="time" style="min-height:44px;font-size:15px;padding:9px 10px"></div>
+    </div>
   </div>
-  <div style="margin-top:14px;padding-top:12px;border-top:1px solid #e5e7eb">
-    <div style="font-weight:900;margin-bottom:7px">第3希望 <span class="sub">任意</span></div>
-    <div class="field"><label>希望日</label><input id="preferredDate3" type="date" style="min-height:52px;font-size:16px"></div>
-    <div class="field"><label>希望時間</label><input id="preferredTime3" type="time" style="min-height:52px;font-size:16px"></div>
+  <div style="margin-top:10px;padding-top:10px;border-top:1px solid #e5e7eb">
+    <div style="font-weight:900;margin-bottom:6px">第3希望 <span class="sub" style="font-size:11px">任意</span></div>
+    <div class="grid" style="grid-template-columns:1.35fr 1fr;gap:8px">
+      <div class="field" style="margin:0"><label style="font-size:11px">日付</label><input id="preferredDate3" type="date" style="min-height:44px;font-size:15px;padding:9px 10px"></div>
+      <div class="field" style="margin:0"><label style="font-size:11px">時間</label><input id="preferredTime3" type="time" style="min-height:44px;font-size:15px;padding:9px 10px"></div>
+    </div>
   </div>
   <div class="field"><label>備考</label><textarea id="note" maxlength="250" placeholder="必要な場合のみ入力"></textarea></div>
   <button id="bookingSubmitBtn" type="button" class="btn primary" style="width:100%">申請する</button>
