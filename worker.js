@@ -1,4 +1,4 @@
-const APP_VERSION="1.32";
+const APP_VERSION="1.33";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -1451,7 +1451,18 @@ const ADMIN_BODY = `
  <button class="btn small" style="float:right" onclick="closeManageMenu()">閉じる</button>
  <span class="badge">ADMIN TOOLS</span><div class="title" style="font-size:24px">管理メニュー</div>
  <div class="sub" style="margin:5px 0 16px">システム更新・ビルド確認などの管理機能</div>
- <div class="section">GitHubアップロード</div>
+ 
+<div class="card" style="margin-bottom:12px">
+  <div class="title">Discord 研修申請通知</div>
+  <div class="sub" style="margin-top:4px">研修申請Webhookの接続状態を確認できます。</div>
+  <div id="discordWebhookStatus" style="margin-top:10px;font-weight:900">確認中...</div>
+  <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+    <button id="checkDiscordWebhookBtn" class="btn small" type="button">設定を確認</button>
+    <button id="testDiscordWebhookBtn" class="btn primary small" type="button">テスト通知を送る</button>
+  </div>
+  <div id="discordWebhookMsg" style="margin-top:8px"></div>
+</div>
+<div class="section">GitHubアップロード</div>
  <div class="card">
    <div class="card" style="border:2px solid #d7ad45">
      <div class="title" style="font-size:16px">ZIPで一括更新</div>
@@ -1547,7 +1558,45 @@ async function restoreAdmin(){
  const r=await fetch('/api/admin/check');
  if(r.ok){showAdmin();await loadCurrentAdminRole();await loadAdmin();await loadReservationControl()}
 }
-function openManageMenu(){document.getElementById('manageModal').classList.add('open');setTimeout(()=>loadBuildStatus(),150)}
+
+async function checkDiscordWebhookStatus(){
+ const el=document.getElementById('discordWebhookStatus');
+ const msg=document.getElementById('discordWebhookMsg');
+ if(!el)return;
+ el.textContent='確認中...';
+ if(msg)msg.innerHTML='';
+ try{
+   const r=await fetch('/api/admin/discord-training-webhook/status',{headers:auth()});
+   const d=await r.json().catch(()=>({}));
+   if(!r.ok){
+     el.textContent='⚠️ 確認できません';
+     if(msg)noticeIn('discordWebhookMsg',d.error||'Webhook設定を確認できませんでした','error');
+     return;
+   }
+   el.textContent=d.configured?'✅ Discord通知：設定済み':'❌ Discord通知：未設定';
+ }catch(_){
+   el.textContent='⚠️ 確認できません';
+ }
+}
+
+async function testDiscordWebhook(){
+ const btn=document.getElementById('testDiscordWebhookBtn');
+ if(btn){btn.disabled=true;btn.textContent='送信中...'}
+ try{
+   const r=await fetch('/api/admin/discord-training-webhook/test',{method:'POST',headers:auth()});
+   const d=await r.json().catch(()=>({}));
+   if(!r.ok){
+     noticeIn('discordWebhookMsg',(d.error||'テスト通知に失敗しました')+(d.status?'（Discord HTTP '+d.status+'）':''),'error');
+     return;
+   }
+   noticeIn('discordWebhookMsg','Discordへテスト通知を送信しました。','success');
+ }catch(_){
+   noticeIn('discordWebhookMsg','テスト通知に失敗しました。','error');
+ }finally{
+   if(btn){btn.disabled=false;btn.textContent='テスト通知を送る'}
+ }
+}
+function openManageMenu(){setTimeout(checkDiscordWebhookStatus,150);document.getElementById('manageModal').classList.add('open');setTimeout(()=>loadBuildStatus(),150)}
 function closeManageMenu(){document.getElementById('manageModal').classList.remove('open')}
 function showAdminSection(section){
  const training=section==='training';
@@ -1679,6 +1728,11 @@ function renderReservationStatusButtons(id,currentStatus){
    '</div>';
 }
 
+
+document.addEventListener('click',e=>{
+ if(e.target?.id==='checkDiscordWebhookBtn')checkDiscordWebhookStatus();
+ if(e.target?.id==='testDiscordWebhookBtn')testDiscordWebhook();
+});
 document.addEventListener('click',e=>{
  const btn=e.target.closest?.('.adminStatusBtn');
  if(!btn)return;
