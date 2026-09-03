@@ -1,4 +1,4 @@
-const APP_VERSION="1.35";
+const APP_VERSION="1.36";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -95,6 +95,50 @@ async function createTraineeSessionCookie(env,profileId){
   const secret=env.TRAINEE_SESSION_SECRET||env.ADMIN_PASSWORD||"lomita-trainee-session";
   const sig=await traineeSessionSignature(secret,String(profileId),String(expires));
   return `lomita_trainee=${profileId}.${expires}.${sig}; Max-Age=43200; HttpOnly; Secure; SameSite=Strict; Path=/`;
+}
+
+
+async function sendReservationConfirmedDM(env,payload){
+  const token=String(env.DISCORD_BOT_TOKEN||"").trim();
+  const userId=String(payload.discord_user_id||"").trim();
+  if(!token)return {ok:false,skipped:true,reason:"bot_token_missing"};
+  if(!/^\d{15,25}$/.test(userId))return {ok:false,skipped:true,reason:"invalid_user_id"};
+
+  const headers={"authorization":"Bot "+token,"content-type":"application/json"};
+
+  try{
+    const dmRes=await fetch("https://discord.com/api/v10/users/@me/channels",{
+      method:"POST",
+      headers,
+      body:JSON.stringify({recipient_id:userId})
+    });
+    if(!dmRes.ok)return {ok:false,status:dmRes.status,step:"create_dm"};
+
+    const dm=await dmRes.json().catch(()=>({}));
+    const channelId=String(dm.id||"");
+    if(!channelId)return {ok:false,status:0,step:"create_dm"};
+
+    const lines=[
+      "✅ **研修予約が確定しました**",
+      "",
+      "**研修**："+String(payload.training_title||"研修"),
+      "**確定日時**："+String(payload.confirmed_datetime||"未設定"),
+      "**担当教官**："+String(payload.assigned_instructor||"未設定"),
+      "",
+      "当日は時間に余裕を持ってご参加ください。"
+    ];
+
+    const msgRes=await fetch("https://discord.com/api/v10/channels/"+channelId+"/messages",{
+      method:"POST",
+      headers,
+      body:JSON.stringify({content:lines.join("\n"),allowed_mentions:{parse:[]}})
+    });
+
+    if(!msgRes.ok)return {ok:false,status:msgRes.status,step:"send_message"};
+    return {ok:true,status:msgRes.status};
+  }catch(_){
+    return {ok:false,status:0,step:"exception"};
+  }
 }
 
 async function sendTrainingApplicationDiscordNotification(env,payload){
@@ -1460,6 +1504,7 @@ const ADMIN_BODY = `
   <div class="title">Discord 研修申請通知</div>
   <div class="sub" style="margin-top:4px">研修申請Webhookと「@学科講師」自動メンションの接続状態を確認できます。</div>
   <div id="discordWebhookStatus" style="margin-top:10px;font-weight:900">確認中...</div>
+  <div id="discordBotStatus" style="margin-top:6px;font-weight:900">確定DM Bot：確認中...</div>
   <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
     <button id="checkDiscordWebhookBtn" class="btn small" type="button">設定を確認</button>
     <button id="testDiscordWebhookBtn" class="btn primary small" type="button">テスト通知を送る</button>
@@ -1584,8 +1629,17 @@ async function checkDiscordWebhookStatus(){
    }else{
      el.textContent='✅ Discord通知：設定済み ／ @学科講師：自動メンションON';
    }
+
+   const botEl=document.getElementById('discordBotStatus');
+   if(botEl){
+     const br=await fetch('/api/admin/discord-bot/status',{headers:auth()});
+     const bd=await br.json().catch(()=>({}));
+     botEl.textContent=(br.ok&&bd.configured)?'✅ 確定DM Bot：設定済み':'❌ 確定DM Bot：未設定';
+   }
  }catch(_){
    el.textContent='⚠️ 確認できません';
+   const botEl=document.getElementById('discordBotStatus');
+   if(botEl)botEl.textContent='⚠️ 確定DM Bot：確認できません';
  }
 }
 
@@ -2595,6 +2649,11 @@ async function handle(request, env) {
    return json({profile,stats,history:results});
  }
 
+ if(path==="/api/admin/discord-bot/status" && method==="GET"){
+   if(!(await isAdmin()))return json({error:"unauthorized"},401);
+   return json({configured:!!String(env.DISCORD_BOT_TOKEN||"").trim()});
+ }
+
  if(path==="/api/admin/discord-training-webhook/status" && method==="GET"){
    if(!(await isAdmin()))return json({error:"unauthorized"},401);
    const webhookConfigured=!!String(env.DISCORD_TRAINING_WEBHOOK_URL||"").trim();
@@ -2940,19 +2999,35 @@ async function handle(request, env) {
    await ensureReservationInstructor(env);
    await ensureReservationPreferredSchedule(env);
    await ensureInstructors(env);
+
+   const reservationId=Number(m[1]);
+   const before=await env.DB.prepare(`
+     SELECT r.status,r.discord_id,r.player_name,r.assigned_instructor,
+            r.confirmed_date,r.confirmed_time,t.title
+     FROM reservations r
+     LEFT JOIN trainings t ON t.id=r.training_id
+     WHERE r.id=?
+   `).bind(reservationId).first();
+   if(!before)return json({error:"予約が見つかりません"},404);
+
    const b=await request.json().catch(()=>({}));
    if(!['pending','reserved','completed','absent','cancelled'].includes(b.status))return json({error:"invalid status"},400);
+
    const assigned=String(b.assigned_instructor||"").trim();
    const confirmedPreference=Number(b.confirmed_preference||0);
+
    if(b.status==="reserved" && ![1,2,3].includes(confirmedPreference))return json({error:"承認する希望日時を選択してください"},400);
    if(b.status==="reserved" && !assigned)return json({error:"担当教官を選択してください"},400);
+
    if(assigned){
      const ok=await env.DB.prepare("SELECT id FROM instructors WHERE lower(trim(name))=lower(trim(?))").bind(assigned).first();
      if(!ok)return json({error:"登録されていない教官です"},400);
    }
+
    let confirmedDate="",confirmedTime="",confirmedPref=0;
+
    if(b.status==="reserved"){
-     const row=await env.DB.prepare("SELECT preferred_date,preferred_time,preferred_date2,preferred_time2,preferred_date3,preferred_time3 FROM reservations WHERE id=?").bind(Number(m[1])).first();
+     const row=await env.DB.prepare("SELECT preferred_date,preferred_time,preferred_date2,preferred_time2,preferred_date3,preferred_time3 FROM reservations WHERE id=?").bind(reservationId).first();
      if(!row)return json({error:"予約が見つかりません"},404);
      const map={1:[row.preferred_date,row.preferred_time],2:[row.preferred_date2,row.preferred_time2],3:[row.preferred_date3,row.preferred_time3]};
      const chosen=map[confirmedPreference]||["",""];
@@ -2961,14 +3036,33 @@ async function handle(request, env) {
      if(!confirmedDate||!confirmedTime)return json({error:"選択した希望日時が入力されていません"},400);
      confirmedPref=confirmedPreference;
    }else{
-     const existing=await env.DB.prepare("SELECT confirmed_date,confirmed_time,confirmed_preference FROM reservations WHERE id=?").bind(Number(m[1])).first();
+     const existing=await env.DB.prepare("SELECT confirmed_date,confirmed_time,confirmed_preference FROM reservations WHERE id=?").bind(reservationId).first();
      confirmedDate=String(existing?.confirmed_date||"");
      confirmedTime=String(existing?.confirmed_time||"");
      confirmedPref=Number(existing?.confirmed_preference||0);
    }
+
    await env.DB.prepare("UPDATE reservations SET status=?,assigned_instructor=?,confirmed_date=?,confirmed_time=?,confirmed_preference=? WHERE id=?")
-     .bind(b.status,assigned,confirmedDate,confirmedTime,confirmedPref,Number(m[1])).run();
-   return json({ok:true,confirmed_date:confirmedDate,confirmed_time:confirmedTime,confirmed_preference:confirmedPref});
+     .bind(b.status,assigned,confirmedDate,confirmedTime,confirmedPref,reservationId).run();
+
+   let dmResult={ok:false,skipped:true};
+   if(b.status==="reserved" && String(before.status||"")!=="reserved"){
+     dmResult=await sendReservationConfirmedDM(env,{
+       discord_user_id:String(before.discord_id||""),
+       training_title:String(before.title||"研修"),
+       confirmed_datetime:[confirmedDate,confirmedTime].filter(Boolean).join(" "),
+       assigned_instructor:assigned
+     });
+   }
+
+   return json({
+     ok:true,
+     confirmed_date:confirmedDate,
+     confirmed_time:confirmedTime,
+     confirmed_preference:confirmedPref,
+     dm_sent:!!dmResult.ok,
+     dm_skipped:!!dmResult.skipped
+   });
  }
 
  if(path==="/api/admin/github/upload-zip-contents" && method==="POST"){
