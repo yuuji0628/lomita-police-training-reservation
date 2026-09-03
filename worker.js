@@ -1,4 +1,4 @@
-const APP_VERSION="1.42";
+const APP_VERSION="1.43";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -1291,9 +1291,10 @@ const PUBLIC_BODY = `
     <div style="font-weight:900">研修ポリシー</div>
     <button id="openPolicyBtn" type="button" class="btn small" style="margin-top:8px" onclick="openTrainingPolicy()">内容を確認</button>
     <label style="display:flex;gap:8px;align-items:flex-start;margin-top:10px;font-weight:800;line-height:1.4">
-      <input id="policyAgree" type="checkbox" style="width:20px;height:20px;margin-top:1px">
+      <input id="policyAgree" type="checkbox" disabled style="width:20px;height:20px;margin-top:1px">
       <span>研修ポリシーを確認し、内容に同意します</span>
     </label>
+    <div id="policyReadHint" class="sub" style="margin-top:8px">※「内容を確認」を開いた後にチェックできます。</div>
   </div>
   <button id="bookingSubmitBtn" type="button" class="btn primary" style="width:100%">申請する</button>
 </div></div>`;
@@ -1347,7 +1348,12 @@ async function load(){
 function openBooking(id,title){
  selectedTraining={id,title};
  document.getElementById('bookingMsg').innerHTML='';
- if(document.getElementById('policyAgree'))document.getElementById('policyAgree').checked=false;
+ if(document.getElementById('policyAgree')){
+  document.getElementById('policyAgree').checked=false;
+  document.getElementById('policyAgree').disabled=true;
+ }
+ const policyHint=document.getElementById('policyReadHint');
+ if(policyHint)policyHint.textContent='※「内容を確認」を開いた後にチェックできます。';
  document.getElementById('bookTitle').textContent=title+' 申請';
  const now=new Date();
  const local=new Date(now.getTime()-now.getTimezoneOffset()*60000).toISOString().slice(0,10);
@@ -1478,14 +1484,21 @@ async function openTrainingPolicy(){
   const r=await fetch('/api/training-policy',{cache:'no-store'});
   const d=await r.json().catch(()=>({}));
   e.textContent=String(d.body||'研修ポリシーを取得できませんでした。');
+  if(r.ok && d.body){
+   const cb=document.getElementById('policyAgree');
+   if(cb)cb.disabled=false;
+   const hint=document.getElementById('policyReadHint');
+   if(hint)hint.textContent='✓ 内容確認済みです。同意する場合はチェックしてください。';
+  }
  }catch(_){e.textContent='研修ポリシーを取得できませんでした。'}
 }
 function closeTrainingPolicy(){document.getElementById('policyModal')?.classList.remove('open')}
 
 async function submitBooking(){
  if(!selectedTraining)return;
- if(!document.getElementById('policyAgree')?.checked){
-  noticeIn('bookingMsg','研修ポリシーを確認し、同意してから申請してください。','error');return;
+ const policyCheckbox=document.getElementById('policyAgree');
+ if(!policyCheckbox || policyCheckbox.disabled || !policyCheckbox.checked){
+  noticeIn('bookingMsg','研修ポリシーの「内容を確認」を開き、内容を確認してから同意してください。','error');return;
  }
  const ids=['preferredDate','preferredTime','preferredDate2','preferredTime2','preferredDate3','preferredTime3'];
  const v=Object.fromEntries(ids.map(id=>[id,document.getElementById(id).value]));
