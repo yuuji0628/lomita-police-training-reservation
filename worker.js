@@ -1,4 +1,4 @@
-const APP_VERSION="1.19";
+const APP_VERSION="1.20";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -685,7 +685,10 @@ textarea{min-height:90px}
 
 /* automatic instructor completion stamp */
 .instructorStamp{width:78px;height:78px;border:3px solid #9f1d1d;border-radius:50%;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;color:#9f1d1d;background:rgba(255,255,255,.92);font-weight:950;line-height:1.05;transform:rotate(-7deg);box-shadow:inset 0 0 0 3px #fff,inset 0 0 0 5px #9f1d1d;flex:0 0 78px}
-.instructorStamp .stTop{font-size:7px;letter-spacing:.8px}.instructorStamp .stName{font-size:10px;max-width:60px;line-height:1.05;white-space:normal;overflow-wrap:anywhere;word-break:break-word;margin:4px 0;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}.instructorStamp .stName.long{font-size:8px;max-width:62px}.instructorStamp .stDone{font-size:8px;letter-spacing:.5px}.instructorStamp .stStar{font-size:11px}
+.instructorStamp .stTop{font-size:7px;letter-spacing:.8px}
+.instructorStamp .stName{font-size:10px;max-width:60px;line-height:1.05;white-space:normal;word-break:break-word;overflow-wrap:anywhere;margin:3px 0;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.instructorStamp .stName.long{font-size:8px;max-width:62px}
+.instructorStamp .stDone{font-size:8px;letter-spacing:.5px}.instructorStamp .stStar{font-size:11px}
 .completedHistory{display:flex;gap:10px;align-items:center}.completedHistoryMain{min-width:0;flex:1}
 .trainingProgressGrid{display:grid;grid-template-columns:1fr;gap:10px;margin-top:10px}
 .trainingProgressCard{background:#fff;border:1px solid #d9e1ec;border-radius:15px;padding:12px 13px;box-shadow:0 2px 8px rgba(10,34,61,.05)}
@@ -695,7 +698,7 @@ textarea{min-height:90px}
 .trainingProgressTitle{font-weight:900;font-size:15px;line-height:1.35;color:#0d223c}
 .trainingProgressMeta{font-size:11px;color:#758195;margin-top:5px}
 .trainingProgressEmpty{width:68px;height:68px;border:2px dashed #ccd5e2;border-radius:50%;display:flex;align-items:center;justify-content:center;text-align:center;font-size:9px;color:#9aa6b5;flex:0 0 68px}
-@media(max-width:520px){.instructorStamp{width:68px;height:68px;flex-basis:68px}.instructorStamp .stName{font-size:9px;max-width:52px}.instructorStamp .stName.long{font-size:7px;max-width:54px}}
+@media(max-width:520px){.instructorStamp{width:68px;height:68px;flex-basis:68px}.instructorStamp .stName{font-size:9px;max-width:53px}.instructorStamp .stName.long{font-size:7px;max-width:55px}}
 </style></head><body>${body}<script>${script}</script></body></html>`, {headers:{"content-type":"text/html; charset=utf-8"}});
 
 
@@ -745,7 +748,11 @@ const PUBLIC_BODY = `
       <button id="traineeLogoutBtn" class="btn small" type="button">ログアウト</button>
     </div>
     <div id="mySummary"></div>
-    <h2 style="margin-top:18px">研修プログラム進捗</h2><div class="sub">完了した研修には担当教官のスタンプが押されます。</div><div id="trainingProgressList" class="trainingProgressGrid"></div><div class="section">申請・受講履歴</div>
+    <div class="section">研修プログラム進捗</div>
+    <div class="sub" style="margin:-4px 0 8px">完了した研修には担当教官のスタンプが押されます。</div>
+    <div id="trainingProgressList" class="trainingProgressGrid"><div class="empty">進捗を読み込み中...</div></div>
+
+    <div class="section">申請・受講履歴</div>
     <div id="myHistory"></div>
     <div id="msg"></div>
     <div class="section">現在の研修</div>
@@ -845,34 +852,46 @@ function instructorStamp(name){
  return '<div class="instructorStamp" title="担当教官：'+esc(n)+'"><div class="stStar">★</div><div class="stTop">LOMITA POLICE</div><div class="'+cls+'">'+esc(n)+'</div><div class="stDone">COMPLETED</div></div>';
 }
 
+async function loadProgress(){
+ const el=document.getElementById('trainingProgressList');
+ if(!el)return;
+ try{
+   const r=await fetch('/api/trainee/progress',{cache:'no-store'});
+   const d=await r.json().catch(()=>({}));
+   if(r.status===401)return;
+   if(!r.ok){
+     el.innerHTML='<div class="notice error">'+esc(d.error||'進捗を取得できませんでした')+'</div>';
+     return;
+   }
+   const rows=Array.isArray(d.programs)?d.programs:[];
+   if(!rows.length){
+     el.innerHTML='<div class="empty">研修プログラムが登録されていません。</div>';
+     return;
+   }
+   el.innerHTML=rows.map((p,i)=>{
+     const done=p.status==='completed';
+     return '<div class="trainingProgressCard '+(done?'done':'')+'"><div class="trainingProgressRow">'+
+       '<div class="trainingProgressMain">'+
+         '<div class="trainingProgressTitle">'+esc(p.title||('研修 '+(i+1)))+'</div>'+
+         '<div class="trainingProgressMeta">'+(done?'受講済み・担当教官：'+esc(p.assigned_instructor||'未設定'):'未完了')+'</div>'+
+       '</div>'+
+       (done?instructorStamp(p.assigned_instructor):'<div class="trainingProgressEmpty">未完了</div>')+
+     '</div></div>';
+   }).join('');
+ }catch(_){
+   el.innerHTML='<div class="notice error">進捗を取得できませんでした。</div>';
+ }
+}
+
 async function loadMyPage(){
  const r=await fetch('/api/trainee/profile');
  const d=await r.json().catch(()=>({}));
  if(r.status===401){showAuth();return}
  if(!r.ok)return;
  myProfile=d.profile;
+ loadProgress();
  document.getElementById('mySummary').innerHTML='<div class="card"><div class="profileHead"><div class="avatar">'+esc((d.profile.player_name||'?').slice(0,1))+'</div><div><div class="title">'+esc(d.profile.player_name)+'</div><div class="sub">ログイン中</div></div></div><div class="grid" style="margin-top:14px"><div class="stat"><span class="sub">承認待ち</span><b>'+d.stats.pending+'</b></div><div class="stat"><span class="sub">予約確定</span><b>'+d.stats.reserved+'</b></div><div class="stat"><span class="sub">受講済み</span><b>'+d.stats.completed+'</b></div><div class="stat"><span class="sub">欠席</span><b>'+d.stats.absent+'</b></div></div></div>';
  const h=document.getElementById('myHistory');
- 
- const progressEl=document.getElementById('trainingProgressList');
- if(progressEl){
-   const completedByTraining=new Map();
-   (d.history||[]).forEach(x=>{
-     if(x.status==='completed'){
-       completedByTraining.set(Number(x.training_id),x);
-     }
-   });
-   const programs=Array.isArray(d.programs)?d.programs:[];
-   progressEl.innerHTML=programs.length?programs.map((p,i)=>{
-     const done=completedByTraining.get(Number(p.training_id));
-     return '<div class="trainingProgressCard '+(done?'done':'')+'"><div class="trainingProgressRow"><div class="trainingProgressMain">'+
-       '<div class="trainingProgressTitle">'+esc(p.title||p.program_name||('研修 '+(i+1)))+'</div>'+
-       '<div class="trainingProgressMeta">'+(done?'受講済み・担当教官：'+esc(done.assigned_instructor||'未設定'):'未完了')+'</div>'+
-       '</div>'+(done?instructorStamp(done.assigned_instructor):'<div class="trainingProgressEmpty">未完了</div>')+
-       '</div></div>';
-   }).join(''):'<div class="empty">研修プログラムが登録されていません。</div>';
- }
-
  h.innerHTML=d.history.length?d.history.map(x=>'<div class="card">'+(x.status==='completed'?'<div class="completedHistory"><div class="completedHistoryMain">':'')+'<div class="between"><div><span class="pill '+esc(x.status)+'">'+esc(statusLabels[x.status]||x.status)+'</span><div class="title" style="margin-top:7px">'+esc(x.title)+'</div></div>'+(x.status==='pending'||x.status==='reserved'?'<button class="btn danger small traineeCancelBtn" data-id="'+x.id+'">申請キャンセル</button>':'')+'</div>'+(x.preferred_date||x.preferred_time?'<div class="sub" style="margin-top:7px">第1希望：'+esc([x.preferred_date||'',x.preferred_time||''].filter(Boolean).join(' '))+'</div>':'')+
 (x.preferred_date2||x.preferred_time2?'<div class="sub"><b>第2希望：</b>'+esc([x.preferred_date2||'',x.preferred_time2||''].filter(Boolean).join(' '))+'</div>':'')+
 (x.preferred_date3||x.preferred_time3?'<div class="sub"><b>第3希望：</b>'+esc([x.preferred_date3||'',x.preferred_time3||''].filter(Boolean).join(' '))+'</div>':'')+(x.confirmed_date||x.confirmed_time?'<div style="margin-top:7px;font-weight:900">✅ 確定日時：'+esc([x.confirmed_date||'',x.confirmed_time||''].filter(Boolean).join(' '))+'</div>':'')+(x.assigned_instructor?'<div class="sub" style="margin-top:7px">担当教官：'+esc(x.assigned_instructor)+'</div>':'')+(x.note?'<div class="sub">備考：'+esc(x.note)+'</div>':'')+(x.status==='completed'?'</div></div>':'')+'</div>').join(''):'<div class="empty">まだ申請・受講履歴はありません。</div>';
@@ -1819,6 +1838,45 @@ async function handle(request, env) {
    return new Response(JSON.stringify({ok:true}),{headers:{"content-type":"application/json; charset=utf-8","set-cookie":"lomita_trainee=; Max-Age=0; HttpOnly; Secure; SameSite=Strict; Path=/"}});
  }
 
+ if(path==="/api/trainee/progress" && method==="GET"){
+   await ensureTrainingPrograms(env);
+   await ensureReservationInstructor(env);
+   const profile=await getTraineeSession(request,env);
+   if(!profile)return json({error:"ログインが必要です"},401);
+   const key=String(profile.discord_id||profile.login_name||profile.player_name||"").trim();
+
+   const q=await env.DB.prepare(`
+     SELECT
+       p.id AS program_id,
+       p.training_id,
+       COALESCE(t.title,p.name) AS title,
+       COALESCE((
+         SELECT r.status
+         FROM reservations r
+         WHERE r.training_id=p.training_id
+           AND lower(trim(COALESCE(r.discord_id,'')))=lower(trim(?))
+           AND r.status='completed'
+         ORDER BY r.id DESC
+         LIMIT 1
+       ),'') AS status,
+       COALESCE((
+         SELECT r.assigned_instructor
+         FROM reservations r
+         WHERE r.training_id=p.training_id
+           AND lower(trim(COALESCE(r.discord_id,'')))=lower(trim(?))
+           AND r.status='completed'
+         ORDER BY r.id DESC
+         LIMIT 1
+       ),'') AS assigned_instructor
+     FROM training_programs p
+     LEFT JOIN trainings t ON t.id=p.training_id
+     WHERE COALESCE(p.active,1)=1
+     ORDER BY COALESCE(p.sort_order,0),p.id
+   `).bind(key,key).all();
+
+   return json({programs:Array.isArray(q?.results)?q.results:[]});
+ }
+
  if(path==="/api/trainee/profile" && method==="GET"){
    await ensureReservationInstructor(env);
    await ensureReservationPreferredSchedule(env);
@@ -1829,18 +1887,7 @@ async function handle(request, env) {
    const results=Array.isArray(q?.results)?q.results:[];
    const stats={pending:0,reserved:0,completed:0,absent:0,cancelled:0};
    for(const x of results)if(stats[x.status]!==undefined)stats[x.status]++;
-      const programs=await env.DB.prepare(`
-     SELECT
-       p.id,
-       COALESCE(t.title,p.name) AS title,
-       p.name AS program_name,
-       p.sort_order,
-       t.id AS training_id
-     FROM training_programs p
-     LEFT JOIN trainings t ON t.program_id=p.id
-     ORDER BY COALESCE(p.sort_order,p.id),p.id
-   `).all();
-return json({profile,stats,history:results,programs:programs.results||[]});
+   return json({profile,stats,history:results});
  }
  if(path==="/api/reservations" && method==="POST"){
    await ensureReservationPreferredSchedule(env);
