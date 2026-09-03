@@ -1,4 +1,4 @@
-const APP_VERSION="1.16";
+const APP_VERSION="1.17";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -131,6 +131,9 @@ async function ensureReservationPreferredSchedule(env) {
   if (!cols.includes("preferred_time2")) await env.DB.prepare("ALTER TABLE reservations ADD COLUMN preferred_time2 TEXT DEFAULT ''").run();
   if (!cols.includes("preferred_date3")) await env.DB.prepare("ALTER TABLE reservations ADD COLUMN preferred_date3 TEXT DEFAULT ''").run();
   if (!cols.includes("preferred_time3")) await env.DB.prepare("ALTER TABLE reservations ADD COLUMN preferred_time3 TEXT DEFAULT ''").run();
+  if (!cols.includes("confirmed_date")) await env.DB.prepare("ALTER TABLE reservations ADD COLUMN confirmed_date TEXT DEFAULT ''").run();
+  if (!cols.includes("confirmed_time")) await env.DB.prepare("ALTER TABLE reservations ADD COLUMN confirmed_time TEXT DEFAULT ''").run();
+  if (!cols.includes("confirmed_preference")) await env.DB.prepare("ALTER TABLE reservations ADD COLUMN confirmed_preference INTEGER DEFAULT 0").run();
 }
 
 async function ensureInstructors(env) {
@@ -832,7 +835,7 @@ async function loadMyPage(){
  const h=document.getElementById('myHistory');
  h.innerHTML=d.history.length?d.history.map(x=>'<div class="card"><div class="between"><div><span class="pill '+esc(x.status)+'">'+esc(statusLabels[x.status]||x.status)+'</span><div class="title" style="margin-top:7px">'+esc(x.title)+'</div></div>'+(x.status==='pending'||x.status==='reserved'?'<button class="btn danger small traineeCancelBtn" data-id="'+x.id+'">申請キャンセル</button>':'')+'</div>'+(x.preferred_date||x.preferred_time?'<div class="sub" style="margin-top:7px">第1希望：'+esc([x.preferred_date||'',x.preferred_time||''].filter(Boolean).join(' '))+'</div>':'')+
 (x.preferred_date2||x.preferred_time2?'<div class="sub"><b>第2希望：</b>'+esc([x.preferred_date2||'',x.preferred_time2||''].filter(Boolean).join(' '))+'</div>':'')+
-(x.preferred_date3||x.preferred_time3?'<div class="sub"><b>第3希望：</b>'+esc([x.preferred_date3||'',x.preferred_time3||''].filter(Boolean).join(' '))+'</div>':'')+(x.assigned_instructor?'<div class="sub" style="margin-top:7px">担当教官：'+esc(x.assigned_instructor)+'</div>':'')+(x.note?'<div class="sub">備考：'+esc(x.note)+'</div>':'')+'</div>').join(''):'<div class="empty">まだ申請・受講履歴はありません。</div>';
+(x.preferred_date3||x.preferred_time3?'<div class="sub"><b>第3希望：</b>'+esc([x.preferred_date3||'',x.preferred_time3||''].filter(Boolean).join(' '))+'</div>':'')+(x.confirmed_date||x.confirmed_time?'<div style="margin-top:7px;font-weight:900">✅ 確定日時：'+esc([x.confirmed_date||'',x.confirmed_time||''].filter(Boolean).join(' '))+'</div>':'')+(x.assigned_instructor?'<div class="sub" style="margin-top:7px">担当教官：'+esc(x.assigned_instructor)+'</div>':'')+(x.note?'<div class="sub">備考：'+esc(x.note)+'</div>':'')+'</div>').join(''):'<div class="empty">まだ申請・受講履歴はありません。</div>';
  document.querySelectorAll('.traineeCancelBtn').forEach(b=>b.addEventListener('click',()=>cancelMyReservation(Number(b.dataset.id))));
  await load();
 }
@@ -1099,6 +1102,12 @@ async function loadReservationControl(){
    const preferredText=[x.preferred_date||'',x.preferred_time||''].filter(Boolean).join(' ');
    const preferredText2=[x.preferred_date2||'',x.preferred_time2||''].filter(Boolean).join(' ');
    const preferredText3=[x.preferred_date3||'',x.preferred_time3||''].filter(Boolean).join(' ');
+   const confirmedText=[x.confirmed_date||'',x.confirmed_time||''].filter(Boolean).join(' ');
+   const preferenceOptions=[
+     preferredText?'<option value="1" '+(Number(x.confirmed_preference)===1?'selected':'')+'>第1希望：'+esc(preferredText)+'</option>':'',
+     preferredText2?'<option value="2" '+(Number(x.confirmed_preference)===2?'selected':'')+'>第2希望：'+esc(preferredText2)+'</option>':'',
+     preferredText3?'<option value="3" '+(Number(x.confirmed_preference)===3?'selected':'')+'>第3希望：'+esc(preferredText3)+'</option>':''
+   ].filter(Boolean).join('');
    const statusLabel=labels[x.status]||x.status;
    const statusOptions=[
      ['reserved','予約確定'],
@@ -1119,9 +1128,11 @@ async function loadReservationControl(){
          '<div class="sub" style="margin-top:6px;font-weight:800">第1希望：'+esc(preferredText||'未入力')+'</div>'+
          (preferredText2?'<div class="sub" style="font-weight:800">第2希望：'+esc(preferredText2)+'</div>':'')+
          (preferredText3?'<div class="sub" style="font-weight:800">第3希望：'+esc(preferredText3)+'</div>':'')+
+         (confirmedText?'<div style="margin-top:8px;padding:7px 9px;border-radius:10px;background:#eef6ff;font-weight:900">✅ 確定日時：'+esc(confirmedText)+'</div>':'')+
        '</div>'+
      '</div>'+
-     '<div class="field" style="margin-top:12px"><label>状態</label><select id="reservationStatus_'+x.id+'">'+statusOptions+'</select></div>'+
+     '<div class="field" style="margin-top:12px"><label>承認する日時</label><select id="reservationPreference_'+x.id+'"><option value="">希望日時を選択</option>'+preferenceOptions+'</select></div>'+
+     '<div class="field"><label>状態</label><select id="reservationStatus_'+x.id+'">'+statusOptions+'</select></div>'+
      '<div class="field"><label>担当教官</label><select id="reservationInstructor_'+x.id+'">'+instructorOptions+'</select></div>'+
      '<button class="btn primary" style="width:100%" type="button" onclick="saveReservationFromList('+Number(x.id)+')">変更を保存</button>'+
      (x.note?'<div class="sub" style="margin-top:8px">備考：'+esc(x.note)+'</div>':'')+
@@ -1132,9 +1143,15 @@ async function loadReservationControl(){
 async function saveReservationFromList(id){
  const statusEl=document.getElementById('reservationStatus_'+id);
  const instructorEl=document.getElementById('reservationInstructor_'+id);
+ const preferenceEl=document.getElementById('reservationPreference_'+id);
  const status=statusEl?statusEl.value:'';
  const assigned_instructor=instructorEl?instructorEl.value.trim():'';
+ const confirmed_preference=preferenceEl?Number(preferenceEl.value||0):0;
 
+ if(status==='reserved' && !confirmed_preference){
+   alert('予約確定にする場合は、第1〜第3希望から承認する日時を選択してください。');
+   return;
+ }
  if(status==='reserved' && !assigned_instructor){
    alert('予約確定にする場合は担当教官を選択してください。');
    return;
@@ -1146,7 +1163,7 @@ async function saveReservationFromList(id){
    const r=await fetch('/api/admin/reservations/'+id,{
      method:'PATCH',
      headers:auth(),
-     body:JSON.stringify({status,assigned_instructor})
+     body:JSON.stringify({status,assigned_instructor,confirmed_preference})
    });
    const d=await r.json().catch(()=>({}));
    if(!r.ok){
@@ -1387,7 +1404,24 @@ async function loadReservations(){
  const e=document.getElementById('resList');
  if(!r.ok){e.innerHTML='<div class="notice error">'+esc(data.error||'参加者を取得できませんでした')+'</div>';return}
  if(!data.length){e.innerHTML='<div class="empty">申請者はいません。</div>';return}
- e.innerHTML=data.map(x=>'<div class="res"><div class="between"><div><b>'+esc(x.player_name)+'</b> <span class="pill '+esc(x.status)+'">'+esc(labels[x.status]||x.status)+'</span><div class="sub">：'+esc(x.discord_id||'未登録')+'</div></div></div>'+(x.note?'<div class="sub" style="margin-top:6px">備考：'+esc(x.note)+'</div>':'')+'<div class="field" style="margin:10px 0"><label>担当教官</label><select id="reservationInstructor_'+x.id+'"><option value="">担当教官を選択</option>'+instructorRows.map(i=>'<option value="'+esc(i.name)+'" '+(x.assigned_instructor===i.name?'selected':'')+'>'+esc(i.name)+'</option>').join('')+'</select></div><div class="statusButtons">'+(x.status==='pending'?'<button class="btn primary small statusBtn" data-id="'+x.id+'" data-status="reserved">担当を決めて承認</button>':'')+'<button class="btn small statusBtn" data-id="'+x.id+'" data-status="completed">受講済み</button><button class="btn small statusBtn" data-id="'+x.id+'" data-status="absent">欠席</button><button class="btn danger small statusBtn" data-id="'+x.id+'" data-status="cancelled">取消</button><button class="btn danger small hardDeleteReservationBtn" data-id="'+x.id+'">申請を完全削除</button></div></div>').join('');
+ e.innerHTML=data.map(x=>{
+   const p1=[x.preferred_date||'',x.preferred_time||''].filter(Boolean).join(' ');
+   const p2=[x.preferred_date2||'',x.preferred_time2||''].filter(Boolean).join(' ');
+   const p3=[x.preferred_date3||'',x.preferred_time3||''].filter(Boolean).join(' ');
+   const confirmed=[x.confirmed_date||'',x.confirmed_time||''].filter(Boolean).join(' ');
+   const choices=[
+     p1?'<option value="1" '+(Number(x.confirmed_preference)===1?'selected':'')+'>第1希望：'+esc(p1)+'</option>':'',
+     p2?'<option value="2" '+(Number(x.confirmed_preference)===2?'selected':'')+'>第2希望：'+esc(p2)+'</option>':'',
+     p3?'<option value="3" '+(Number(x.confirmed_preference)===3?'selected':'')+'>第3希望：'+esc(p3)+'</option>':''
+   ].filter(Boolean).join('');
+   return '<div class="res"><div class="between"><div><b>'+esc(x.player_name)+'</b> <span class="pill '+esc(x.status)+'">'+esc(labels[x.status]||x.status)+'</span><div class="sub">：'+esc(x.discord_id||'未登録')+'</div></div></div>'+
+   (confirmed?'<div class="sub" style="margin-top:6px;font-weight:900">✅ 確定日時：'+esc(confirmed)+'</div>':'')+
+   (x.note?'<div class="sub" style="margin-top:6px">備考：'+esc(x.note)+'</div>':'')+
+   (x.status==='pending'?'<div class="field" style="margin:10px 0"><label>承認する日時</label><select id="reservationPreference_'+x.id+'"><option value="">希望日時を選択</option>'+choices+'</select></div>':'')+
+   '<div class="field" style="margin:10px 0"><label>担当教官</label><select id="reservationInstructor_'+x.id+'"><option value="">担当教官を選択</option>'+instructorRows.map(i=>'<option value="'+esc(i.name)+'" '+(x.assigned_instructor===i.name?'selected':'')+'>'+esc(i.name)+'</option>').join('')+'</select></div><div class="statusButtons">'+
+   (x.status==='pending'?'<button class="btn primary small statusBtn" data-id="'+x.id+'" data-status="reserved">日時を選んで承認</button>':'')+
+   '<button class="btn small statusBtn" data-id="'+x.id+'" data-status="completed">受講済み</button><button class="btn small statusBtn" data-id="'+x.id+'" data-status="absent">欠席</button><button class="btn danger small statusBtn" data-id="'+x.id+'" data-status="cancelled">取消</button><button class="btn danger small hardDeleteReservationBtn" data-id="'+x.id+'">申請を完全削除</button></div></div>';
+ }).join('');
  document.querySelectorAll('.statusBtn').forEach(btn=>btn.addEventListener('click',()=>setStatus(Number(btn.dataset.id),btn.dataset.status)));
  document.querySelectorAll('.hardDeleteReservationBtn').forEach(btn=>btn.addEventListener('click',()=>hardDeleteReservation(Number(btn.dataset.id))));
  if(sheet)requestAnimationFrame(()=>{sheet.scrollTop=oldScroll});
@@ -1402,9 +1436,13 @@ async function hardDeleteReservation(id){
 }
 async function setStatus(id,status){
  let assigned_instructor='';
+ let confirmed_preference=0;
  if(status==='reserved'){
    const sel=document.getElementById('reservationInstructor_'+id);
+   const pref=document.getElementById('reservationPreference_'+id);
    assigned_instructor=sel?sel.value.trim():'';
+   confirmed_preference=pref?Number(pref.value||0):0;
+   if(!confirmed_preference){alert('第1〜第3希望から承認する日時を選択してください。');return}
    if(!assigned_instructor){alert('担当教官を選択してから承認してください。');return}
  }
 
@@ -1415,7 +1453,7 @@ async function setStatus(id,status){
    const r=await fetch('/api/admin/reservations/'+id,{
      method:'PATCH',
      headers:auth(),
-     body:JSON.stringify({status,assigned_instructor})
+     body:JSON.stringify({status,assigned_instructor,confirmed_preference})
    });
    const d=await r.json().catch(()=>({}));
    if(!r.ok){
@@ -1747,7 +1785,7 @@ async function handle(request, env) {
    const profile=await getTraineeSession(request,env);
    if(!profile)return json({error:"ログインが必要です"},401);
    const key=String(profile.discord_id||profile.login_name||profile.player_name||"").trim();
-   const q=await env.DB.prepare("SELECT r.id,r.training_id,r.player_name,r.discord_id,r.affiliation,r.note,r.status,r.assigned_instructor,r.preferred_date,r.preferred_time,r.preferred_date2,r.preferred_time2,r.preferred_date3,r.preferred_time3,t.title FROM reservations r JOIN trainings t ON t.id=r.training_id WHERE lower(trim(COALESCE(r.discord_id,'')))=lower(trim(?)) ORDER BY r.id DESC").bind(key).all();
+   const q=await env.DB.prepare("SELECT r.id,r.training_id,r.player_name,r.discord_id,r.affiliation,r.note,r.status,r.assigned_instructor,r.preferred_date,r.preferred_time,r.preferred_date2,r.preferred_time2,r.preferred_date3,r.preferred_time3,r.confirmed_date,r.confirmed_time,r.confirmed_preference,t.title FROM reservations r JOIN trainings t ON t.id=r.training_id WHERE lower(trim(COALESCE(r.discord_id,'')))=lower(trim(?)) ORDER BY r.id DESC").bind(key).all();
    const results=Array.isArray(q?.results)?q.results:[];
    const stats={pending:0,reserved:0,completed:0,absent:0,cancelled:0};
    for(const x of results)if(stats[x.status]!==undefined)stats[x.status]++;
@@ -1912,6 +1950,9 @@ async function handle(request, env) {
        r.preferred_time2,
        r.preferred_date3,
        r.preferred_time3,
+       r.confirmed_date,
+       r.confirmed_time,
+       r.confirmed_preference,
        r.created_at,
        t.title,
        t.training_date,
@@ -2208,18 +2249,37 @@ async function handle(request, env) {
  }
  if(m && method==="PATCH"){
    await ensureReservationInstructor(env);
+   await ensureReservationPreferredSchedule(env);
    await ensureInstructors(env);
    const b=await request.json().catch(()=>({}));
    if(!['pending','reserved','completed','absent','cancelled'].includes(b.status))return json({error:"invalid status"},400);
    const assigned=String(b.assigned_instructor||"").trim();
+   const confirmedPreference=Number(b.confirmed_preference||0);
+   if(b.status==="reserved" && ![1,2,3].includes(confirmedPreference))return json({error:"承認する希望日時を選択してください"},400);
    if(b.status==="reserved" && !assigned)return json({error:"担当教官を選択してください"},400);
    if(assigned){
      const ok=await env.DB.prepare("SELECT id FROM instructors WHERE lower(trim(name))=lower(trim(?))").bind(assigned).first();
      if(!ok)return json({error:"登録されていない教官です"},400);
    }
-   await env.DB.prepare("UPDATE reservations SET status=?,assigned_instructor=? WHERE id=?")
-     .bind(b.status,assigned,Number(m[1])).run();
-   return json({ok:true});
+   let confirmedDate="",confirmedTime="",confirmedPref=0;
+   if(b.status==="reserved"){
+     const row=await env.DB.prepare("SELECT preferred_date,preferred_time,preferred_date2,preferred_time2,preferred_date3,preferred_time3 FROM reservations WHERE id=?").bind(Number(m[1])).first();
+     if(!row)return json({error:"予約が見つかりません"},404);
+     const map={1:[row.preferred_date,row.preferred_time],2:[row.preferred_date2,row.preferred_time2],3:[row.preferred_date3,row.preferred_time3]};
+     const chosen=map[confirmedPreference]||["",""];
+     confirmedDate=String(chosen[0]||"").trim();
+     confirmedTime=String(chosen[1]||"").trim();
+     if(!confirmedDate||!confirmedTime)return json({error:"選択した希望日時が入力されていません"},400);
+     confirmedPref=confirmedPreference;
+   }else{
+     const existing=await env.DB.prepare("SELECT confirmed_date,confirmed_time,confirmed_preference FROM reservations WHERE id=?").bind(Number(m[1])).first();
+     confirmedDate=String(existing?.confirmed_date||"");
+     confirmedTime=String(existing?.confirmed_time||"");
+     confirmedPref=Number(existing?.confirmed_preference||0);
+   }
+   await env.DB.prepare("UPDATE reservations SET status=?,assigned_instructor=?,confirmed_date=?,confirmed_time=?,confirmed_preference=? WHERE id=?")
+     .bind(b.status,assigned,confirmedDate,confirmedTime,confirmedPref,Number(m[1])).run();
+   return json({ok:true,confirmed_date:confirmedDate,confirmed_time:confirmedTime,confirmed_preference:confirmedPref});
  }
 
  if(path==="/api/admin/github/upload-zip-contents" && method==="POST"){
