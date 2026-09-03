@@ -1,4 +1,4 @@
-const APP_VERSION="1.37";
+const APP_VERSION="1.38";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -105,6 +105,9 @@ async function ensureReservationNotifications(env){
     const cols=(q.results||[]).map(x=>String(x.name||""));
     if(!cols.includes("reminder_sent_at")){
       try{await env.DB.prepare("ALTER TABLE reservations ADD COLUMN reminder_sent_at TEXT DEFAULT ''").run()}catch(_){}
+    }
+    if(!cols.includes("completed_at")){
+      try{await env.DB.prepare("ALTER TABLE reservations ADD COLUMN completed_at TEXT DEFAULT ''").run()}catch(_){}
     }
   }catch(_){}
 }
@@ -1096,6 +1099,15 @@ textarea{min-height:90px}
   word-break:break-word;
   text-align:center;
 }
+.ledgerCell .completionDate{
+  font-size:7px;
+  line-height:1;
+  font-weight:900;
+  color:#0d223c;
+  letter-spacing:.1px;
+  white-space:nowrap;
+  text-align:center;
+}
 .ledgerPendingSeal{
   width:44px;
   height:44px;
@@ -1347,6 +1359,7 @@ async function loadProgress(){
            '<div class="itemNo">'+(offset+j+1)+'</div>'+
            '<div class="completionSealWrap">'+
              (done?ledgerStamp(p.assigned_instructor):'<div class="ledgerPendingSeal">未</div>')+
+             (done?'<div class="completionDate">'+esc(String(p.completed_date||'').replaceAll('-','/'))+'</div>':'')+
              (done?'<div class="completionTeacher">'+esc(p.assigned_instructor||'')+'</div>':'')+
            '</div>'+
          '</div>';
@@ -2481,6 +2494,7 @@ async function handle(request, env) {
  if(path==="/api/trainee/progress" && method==="GET"){
    await ensureTrainingPrograms(env);
    await ensureReservationInstructor(env);
+   await ensureReservationNotifications(env);
    const profile=await getTraineeSession(request,env);
    if(!profile)return json({error:"ログインが必要です"},401);
    const key=String(profile.discord_id||profile.login_name||profile.player_name||"").trim();
@@ -2507,12 +2521,21 @@ async function handle(request, env) {
            AND r.status='completed'
          ORDER BY r.id DESC
          LIMIT 1
-       ),'') AS assigned_instructor
+       ),'') AS assigned_instructor,
+       COALESCE((
+         SELECT COALESCE(NULLIF(r.completed_at,''),r.confirmed_date,'')
+         FROM reservations r
+         WHERE r.training_id=p.training_id
+           AND lower(trim(COALESCE(r.discord_id,'')))=lower(trim(?))
+           AND r.status='completed'
+         ORDER BY r.id DESC
+         LIMIT 1
+       ),'') AS completed_date
      FROM training_programs p
      LEFT JOIN trainings t ON t.id=p.training_id
      WHERE COALESCE(p.active,1)=1
      ORDER BY COALESCE(p.sort_order,0),p.id
-   `).bind(key,key).all();
+   `).bind(key,key,key).all();
 
    return json({programs:Array.isArray(q?.results)?q.results:[]});
  }
@@ -3083,11 +3106,26 @@ async function handle(request, env) {
      confirmedPref=Number(existing?.confirmed_preference||0);
    }
 
-   await env.DB.prepare("UPDATE reservations SET status=?,assigned_instructor=?,confirmed_date=?,confirmed_time=?,confirmed_preference=? WHERE id=?")
-     .bind(b.status,assigned,confirmedDate,confirmedTime,confirmedPref,reservationId).run();
+   const previousStatus=String(before.status||"");
+   let completedAt="";
+   if(b.status==="completed" && previousStatus!=="completed"){
+     const jst=new Date(Date.now()+9*60*60*1000);
+     completedAt=[
+       jst.getUTCFullYear(),
+       String(jst.getUTCMonth()+1).padStart(2,"0"),
+       String(jst.getUTCDate()).padStart(2,"0")
+     ].join("-");
+   }
+
+   if(completedAt){
+     await env.DB.prepare("UPDATE reservations SET status=?,assigned_instructor=?,confirmed_date=?,confirmed_time=?,confirmed_preference=?,completed_at=? WHERE id=?")
+       .bind(b.status,assigned,confirmedDate,confirmedTime,confirmedPref,completedAt,reservationId).run();
+   }else{
+     await env.DB.prepare("UPDATE reservations SET status=?,assigned_instructor=?,confirmed_date=?,confirmed_time=?,confirmed_preference=? WHERE id=?")
+       .bind(b.status,assigned,confirmedDate,confirmedTime,confirmedPref,reservationId).run();
+   }
 
    let dmResult={ok:false,skipped:true};
-   const previousStatus=String(before.status||"");
    if(b.status==="reserved" && previousStatus!=="reserved"){
      dmResult=await sendReservationConfirmedDM(env,{
        discord_user_id:String(before.discord_id||""),
