@@ -1,4 +1,4 @@
-const APP_VERSION="1.31";
+const APP_VERSION="1.32";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -96,6 +96,49 @@ async function createTraineeSessionCookie(env,profileId){
   const sig=await traineeSessionSignature(secret,String(profileId),String(expires));
   return `lomita_trainee=${profileId}.${expires}.${sig}; Max-Age=43200; HttpOnly; Secure; SameSite=Strict; Path=/`;
 }
+
+async function sendTrainingApplicationDiscordNotification(env,payload){
+  const webhook=String(env.DISCORD_TRAINING_WEBHOOK_URL||"").trim();
+  if(!webhook)return {ok:false,skipped:true};
+
+  const fields=[
+    {name:"研修",value:String(payload.training_title||"研修"),inline:false},
+    {name:"研修生",value:String(payload.player_name||"研修生"),inline:true},
+    {name:"第1希望",value:[payload.preferred_date||"",payload.preferred_time||""].filter(Boolean).join(" ")||"未入力",inline:false}
+  ];
+  if(payload.preferred_date2||payload.preferred_time2){
+    fields.push({name:"第2希望",value:[payload.preferred_date2||"",payload.preferred_time2||""].filter(Boolean).join(" "),inline:false});
+  }
+  if(payload.preferred_date3||payload.preferred_time3){
+    fields.push({name:"第3希望",value:[payload.preferred_date3||"",payload.preferred_time3||""].filter(Boolean).join(" "),inline:false});
+  }
+  if(payload.note)fields.push({name:"備考",value:String(payload.note).slice(0,1000),inline:false});
+
+  const body={
+    username:"LOMITA POLICE 研修管理",
+    allowed_mentions:{parse:[]},
+    embeds:[{
+      title:"📘 新しい研修申請",
+      description:"研修申請が届きました。",
+      color:13610549,
+      fields,
+      timestamp:new Date().toISOString(),
+      footer:{text:"LOMITA POLICE TRAINING"}
+    }]
+  };
+
+  try{
+    const r=await fetch(webhook,{
+      method:"POST",
+      headers:{"content-type":"application/json"},
+      body:JSON.stringify(body)
+    });
+    return {ok:r.ok,status:r.status};
+  }catch(_){
+    return {ok:false,status:0};
+  }
+}
+
 async function getTraineeSession(request,env){
   await ensureTraineeProfiles(env);
   const cookie=request.headers.get("cookie")||"";
@@ -2348,11 +2391,26 @@ async function handle(request, env) {
    if((preferredDate2||preferredTime2)&&(!/^\d{4}-\d{2}-\d{2}$/.test(preferredDate2)||!/^\d{2}:\d{2}$/.test(preferredTime2)))return json({error:"第2希望は日付と時間を両方入力してください"},400);
    if((preferredDate3||preferredTime3)&&(!/^\d{4}-\d{2}-\d{2}$/.test(preferredDate3)||!/^\d{2}:\d{2}$/.test(preferredTime3)))return json({error:"第3希望は日付と時間を両方入力してください"},400);
    const key=String(profile.discord_id||profile.login_name||profile.player_name||"").trim();
-   const t=await env.DB.prepare("SELECT id FROM trainings WHERE id=?").bind(trainingId).first();
+   const t=await env.DB.prepare("SELECT id,title FROM trainings WHERE id=?").bind(trainingId).first();
    if(!t)return json({error:"研修が見つかりません"},404);
    const dup=await env.DB.prepare("SELECT id,status FROM reservations WHERE training_id=? AND lower(trim(COALESCE(discord_id,'')))=lower(trim(?)) AND status IN ('pending','reserved','completed') ORDER BY id DESC LIMIT 1").bind(trainingId,key).first();
    if(dup)return json({error:dup.status==="completed"?"この研修は受講済みです":"すでに申請済みです"},409);
-   await env.DB.prepare("INSERT INTO reservations(training_id,player_name,discord_id,affiliation,note,status,preferred_date,preferred_time,preferred_date2,preferred_time2,preferred_date3,preferred_time3) VALUES(?,?,?,?,?,'pending',?,?,?,?,?,?)").bind(trainingId,profile.player_name,key,"",String(b.note||"").trim(),preferredDate,preferredTime,preferredDate2,preferredTime2,preferredDate3,preferredTime3).run();
+
+   const note=String(b.note||"").trim();
+   await env.DB.prepare("INSERT INTO reservations(training_id,player_name,discord_id,affiliation,note,status,preferred_date,preferred_time,preferred_date2,preferred_time2,preferred_date3,preferred_time3) VALUES(?,?,?,?,?,'pending',?,?,?,?,?,?)").bind(trainingId,profile.player_name,key,"",note,preferredDate,preferredTime,preferredDate2,preferredTime2,preferredDate3,preferredTime3).run();
+
+   await sendTrainingApplicationDiscordNotification(env,{
+     training_title:String(t.title||"研修"),
+     player_name:profile.player_name,
+     preferred_date:preferredDate,
+     preferred_time:preferredTime,
+     preferred_date2:preferredDate2,
+     preferred_time2:preferredTime2,
+     preferred_date3:preferredDate3,
+     preferred_time3:preferredTime3,
+     note
+   });
+
    return json({ok:true},201);
  }
 
@@ -2471,6 +2529,25 @@ async function handle(request, env) {
    const stats={pending:0,reserved:0,completed:0,absent:0,cancelled:0};
    for(const x of results)if(stats[x.status]!==undefined)stats[x.status]++;
    return json({profile,stats,history:results});
+ }
+
+ if(path==="/api/admin/discord-training-webhook/status" && method==="GET"){
+   if(!(await isAdmin()))return json({error:"unauthorized"},401);
+   return json({configured:!!String(env.DISCORD_TRAINING_WEBHOOK_URL||"").trim()});
+ }
+
+ if(path==="/api/admin/discord-training-webhook/test" && method==="POST"){
+   if(!(await isAdmin()))return json({error:"unauthorized"},401);
+   if(!String(env.DISCORD_TRAINING_WEBHOOK_URL||"").trim())return json({error:"DISCORD_TRAINING_WEBHOOK_URL が未設定です"},400);
+   const result=await sendTrainingApplicationDiscordNotification(env,{
+     training_title:"通知テスト",
+     player_name:"システム管理者",
+     preferred_date:"TEST",
+     preferred_time:"",
+     note:"Discord研修申請通知の接続テストです。"
+   });
+   if(!result.ok)return json({error:"Discord通知に失敗しました",status:result.status||0},502);
+   return json({ok:true});
  }
 
  if(path==="/api/admin/reservation-control" && method==="GET"){
