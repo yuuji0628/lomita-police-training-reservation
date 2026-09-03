@@ -1,4 +1,4 @@
-const APP_VERSION="1.36";
+const APP_VERSION="1.37";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -98,47 +98,81 @@ async function createTraineeSessionCookie(env,profileId){
 }
 
 
-async function sendReservationConfirmedDM(env,payload){
+
+async function ensureReservationNotifications(env){
+  try{
+    const q=await env.DB.prepare("PRAGMA table_info(reservations)").all();
+    const cols=(q.results||[]).map(x=>String(x.name||""));
+    if(!cols.includes("reminder_sent_at")){
+      try{await env.DB.prepare("ALTER TABLE reservations ADD COLUMN reminder_sent_at TEXT DEFAULT ''").run()}catch(_){}
+    }
+  }catch(_){}
+}
+
+async function sendDiscordDM(env,userId,lines){
   const token=String(env.DISCORD_BOT_TOKEN||"").trim();
-  const userId=String(payload.discord_user_id||"").trim();
+  userId=String(userId||"").trim();
   if(!token)return {ok:false,skipped:true,reason:"bot_token_missing"};
   if(!/^\d{15,25}$/.test(userId))return {ok:false,skipped:true,reason:"invalid_user_id"};
-
   const headers={"authorization":"Bot "+token,"content-type":"application/json"};
 
   try{
     const dmRes=await fetch("https://discord.com/api/v10/users/@me/channels",{
-      method:"POST",
-      headers,
-      body:JSON.stringify({recipient_id:userId})
+      method:"POST",headers,body:JSON.stringify({recipient_id:userId})
     });
     if(!dmRes.ok)return {ok:false,status:dmRes.status,step:"create_dm"};
-
     const dm=await dmRes.json().catch(()=>({}));
     const channelId=String(dm.id||"");
     if(!channelId)return {ok:false,status:0,step:"create_dm"};
 
-    const lines=[
-      "✅ **研修予約が確定しました**",
-      "",
-      "**研修**："+String(payload.training_title||"研修"),
-      "**確定日時**："+String(payload.confirmed_datetime||"未設定"),
-      "**担当教官**："+String(payload.assigned_instructor||"未設定"),
-      "",
-      "当日は時間に余裕を持ってご参加ください。"
-    ];
-
     const msgRes=await fetch("https://discord.com/api/v10/channels/"+channelId+"/messages",{
-      method:"POST",
-      headers,
+      method:"POST",headers,
       body:JSON.stringify({content:lines.join("\n"),allowed_mentions:{parse:[]}})
     });
-
     if(!msgRes.ok)return {ok:false,status:msgRes.status,step:"send_message"};
     return {ok:true,status:msgRes.status};
   }catch(_){
     return {ok:false,status:0,step:"exception"};
   }
+}
+
+async function sendReservationConfirmedDM(env,payload){
+  return await sendDiscordDM(env,payload.discord_user_id,[
+    "✅ **研修予約が確定しました**",
+    "",
+    "**研修**："+String(payload.training_title||"研修"),
+    "**確定日時**："+String(payload.confirmed_datetime||"未設定"),
+    "**担当教官**："+String(payload.assigned_instructor||"未設定"),
+    "",
+    "当日は時間に余裕を持ってご参加ください。"
+  ]);
+}
+
+async function sendReservationStatusDM(env,payload){
+  const status=String(payload.status||"");
+  if(status==="completed"){
+    return await sendDiscordDM(env,payload.discord_user_id,[
+      "🎓 **研修を修了しました**",
+      "",
+      "**研修**："+String(payload.training_title||"研修"),
+      "**受講日時**："+String(payload.confirmed_datetime||"未設定"),
+      "**担当教官**："+String(payload.assigned_instructor||"未設定"),
+      "",
+      "お疲れさまでした。研修進捗表にも修了として反映されます。"
+    ]);
+  }
+  if(status==="absent"){
+    return await sendDiscordDM(env,payload.discord_user_id,[
+      "⚠️ **研修が欠席として登録されました**",
+      "",
+      "**研修**："+String(payload.training_title||"研修"),
+      "**予定日時**："+String(payload.confirmed_datetime||"未設定"),
+      "**担当教官**："+String(payload.assigned_instructor||"未設定"),
+      "",
+      "必要に応じて、研修管理画面から再度申請してください。"
+    ]);
+  }
+  return {ok:false,skipped:true,reason:"unsupported_status"};
 }
 
 async function sendTrainingApplicationDiscordNotification(env,payload){
@@ -2649,6 +2683,12 @@ async function handle(request, env) {
    return json({profile,stats,history:results});
  }
 
+ if(path==="/api/admin/discord-reminder/run" && method==="POST"){
+   if(!(await isAdmin()))return json({error:"unauthorized"},401);
+   const result=await runTrainingReminder(env);
+   return json({ok:true,...result});
+ }
+
  if(path==="/api/admin/discord-bot/status" && method==="GET"){
    if(!(await isAdmin()))return json({error:"unauthorized"},401);
    return json({configured:!!String(env.DISCORD_BOT_TOKEN||"").trim()});
@@ -2998,6 +3038,7 @@ async function handle(request, env) {
  if(m && method==="PATCH"){
    await ensureReservationInstructor(env);
    await ensureReservationPreferredSchedule(env);
+   await ensureReservationNotifications(env);
    await ensureInstructors(env);
 
    const reservationId=Number(m[1]);
@@ -3046,9 +3087,18 @@ async function handle(request, env) {
      .bind(b.status,assigned,confirmedDate,confirmedTime,confirmedPref,reservationId).run();
 
    let dmResult={ok:false,skipped:true};
-   if(b.status==="reserved" && String(before.status||"")!=="reserved"){
+   const previousStatus=String(before.status||"");
+   if(b.status==="reserved" && previousStatus!=="reserved"){
      dmResult=await sendReservationConfirmedDM(env,{
        discord_user_id:String(before.discord_id||""),
+       training_title:String(before.title||"研修"),
+       confirmed_datetime:[confirmedDate,confirmedTime].filter(Boolean).join(" "),
+       assigned_instructor:assigned
+     });
+   }else if((b.status==="completed" || b.status==="absent") && previousStatus!==b.status){
+     dmResult=await sendReservationStatusDM(env,{
+       discord_user_id:String(before.discord_id||""),
+       status:b.status,
        training_title:String(before.title||"研修"),
        confirmed_datetime:[confirmedDate,confirmedTime].filter(Boolean).join(" "),
        assigned_instructor:assigned
@@ -3254,4 +3304,58 @@ if(path==="/api/admin/github/upload-worker" && method==="POST"){
  return new Response("Not Found",{status:404});
 }
 
-export default { fetch: handle };
+
+async function runTrainingReminder(env){
+  await ensureReservationPreferredSchedule(env);
+  await ensureReservationNotifications(env);
+
+  const nowJst=new Date(Date.now()+9*60*60*1000);
+  const tomorrowJst=new Date(nowJst.getTime()+24*60*60*1000);
+  const y=tomorrowJst.getUTCFullYear();
+  const m=String(tomorrowJst.getUTCMonth()+1).padStart(2,"0");
+  const d=String(tomorrowJst.getUTCDate()).padStart(2,"0");
+  const targetDate=`${y}-${m}-${d}`;
+
+  const q=await env.DB.prepare(`
+    SELECT r.id,r.discord_id,r.confirmed_date,r.confirmed_time,r.assigned_instructor,
+           r.reminder_sent_at,t.title
+    FROM reservations r
+    LEFT JOIN trainings t ON t.id=r.training_id
+    WHERE r.status='reserved'
+      AND r.confirmed_date=?
+      AND COALESCE(r.reminder_sent_at,'')=''
+    ORDER BY r.confirmed_time,r.id
+  `).bind(targetDate).all();
+
+  const rows=Array.isArray(q?.results)?q.results:[];
+  let sent=0,failed=0;
+
+  for(const r of rows){
+    const result=await sendDiscordDM(env,String(r.discord_id||""),[
+      "⏰ **研修前日のリマインドです**",
+      "",
+      "**研修**："+String(r.title||"研修"),
+      "**日時**："+[r.confirmed_date,r.confirmed_time].filter(Boolean).join(" "),
+      "**担当教官**："+String(r.assigned_instructor||"未設定"),
+      "",
+      "明日の研修です。時間に余裕を持ってご参加ください。"
+    ]);
+
+    if(result.ok){
+      sent++;
+      await env.DB.prepare("UPDATE reservations SET reminder_sent_at=? WHERE id=?")
+        .bind(new Date().toISOString(),Number(r.id)).run();
+    }else{
+      failed++;
+    }
+  }
+  return {target_date:targetDate,total:rows.length,sent,failed};
+}
+
+async function scheduled(event,env,ctx){
+  const task=runTrainingReminder(env);
+  if(ctx && typeof ctx.waitUntil==="function")ctx.waitUntil(task);
+  else await task;
+}
+
+export default { fetch: handle, scheduled };
