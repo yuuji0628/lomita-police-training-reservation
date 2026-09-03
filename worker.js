@@ -1,4 +1,4 @@
-const APP_VERSION="1.59";
+const APP_VERSION="1.60";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -212,6 +212,17 @@ async function sendReservationChangedDM(env,payload){
   return await sendDiscordDM(env,payload.discord_user_id,lines);
 }
 
+async function sendReservationExpiredDM(env,payload){
+  return await sendDiscordDM(env,payload.discord_user_id,[
+    "⏰ **研修申請の希望日時を過ぎました**",
+    "",
+    "**研修**："+String(payload.training_title||"研修"),
+    "",
+    "担当教官が決まらないまま、登録されていた希望日時を過ぎました。",
+    "**お手数ですが、あらためて希望日時を選んで再申請してください。**"
+  ]);
+}
+
 async function sendReservationCancelledDM(env,payload){
   return await sendDiscordDM(env,payload.discord_user_id,[
     "❌ **研修予約がキャンセルされました**",
@@ -325,6 +336,51 @@ async function sendReservationStatusDM(env,payload){
     ]);
   }
   return {ok:false,skipped:true,reason:"unsupported_status"};
+}
+
+async function sendExpiredPendingDiscordAnnouncement(env,rows){
+  const webhook=String(env.DISCORD_TRAINING_WEBHOOK_URL||"").trim();
+  if(!webhook || !rows?.length)return {ok:false,skipped:true};
+
+  const roleId=String(env.DISCORD_TRAINING_ROLE_ID||"").trim();
+  const validRoleId=/^\d{15,25}$/.test(roleId);
+
+  const fields=rows.slice(0,10).map((r,i)=>({
+    name:(i+1)+". "+String(r.training_title||"研修"),
+    value:"研修生："+String(r.player_name||"研修生")+
+      "\n最終希望日時："+String(r.last_preference||"未登録"),
+    inline:false
+  }));
+
+  const body={
+    username:"LOMITA POLICE 研修管理",
+    content:validRoleId
+      ?"<@&"+roleId+"> 未承認のまま希望日時を超過した研修申請があります。"
+      :"未承認のまま希望日時を超過した研修申請があります。",
+    allowed_mentions:validRoleId?{parse:[],roles:[roleId]}:{parse:[]},
+    embeds:[{
+      title:"⏰ 研修申請 希望日時超過",
+      description:
+        "担当教官が決まらないまま、すべての希望日時を過ぎた申請を期限切れにしました。\n"+
+        "研修生には再申請の案内を送信しています。\n\n"+
+        "🔗 [管理画面を開く](https://lomita-police-training-reservation.rrwpvwmz8p.workers.dev/admin)",
+      color:15105570,
+      fields,
+      timestamp:new Date().toISOString(),
+      footer:{text:"LOMITA POLICE TRAINING"}
+    }]
+  };
+
+  try{
+    const r=await fetch(webhook,{
+      method:"POST",
+      headers:{"content-type":"application/json"},
+      body:JSON.stringify(body)
+    });
+    return {ok:r.ok,status:r.status};
+  }catch(_){
+    return {ok:false,status:0};
+  }
 }
 
 async function sendPendingApprovalDiscordAnnouncement(env,rows){
@@ -805,7 +861,7 @@ a{color:inherit;text-decoration:none}
 .pill.pending{background:#fff5d9;color:#8a5600;border-color:#efd99e}
 .pill.reserved{background:#e9f2ff;color:#164f92;border-color:#bdd5f5}
 .pill.completed{background:#e8f7ef;color:#147d43;border-color:#bfe3cf}
-.pill.cancelled,.pill.absent{background:#fff0ef;color:var(--danger);border-color:#efc0bc}
+.pill.cancelled,.pill.absent,.pill.expired{background:#fff0ef;color:var(--danger);border-color:#efc0bc}
 
 .grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
 .stat{
@@ -1749,7 +1805,7 @@ const PUBLIC_BODY = `
 
 const PUBLIC_SCRIPT = String.raw`
 let selectedTraining=null,myProfile=null;
-const statusLabels={pending:'承認待ち',reserved:'予約確定',completed:'受講済み',retake:'再受講',absent:'欠席',cancelled:'キャンセル'};
+const statusLabels={pending:'承認待ち',reserved:'予約確定',completed:'受講済み',retake:'再受講',absent:'欠席',cancelled:'キャンセル',expired:'希望日時超過'};
 function esc(s){return String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 function noticeIn(id,t,c){document.getElementById(id).innerHTML='<div class="notice '+(c||'')+'">'+esc(t)+'</div>'}
 function show(t,c){const e=document.getElementById('msg');e.innerHTML='<div class="notice '+c+'">'+esc(t)+'</div>';setTimeout(()=>e.innerHTML='',4200)}
@@ -1834,7 +1890,9 @@ async function load(){
          ?'承認済みです。受講完了後に次の研修が表示されます。'
          :state==='retake'
            ?'再受講が必要です。もう一度申請してください。'
-           :'次に受講する研修です。希望日時を選んで申請してください。';
+           :state==='expired'
+             ?'希望日時を過ぎました。あらためて希望日時を選んで再申請してください。'
+             :'次に受講する研修です。希望日時を選んで申請してください。';
 
    const buttonText=orientation
      ?'管理者確認待ち'
@@ -1844,7 +1902,9 @@ async function load(){
          ?'受講待ち'
          :state==='retake'
            ?'再申請する'
-           :'申請する';
+           :state==='expired'
+             ?'希望日時を再申請'
+             :'申請する';
 
    el.innerHTML=
      '<div class="card profileCard">'+
@@ -2291,7 +2351,7 @@ const ADMIN_BODY = `
 
 const ADMIN_SCRIPT = String.raw`
 let adminPassword='', trainings=[], activeTrainingId=null, buildTimer=null, currentAdminRole='owner';
-const labels={pending:'承認待ち',reserved:'予約確定',completed:'受講済み',retake:'再受講',absent:'欠席',cancelled:'キャンセル'};
+const labels={pending:'承認待ち',reserved:'予約確定',completed:'受講済み',retake:'再受講',absent:'欠席',cancelled:'キャンセル',expired:'希望日時超過'};
 function esc(s){return String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 function auth(){const h={'content-type':'application/json'};if(adminPassword)h['x-admin-password']=adminPassword;return h}
 function msg(t,c){const e=document.getElementById('msg');e.innerHTML='<div class="notice '+c+'">'+esc(t)+'</div>';setTimeout(()=>e.innerHTML='',3500)}
@@ -4052,6 +4112,11 @@ async function handle(request, env) {
    return json({ok:true});
  }
 
+ if(path==="/api/admin/expired-pending/run" && method==="POST"){
+   if(!(await isAdmin()))return json({error:"unauthorized"},401);
+   return json(await runExpiredPendingReservations(env));
+ }
+
  if(path==="/api/admin/pending-approval-announcement/run" && method==="POST"){
    if(!(await isAdmin()))return json({error:"unauthorized"},401);
    const result=await runPendingApprovalAnnouncement(env);
@@ -4132,7 +4197,7 @@ async function handle(request, env) {
        t.instructor
      FROM reservations r
      JOIN trainings t ON t.id=r.training_id
-     WHERE r.status IN ('pending','reserved','completed','retake','absent')
+     WHERE r.status IN ('pending','reserved','completed','retake','absent','expired')
      ORDER BY
        CASE r.status WHEN 'pending' THEN 0 WHEN 'reserved' THEN 1 WHEN 'retake' THEN 2 WHEN 'completed' THEN 3 WHEN 'absent' THEN 4 ELSE 5 END,
        CASE WHEN t.training_date IS NULL OR t.training_date='' THEN 1 ELSE 0 END,
@@ -4852,6 +4917,88 @@ async function runSameDayReminder(env){
   return {date:today,total:rows.length,sent,failed};
 }
 
+function combineJstDateTime(date,time){
+  const d=String(date||"").trim();
+  const t=String(time||"").trim();
+  if(!d)return null;
+  const hhmm=/^\d{2}:\d{2}/.test(t)?t.slice(0,5):"23:59";
+  const ms=Date.parse(d+"T"+hhmm+":00+09:00");
+  return Number.isFinite(ms)?ms:null;
+}
+
+function latestPreferenceInfo(r){
+  const candidates=[
+    [r.preferred_date,r.preferred_time,1],
+    [r.preferred_date2,r.preferred_time2,2],
+    [r.preferred_date3,r.preferred_time3,3]
+  ].filter(x=>String(x[0]||"").trim());
+
+  let latest=null;
+  for(const [date,time,index] of candidates){
+    const ms=combineJstDateTime(date,time);
+    if(ms===null)continue;
+    if(!latest || ms>latest.ms){
+      latest={ms,date:String(date),time:String(time||""),index};
+    }
+  }
+  return latest;
+}
+
+async function runExpiredPendingReservations(env){
+  await ensureReservationInstructor(env);
+  await ensureReservationPreferredSchedule(env);
+  await ensureReservationNotifications(env);
+
+  const q=await env.DB.prepare(`
+    SELECT
+      r.id,r.training_id,r.player_name,r.discord_id,
+      r.preferred_date,r.preferred_time,
+      r.preferred_date2,r.preferred_time2,
+      r.preferred_date3,r.preferred_time3,
+      COALESCE(t.title,'研修') AS training_title
+    FROM reservations r
+    LEFT JOIN trainings t ON t.id=r.training_id
+    WHERE r.status='pending'
+      AND trim(COALESCE(r.assigned_instructor,''))=''
+    ORDER BY r.id ASC
+    LIMIT 100
+  `).all();
+
+  const now=Date.now();
+  const rows=Array.isArray(q?.results)?q.results:[];
+  const expired=[];
+
+  for(const row of rows){
+    const latest=latestPreferenceInfo(row);
+    if(!latest || now<=latest.ms)continue;
+
+    const updated=await env.DB.prepare(`
+      UPDATE reservations
+      SET status='expired',
+          pending_announce_sent_at=''
+      WHERE id=? AND status='pending'
+    `).bind(Number(row.id)).run();
+
+    if(Number(updated?.meta?.changes||0)<1)continue;
+
+    expired.push({
+      ...row,
+      last_preference:String(latest.date||"")+(latest.time?" "+String(latest.time):"")
+    });
+
+    await sendReservationExpiredDM(env,{
+      discord_user_id:String(row.discord_id||""),
+      training_title:String(row.training_title||"研修")
+    });
+  }
+
+  if(expired.length){
+    await sendExpiredPendingDiscordAnnouncement(env,expired);
+  }
+
+  return {ok:true,expired:expired.length};
+}
+
 async function runPendingApprovalAnnouncement(env){
   await ensureReservationInstructor(env);
   await ensureReservationPreferredSchedule(env);
@@ -4943,6 +5090,7 @@ async function scheduled(event,env,ctx){
   const task=(async()=>{
     await runTrainingReminder(env);
     await runSameDayReminder(env);
+    await runExpiredPendingReservations(env);
     await runPendingApprovalAnnouncement(env);
   })();
   if(ctx && typeof ctx.waitUntil==="function")ctx.waitUntil(task);
