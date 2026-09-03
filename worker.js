@@ -1,4 +1,4 @@
-const APP_VERSION="1.13";
+const APP_VERSION="1.14";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -127,6 +127,10 @@ async function ensureReservationPreferredSchedule(env) {
   if (!cols.includes("preferred_time")) {
     await env.DB.prepare("ALTER TABLE reservations ADD COLUMN preferred_time TEXT DEFAULT ''").run();
   }
+  if (!cols.includes("preferred_date2")) await env.DB.prepare("ALTER TABLE reservations ADD COLUMN preferred_date2 TEXT DEFAULT ''").run();
+  if (!cols.includes("preferred_time2")) await env.DB.prepare("ALTER TABLE reservations ADD COLUMN preferred_time2 TEXT DEFAULT ''").run();
+  if (!cols.includes("preferred_date3")) await env.DB.prepare("ALTER TABLE reservations ADD COLUMN preferred_date3 TEXT DEFAULT ''").run();
+  if (!cols.includes("preferred_time3")) await env.DB.prepare("ALTER TABLE reservations ADD COLUMN preferred_time3 TEXT DEFAULT ''").run();
 }
 
 async function ensureInstructors(env) {
@@ -737,9 +741,20 @@ const PUBLIC_BODY = `
   <div class="title" id="bookTitle">研修申請</div>
   <div class="sub" style="margin-top:4px">申請後、管理者が担当教官を選んで承認します。</div>
   <div id="bookingMsg"></div>
-  <div class="grid" style="margin-top:12px">
-    <div class="field"><label>希望日</label><input id="preferredDate" type="date" required></div>
-    <div class="field"><label>希望時間</label><input id="preferredTime" type="time" required></div>
+  <div style="margin-top:14px">
+    <div style="font-weight:900;margin-bottom:7px">第1希望 <span style="color:#b42318;font-size:12px">必須</span></div>
+    <div class="field"><label>希望日</label><input id="preferredDate" type="date" required style="min-height:52px;font-size:16px"></div>
+    <div class="field"><label>希望時間</label><input id="preferredTime" type="time" required style="min-height:52px;font-size:16px"></div>
+  </div>
+  <div style="margin-top:14px;padding-top:12px;border-top:1px solid #e5e7eb">
+    <div style="font-weight:900;margin-bottom:7px">第2希望 <span class="sub">任意</span></div>
+    <div class="field"><label>希望日</label><input id="preferredDate2" type="date" style="min-height:52px;font-size:16px"></div>
+    <div class="field"><label>希望時間</label><input id="preferredTime2" type="time" style="min-height:52px;font-size:16px"></div>
+  </div>
+  <div style="margin-top:14px;padding-top:12px;border-top:1px solid #e5e7eb">
+    <div style="font-weight:900;margin-bottom:7px">第3希望 <span class="sub">任意</span></div>
+    <div class="field"><label>希望日</label><input id="preferredDate3" type="date" style="min-height:52px;font-size:16px"></div>
+    <div class="field"><label>希望時間</label><input id="preferredTime3" type="time" style="min-height:52px;font-size:16px"></div>
   </div>
   <div class="field"><label>備考</label><textarea id="note" maxlength="250" placeholder="必要な場合のみ入力"></textarea></div>
   <button id="bookingSubmitBtn" type="button" class="btn primary" style="width:100%">申請する</button>
@@ -795,12 +810,9 @@ function openBooking(id,title){
  selectedTraining={id,title};
  document.getElementById('bookingMsg').innerHTML='';
  document.getElementById('bookTitle').textContent=title+' 申請';
- const dateEl=document.getElementById('preferredDate');
- if(dateEl){
-   const now=new Date();
-   const local=new Date(now.getTime()-now.getTimezoneOffset()*60000).toISOString().slice(0,10);
-   dateEl.min=local;
- }
+ const now=new Date();
+ const local=new Date(now.getTime()-now.getTimezoneOffset()*60000).toISOString().slice(0,10);
+ ['preferredDate','preferredDate2','preferredDate3'].forEach(id=>{const el=document.getElementById(id);if(el)el.min=local;});
  document.getElementById('booking').classList.add('open')
 }
 function closeBooking(){document.getElementById('booking').classList.remove('open')}
@@ -812,7 +824,9 @@ async function loadMyPage(){
  myProfile=d.profile;
  document.getElementById('mySummary').innerHTML='<div class="card"><div class="profileHead"><div class="avatar">'+esc((d.profile.player_name||'?').slice(0,1))+'</div><div><div class="title">'+esc(d.profile.player_name)+'</div><div class="sub">ログイン中</div></div></div><div class="grid" style="margin-top:14px"><div class="stat"><span class="sub">承認待ち</span><b>'+d.stats.pending+'</b></div><div class="stat"><span class="sub">予約確定</span><b>'+d.stats.reserved+'</b></div><div class="stat"><span class="sub">受講済み</span><b>'+d.stats.completed+'</b></div><div class="stat"><span class="sub">欠席</span><b>'+d.stats.absent+'</b></div></div></div>';
  const h=document.getElementById('myHistory');
- h.innerHTML=d.history.length?d.history.map(x=>'<div class="card"><div class="between"><div><span class="pill '+esc(x.status)+'">'+esc(statusLabels[x.status]||x.status)+'</span><div class="title" style="margin-top:7px">'+esc(x.title)+'</div></div>'+(x.status==='pending'||x.status==='reserved'?'<button class="btn danger small traineeCancelBtn" data-id="'+x.id+'">申請キャンセル</button>':'')+'</div>'+(x.preferred_date||x.preferred_time?'<div class="sub" style="margin-top:7px">希望日時：'+esc([x.preferred_date||'',x.preferred_time||''].filter(Boolean).join(' '))+'</div>':'')+(x.assigned_instructor?'<div class="sub" style="margin-top:7px">担当教官：'+esc(x.assigned_instructor)+'</div>':'')+(x.note?'<div class="sub">備考：'+esc(x.note)+'</div>':'')+'</div>').join(''):'<div class="empty">まだ申請・受講履歴はありません。</div>';
+ h.innerHTML=d.history.length?d.history.map(x=>'<div class="card"><div class="between"><div><span class="pill '+esc(x.status)+'">'+esc(statusLabels[x.status]||x.status)+'</span><div class="title" style="margin-top:7px">'+esc(x.title)+'</div></div>'+(x.status==='pending'||x.status==='reserved'?'<button class="btn danger small traineeCancelBtn" data-id="'+x.id+'">申請キャンセル</button>':'')+'</div>'+(x.preferred_date||x.preferred_time?'<div class="sub" style="margin-top:7px">第1希望：'+esc([x.preferred_date||'',x.preferred_time||''].filter(Boolean).join(' '))+'</div>':'')+
+(x.preferred_date2||x.preferred_time2?'<div class="sub"><b>第2希望：</b>'+esc([x.preferred_date2||'',x.preferred_time2||''].filter(Boolean).join(' '))+'</div>':'')+
+(x.preferred_date3||x.preferred_time3?'<div class="sub"><b>第3希望：</b>'+esc([x.preferred_date3||'',x.preferred_time3||''].filter(Boolean).join(' '))+'</div>':'')+(x.assigned_instructor?'<div class="sub" style="margin-top:7px">担当教官：'+esc(x.assigned_instructor)+'</div>':'')+(x.note?'<div class="sub">備考：'+esc(x.note)+'</div>':'')+'</div>').join(''):'<div class="empty">まだ申請・受講履歴はありません。</div>';
  document.querySelectorAll('.traineeCancelBtn').forEach(b=>b.addEventListener('click',()=>cancelMyReservation(Number(b.dataset.id))));
  await load();
 }
@@ -826,32 +840,25 @@ async function cancelMyReservation(id){
 }
 async function submitBooking(){
  if(!selectedTraining)return;
- const preferredDate=document.getElementById('preferredDate').value;
- const preferredTime=document.getElementById('preferredTime').value;
- if(!preferredDate||!preferredTime){
-   noticeIn('bookingMsg','希望日と希望時間を入力してください。','error');
-   return;
- }
+ const ids=['preferredDate','preferredTime','preferredDate2','preferredTime2','preferredDate3','preferredTime3'];
+ const v=Object.fromEntries(ids.map(id=>[id,document.getElementById(id).value]));
+ if(!v.preferredDate||!v.preferredTime){noticeIn('bookingMsg','第1希望の日時は必ず入力してください。','error');return}
+ if((v.preferredDate2&&!v.preferredTime2)||(!v.preferredDate2&&v.preferredTime2)){noticeIn('bookingMsg','第2希望は日付と時間を両方入力してください。','error');return}
+ if((v.preferredDate3&&!v.preferredTime3)||(!v.preferredDate3&&v.preferredTime3)){noticeIn('bookingMsg','第3希望は日付と時間を両方入力してください。','error');return}
  const btn=document.getElementById('bookingSubmitBtn');btn.disabled=true;btn.textContent='申請中...';
  try{
-   const r=await fetch('/api/reservations',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({
-     training_id:selectedTraining.id,
-     preferred_date:preferredDate,
-     preferred_time:preferredTime,
-     note:document.getElementById('note').value.trim()
-   })});
-   const d=await r.json().catch(()=>({}));
-   if(r.status===401){closeBooking();showAuth();return}
-   if(!r.ok){noticeIn('bookingMsg',d.error||'申請できませんでした','error');return}
-   closeBooking();
-   document.getElementById('preferredDate').value='';
-   document.getElementById('preferredTime').value='';
-   document.getElementById('note').value='';
-   show('希望日時を付けて申請しました。承認をお待ちください。','success');
-   await loadMyPage();
+  const r=await fetch('/api/reservations',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({
+   training_id:selectedTraining.id,preferred_date:v.preferredDate,preferred_time:v.preferredTime,
+   preferred_date2:v.preferredDate2,preferred_time2:v.preferredTime2,
+   preferred_date3:v.preferredDate3,preferred_time3:v.preferredTime3,note:document.getElementById('note').value.trim()
+  })});
+  const d=await r.json().catch(()=>({}));
+  if(r.status===401){closeBooking();showAuth();return}
+  if(!r.ok){noticeIn('bookingMsg',d.error||'申請できませんでした','error');return}
+  closeBooking();[...ids,'note'].forEach(id=>document.getElementById(id).value='');
+  show('希望日時を付けて申請しました。承認をお待ちください。','success');await loadMyPage();
  }finally{btn.disabled=false;btn.textContent='申請する'}
 }
-document.getElementById('traineeLogoutBtn')?.addEventListener('click',traineeLogout);
 document.getElementById('bookingSubmitBtn')?.addEventListener('click',submitBooking);
 loadDiscordLoginConfig();restoreTrainee();`;
 
@@ -1085,6 +1092,8 @@ async function loadReservationControl(){
  e.innerHTML=d.map(x=>{
    const dateText=[x.training_date||'',x.start_time||''].filter(Boolean).join(' ');
    const preferredText=[x.preferred_date||'',x.preferred_time||''].filter(Boolean).join(' ');
+   const preferredText2=[x.preferred_date2||'',x.preferred_time2||''].filter(Boolean).join(' ');
+   const preferredText3=[x.preferred_date3||'',x.preferred_time3||''].filter(Boolean).join(' ');
    const statusLabel=labels[x.status]||x.status;
    const statusOptions=[
      ['reserved','予約確定'],
@@ -1102,7 +1111,9 @@ async function loadReservationControl(){
          '<div class="title" style="margin-top:7px">'+esc(x.title||'研修')+'</div>'+
          '<div class="sub" style="margin-top:5px">研修生：'+esc(x.player_name||'')+'</div>'+
          (x.affiliation?'<div class="sub">所属：'+esc(x.affiliation)+'</div>':'')+
-         '<div class="sub" style="margin-top:6px;font-weight:800">希望日時：'+esc(preferredText||'未入力')+'</div>'+
+         '<div class="sub" style="margin-top:6px;font-weight:800">第1希望：'+esc(preferredText||'未入力')+'</div>'+
+         (preferredText2?'<div class="sub" style="font-weight:800">第2希望：'+esc(preferredText2)+'</div>':'')+
+         (preferredText3?'<div class="sub" style="font-weight:800">第3希望：'+esc(preferredText3)+'</div>':'')+
        '</div>'+
        '<div class="sub" style="text-align:right;white-space:nowrap">研修設定<br>'+esc(dateText||'日時未設定')+'</div>'+
      '</div>'+
@@ -1732,7 +1743,7 @@ async function handle(request, env) {
    const profile=await getTraineeSession(request,env);
    if(!profile)return json({error:"ログインが必要です"},401);
    const key=String(profile.discord_id||profile.login_name||profile.player_name||"").trim();
-   const q=await env.DB.prepare("SELECT r.id,r.training_id,r.player_name,r.discord_id,r.affiliation,r.note,r.status,r.assigned_instructor,r.preferred_date,r.preferred_time,t.title FROM reservations r JOIN trainings t ON t.id=r.training_id WHERE lower(trim(COALESCE(r.discord_id,'')))=lower(trim(?)) ORDER BY r.id DESC").bind(key).all();
+   const q=await env.DB.prepare("SELECT r.id,r.training_id,r.player_name,r.discord_id,r.affiliation,r.note,r.status,r.assigned_instructor,r.preferred_date,r.preferred_time,r.preferred_date2,r.preferred_time2,r.preferred_date3,r.preferred_time3,t.title FROM reservations r JOIN trainings t ON t.id=r.training_id WHERE lower(trim(COALESCE(r.discord_id,'')))=lower(trim(?)) ORDER BY r.id DESC").bind(key).all();
    const results=Array.isArray(q?.results)?q.results:[];
    const stats={pending:0,reserved:0,completed:0,absent:0,cancelled:0};
    for(const x of results)if(stats[x.status]!==undefined)stats[x.status]++;
@@ -1745,16 +1756,18 @@ async function handle(request, env) {
    const b=await request.json().catch(()=>({}));
    const trainingId=Number(b.training_id);
    if(!trainingId)return json({error:"研修が選択されていません"},400);
-   const preferredDate=String(b.preferred_date||"").trim();
-   const preferredTime=String(b.preferred_time||"").trim();
-   if(!/^\d{4}-\d{2}-\d{2}$/.test(preferredDate))return json({error:"希望日を入力してください"},400);
-   if(!/^\d{2}:\d{2}$/.test(preferredTime))return json({error:"希望時間を入力してください"},400);
+   const preferredDate=String(b.preferred_date||"").trim(), preferredTime=String(b.preferred_time||"").trim();
+   const preferredDate2=String(b.preferred_date2||"").trim(), preferredTime2=String(b.preferred_time2||"").trim();
+   const preferredDate3=String(b.preferred_date3||"").trim(), preferredTime3=String(b.preferred_time3||"").trim();
+   if(!/^\d{4}-\d{2}-\d{2}$/.test(preferredDate)||!/^\d{2}:\d{2}$/.test(preferredTime))return json({error:"第1希望の日時は必ず入力してください"},400);
+   if((preferredDate2||preferredTime2)&&(!/^\d{4}-\d{2}-\d{2}$/.test(preferredDate2)||!/^\d{2}:\d{2}$/.test(preferredTime2)))return json({error:"第2希望は日付と時間を両方入力してください"},400);
+   if((preferredDate3||preferredTime3)&&(!/^\d{4}-\d{2}-\d{2}$/.test(preferredDate3)||!/^\d{2}:\d{2}$/.test(preferredTime3)))return json({error:"第3希望は日付と時間を両方入力してください"},400);
    const key=String(profile.discord_id||profile.login_name||profile.player_name||"").trim();
    const t=await env.DB.prepare("SELECT id FROM trainings WHERE id=?").bind(trainingId).first();
    if(!t)return json({error:"研修が見つかりません"},404);
    const dup=await env.DB.prepare("SELECT id,status FROM reservations WHERE training_id=? AND lower(trim(COALESCE(discord_id,'')))=lower(trim(?)) AND status IN ('pending','reserved','completed') ORDER BY id DESC LIMIT 1").bind(trainingId,key).first();
    if(dup)return json({error:dup.status==="completed"?"この研修は受講済みです":"すでに申請済みです"},409);
-   await env.DB.prepare("INSERT INTO reservations(training_id,player_name,discord_id,affiliation,note,status,preferred_date,preferred_time) VALUES(?,?,?,?,?,'pending',?,?)").bind(trainingId,profile.player_name,key,"",String(b.note||"").trim(),preferredDate,preferredTime).run();
+   await env.DB.prepare("INSERT INTO reservations(training_id,player_name,discord_id,affiliation,note,status,preferred_date,preferred_time,preferred_date2,preferred_time2,preferred_date3,preferred_time3) VALUES(?,?,?,?,?,'pending',?,?,?,?,?,?)").bind(trainingId,profile.player_name,key,"",String(b.note||"").trim(),preferredDate,preferredTime,preferredDate2,preferredTime2,preferredDate3,preferredTime3).run();
    return json({ok:true},201);
  }
 
@@ -1891,6 +1904,10 @@ async function handle(request, env) {
        r.assigned_instructor,
        r.preferred_date,
        r.preferred_time,
+       r.preferred_date2,
+       r.preferred_time2,
+       r.preferred_date3,
+       r.preferred_time3,
        r.created_at,
        t.title,
        t.training_date,
