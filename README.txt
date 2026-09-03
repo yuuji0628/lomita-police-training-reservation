@@ -1,17 +1,23 @@
-LOMITA POLICE Training Reservation - Version 1.36
+LOMITA POLICE Training Reservation - Version 1.37
 
 追加機能
-- 予約を「予約確定」にして保存した瞬間、対象研修生へDiscord DMを自動送信
-- DM内容: 研修名 / 確定日時 / 担当教官
-- DM送信失敗でも予約確定処理は成功
-- すでに予約確定済みの予約を再保存しただけではDMを再送しない
+1. 「受講済み」に変更・保存
+   → 研修生本人へ「研修修了」Discord DM
+2. 「欠席」に変更・保存
+   → 研修生本人へ「欠席登録」Discord DM
+3. 研修前日リマインド
+   → 毎日20:00頃（日本時間）に翌日分の予約確定者へDiscord DM
+   → 同じ予約には1回だけ送信
+4. 予約確定DMはVersion 1.36のまま継続
 
 Cloudflare Secret
-DISCORD_BOT_TOKEN
+- DISCORD_BOT_TOKEN（既存のままでOK）
 
-Discord Bot TokenをこのSecretへ登録してください。
-Bot TokenはGitHub、worker.js、チャットには貼らず、Cloudflareへ直接登録してください。
+Cloudflare Cron
+- 0 11 * * *
+- UTC 11:00 = 日本時間 20:00
 
-管理メニューで「確定DM Bot：設定済み / 未設定」を確認できます。
-
-Version 1.35までの既存機能を維持。
+安全設計
+- DM送信失敗でも予約ステータス変更は成功
+- リマインド送信成功時のみ reminder_sent_at を記録
+- 既存の予約/研修/Discordログイン/GitHub更新機能は維持
