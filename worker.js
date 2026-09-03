@@ -1,4 +1,4 @@
-const APP_VERSION="1.45";
+const APP_VERSION="1.46";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -75,6 +75,12 @@ async function ensureTraineeProfiles(env) {
   }
   if (!cols.includes("discord_user_id")) {
     try { await env.DB.prepare("ALTER TABLE trainee_profiles ADD COLUMN discord_user_id TEXT DEFAULT ''").run(); } catch (_) {}
+  }
+  if (!cols.includes("admin_memo")) {
+    try { await env.DB.prepare("ALTER TABLE trainee_profiles ADD COLUMN admin_memo TEXT DEFAULT ''").run(); } catch (_) {}
+  }
+  if (!cols.includes("all_completed_at")) {
+    try { await env.DB.prepare("ALTER TABLE trainee_profiles ADD COLUMN all_completed_at TEXT DEFAULT ''").run(); } catch (_) {}
   }
 
 }
@@ -222,6 +228,15 @@ async function sendReservationStatusDM(env,payload){
       "お疲れさまでした。研修進捗表にも修了として反映されます。"
     ]);
   }
+  if(status==="retake"){
+    return await sendDiscordDM(env,payload.discord_user_id,[
+      "🔁 **再受講が必要です**","",
+      "**研修**："+String(payload.training_title||"研修"),
+      "**受講日時**："+String(payload.confirmed_datetime||"未設定"),
+      "**担当教官**："+String(payload.assigned_instructor||"未設定"),"",
+      "この研修は未修了です。研修生ポータルから再度申請してください。"
+    ]);
+  }
   if(status==="absent"){
     return await sendDiscordDM(env,payload.discord_user_id,[
       "⚠️ **研修が欠席として登録されました**",
@@ -332,6 +347,33 @@ async function ensureInstructors(env) {
   `).run();
 }
 
+
+async function refreshTraineeFullCompletion(env,profileId){
+  await ensureTraineeProfiles(env);
+  await ensureTrainingPrograms(env);
+  const p=await env.DB.prepare("SELECT id,player_name,login_name,discord_id,COALESCE(all_completed_at,'') AS all_completed_at FROM trainee_profiles WHERE id=?").bind(Number(profileId)).first();
+  if(!p)return {completed:false,date:""};
+  const key=String(p.discord_id||p.login_name||p.player_name||"").trim();
+  const totalRow=await env.DB.prepare("SELECT COUNT(*) c FROM training_programs WHERE active=1 AND training_id IS NOT NULL").first();
+  const total=Number(totalRow?.c||0);
+  const completedRow=await env.DB.prepare("SELECT COUNT(DISTINCT training_id) c FROM reservations WHERE lower(trim(COALESCE(discord_id,'')))=lower(trim(?)) AND status='completed'").bind(key).first();
+  const completed=Number(completedRow?.c||0), done=total>0&&completed>=total;
+  let date=String(p.all_completed_at||"");
+  if(done&&!date){
+    const last=await env.DB.prepare("SELECT COALESCE(NULLIF(completed_at,''),confirmed_date,'') d FROM reservations WHERE lower(trim(COALESCE(discord_id,'')))=lower(trim(?)) AND status='completed' ORDER BY COALESCE(NULLIF(completed_at,''),confirmed_date,'') DESC,id DESC LIMIT 1").bind(key).first();
+    date=String(last?.d||"");
+    if(!date){const j=new Date(Date.now()+9*60*60*1000);date=[j.getUTCFullYear(),String(j.getUTCMonth()+1).padStart(2,'0'),String(j.getUTCDate()).padStart(2,'0')].join('-')}
+    await env.DB.prepare("UPDATE trainee_profiles SET all_completed_at=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(date,Number(profileId)).run();
+  }else if(!done&&date){
+    date="";await env.DB.prepare("UPDATE trainee_profiles SET all_completed_at='',updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(Number(profileId)).run();
+  }
+  return {completed:done,date};
+}
+async function refreshTraineeFullCompletionByDiscord(env,key){
+  await ensureTraineeProfiles(env);
+  const p=await env.DB.prepare("SELECT id FROM trainee_profiles WHERE lower(trim(COALESCE(discord_id,'')))=lower(trim(?)) OR lower(trim(COALESCE(login_name,'')))=lower(trim(?)) OR lower(trim(COALESCE(player_name,'')))=lower(trim(?)) LIMIT 1").bind(key,key,key).first();
+  return p?await refreshTraineeFullCompletion(env,p.id):{completed:false,date:""};
+}
 
 function isOrientationTitle(v){
   return String(v||"").trim()==="オリエンテーション";
@@ -1206,7 +1248,7 @@ textarea{min-height:90px}
 
 .adminStatusButtons{
   display:grid;
-  grid-template-columns:repeat(4,minmax(0,1fr));
+  grid-template-columns:repeat(5,minmax(0,1fr));
   gap:7px;
   margin-top:6px;
 }
@@ -1224,6 +1266,7 @@ textarea{min-height:90px}
 .adminStatusBtn.active[data-status="completed"]{background:#16834c;color:#fff;border-color:#16834c}
 .adminStatusBtn.active[data-status="absent"]{background:#b42318;color:#fff;border-color:#b42318}
 .adminStatusBtn.active[data-status="cancelled"]{background:#5b6470;color:#fff;border-color:#5b6470}
+.adminStatusBtn.active[data-status="retake"]{background:#9a6700;color:#fff;border-color:#9a6700}
 
 
 .completedAdminBox{margin-top:14px;background:#fff;border:1px solid #d8e0ea;border-radius:15px;padding:12px;box-shadow:0 2px 7px rgba(10,34,61,.05)}
@@ -1352,7 +1395,7 @@ const PUBLIC_BODY = `
 
 const PUBLIC_SCRIPT = String.raw`
 let selectedTraining=null,myProfile=null;
-const statusLabels={pending:'承認待ち',reserved:'予約確定',completed:'受講済み',absent:'欠席',cancelled:'キャンセル'};
+const statusLabels={pending:'承認待ち',reserved:'予約確定',completed:'受講済み',retake:'再受講',absent:'欠席',cancelled:'キャンセル'};
 function esc(s){return String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 function noticeIn(id,t,c){document.getElementById(id).innerHTML='<div class="notice '+(c||'')+'">'+esc(t)+'</div>'}
 function show(t,c){const e=document.getElementById('msg');e.innerHTML='<div class="notice '+c+'">'+esc(t)+'</div>';setTimeout(()=>e.innerHTML='',4200)}
@@ -1445,6 +1488,7 @@ async function loadProgress(){
      return;
    }
    const completed=rows.filter(p=>p.status==='completed').length;
+   const completionCard=d.all_completed?'<div style="margin-bottom:12px;padding:14px;border:2px solid #d7ad45;border-radius:14px;background:#fff9df;text-align:center"><div style="font-size:20px;font-weight:1000">🏅 全研修修了</div><div style="margin-top:5px;font-weight:900">LOMITA POLICE TRAINING COMPLETED</div><div class="sub" style="margin-top:5px">修了日：'+esc(String(d.all_completed_at||'').replaceAll('-','/'))+'</div></div>':'';
    const perRow=8;
    const groups=[];
    for(let i=0;i<rows.length;i+=perRow)groups.push(rows.slice(i,i+perRow));
@@ -1481,6 +1525,7 @@ async function loadProgress(){
    };
 
    el.innerHTML=
+    completionCard+
     '<div class="ledgerScroll">'+
       '<div class="ledgerPaper">'+
         '<div class="ledgerTop">'+
@@ -1757,7 +1802,7 @@ const ADMIN_BODY = `
 
 const ADMIN_SCRIPT = String.raw`
 let adminPassword='', trainings=[], activeTrainingId=null, buildTimer=null, currentAdminRole='owner';
-const labels={pending:'承認待ち',reserved:'予約確定',completed:'受講済み',absent:'欠席',cancelled:'キャンセル'};
+const labels={pending:'承認待ち',reserved:'予約確定',completed:'受講済み',retake:'再受講',absent:'欠席',cancelled:'キャンセル'};
 function esc(s){return String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 function auth(){const h={'content-type':'application/json'};if(adminPassword)h['x-admin-password']=adminPassword;return h}
 function msg(t,c){const e=document.getElementById('msg');e.innerHTML='<div class="notice '+c+'">'+esc(t)+'</div>';setTimeout(()=>e.innerHTML='',3500)}
@@ -1993,11 +2038,12 @@ function chooseReservationStatus(id,status){
  });
 }
 function renderReservationStatusButtons(id,currentStatus){
- const normalized=['reserved','completed','absent','cancelled'].includes(currentStatus)?currentStatus:'reserved';
+ const normalized=['reserved','completed','retake','absent','cancelled'].includes(currentStatus)?currentStatus:'reserved';
  return '<input type="hidden" id="reservationStatus_'+id+'" value="'+esc(normalized)+'">'+
    '<div class="adminStatusButtons">'+
      '<button type="button" class="adminStatusBtn '+(normalized==='reserved'?'active':'')+'" data-reservation-id="'+id+'" data-status="reserved">予約確定</button>'+
      '<button type="button" class="adminStatusBtn '+(normalized==='completed'?'active':'')+'" data-reservation-id="'+id+'" data-status="completed">受講済み</button>'+
+     '<button type="button" class="adminStatusBtn '+(normalized==='retake'?'active':'')+'" data-reservation-id="'+id+'" data-status="retake">再受講</button>'+
      '<button type="button" class="adminStatusBtn '+(normalized==='absent'?'active':'')+'" data-reservation-id="'+id+'" data-status="absent">欠席</button>'+
      '<button type="button" class="adminStatusBtn '+(normalized==='cancelled'?'active':'')+'" data-reservation-id="'+id+'" data-status="cancelled">キャンセル</button>'+
    '</div>';
@@ -2035,7 +2081,7 @@ async function saveReservationFromList(id){
  const label=labels[status]||status;
  const confirmText=status==='cancelled'
    ?'この予約をキャンセルしますか？\n研修生本人へDiscord DMで通知されます。'
-   :'この予約を「'+label+'」に変更しますか？';
+   :status==='retake'?'この研修を「再受講」にしますか？\n修了扱いにはならず、本人へ再受講DMを送ります。':'この予約を「'+label+'」に変更しますか？';
  if(!confirm(confirmText))return;
 
  try{
@@ -2176,12 +2222,25 @@ function renderTrainees(){
    const done=Number(x.progress_completed||0),total=Number(x.progress_total||0),pct=Number(x.progress_percent||0);
    return '<div class="card traineeCard"><div class="between"><div class="profileHead"><div class="avatar">'+esc((x.player_name||'?').slice(0,1))+'</div><div><div class="title">'+esc(x.player_name||'名前未登録')+'</div>'+(x.login_name?'<div class="sub">：'+esc(x.login_name)+'</div>':'')+'</div></div><button class="btn small danger traineeDeleteBtn" data-id="'+x.id+'" data-name="'+encodeURIComponent(x.player_name||'研修生')+'">研修生を削除</button></div>'+
    '<div style="margin-top:12px;padding:10px;border:1px solid #d7ad45;border-radius:12px;background:#fffdf7"><div class="between"><div><b>オリエンテーション</b><div class="sub">'+(x.orientation_completed?'受講済み':'未受講')+'</div></div><div class="row"><button class="btn small '+(x.orientation_completed?'dark':'')+' orientationToggleBtn" data-id="'+x.id+'" data-completed="1">済</button><button class="btn small '+(!x.orientation_completed?'dark':'')+' orientationToggleBtn" data-id="'+x.id+'" data-completed="0">未</button></div></div></div>'+
-   '<div style="margin-top:14px"><div class="between"><b>研修進捗</b><b>'+done+'/'+total+' 完了</b></div><div style="height:10px;background:#e5e7eb;border-radius:999px;overflow:hidden;margin-top:7px"><div style="height:100%;width:'+pct+'%;background:#0b4fa3"></div></div><div class="sub" style="margin-top:7px">'+(x.current_training?'次の研修：'+esc(x.current_training):'全研修修了')+'</div></div><div class="meta"><span>承認待ち '+x.pending+'</span><span>予約 '+x.reserved+'</span><span>欠席 '+x.absent+'</span></div><button class="btn small traineeOpenBtn" style="margin-top:8px" data-discord="'+encodeURIComponent(x.discord_id||x.login_name||x.player_name)+'">受講履歴を見る</button></div>';
+   (x.all_completed?'<div style="margin-top:12px;padding:12px;border:2px solid #d7ad45;border-radius:14px;background:#fff9df"><div style="font-weight:1000;font-size:17px">🏅 全研修修了</div><div class="sub" style="margin-top:4px">修了日：'+esc(String(x.all_completed_at||'').replaceAll('-','/'))+'</div></div>':'')+
+   '<div style="margin-top:14px"><div class="between"><b>研修進捗</b><b>'+done+'/'+total+' 完了</b></div><div style="height:10px;background:#e5e7eb;border-radius:999px;overflow:hidden;margin-top:7px"><div style="height:100%;width:'+pct+'%;background:#0b4fa3"></div></div><div class="sub" style="margin-top:7px">'+(x.current_training?'次の研修：'+esc(x.current_training):'全研修修了')+'</div></div><div class="meta"><span>承認待ち '+x.pending+'</span><span>予約 '+x.reserved+'</span><span>再受講 '+x.retake+'</span><span>欠席 '+x.absent+'</span></div>'+
+   '<div style="margin-top:12px"><div class="sub" style="font-weight:900">管理メモ（管理者のみ）</div><textarea class="traineeAdminMemo" data-id="'+x.id+'" rows="3" maxlength="5000" placeholder="注意点・指導内容・今後の対応など" style="width:100%;margin-top:6px">'+esc(x.admin_memo||'')+'</textarea><button class="btn small saveTraineeMemoBtn" data-id="'+x.id+'" style="margin-top:6px">管理メモを保存</button></div>'+
+   '<button class="btn small traineeOpenBtn" style="margin-top:8px" data-discord="'+encodeURIComponent(x.discord_id||x.login_name||x.player_name)+'">受講履歴を見る</button></div>';
  }).join('');
  document.querySelectorAll('.traineeOpenBtn').forEach(btn=>btn.addEventListener('click',()=>openTraineeDetail(decodeURIComponent(btn.dataset.discord))));
  document.querySelectorAll('.orientationToggleBtn').forEach(btn=>btn.addEventListener('click',()=>setOrientationStatus(Number(btn.dataset.id),btn.dataset.completed==='1')));
+ document.querySelectorAll('.saveTraineeMemoBtn').forEach(btn=>btn.addEventListener('click',()=>saveTraineeMemo(Number(btn.dataset.id))));
  document.querySelectorAll('.traineeDeleteBtn').forEach(btn=>btn.addEventListener('click',()=>deleteTrainee(Number(btn.dataset.id),decodeURIComponent(btn.dataset.name))));
 }
+async function saveTraineeMemo(id){
+ const el=document.querySelector('.traineeAdminMemo[data-id="'+id+'"]');
+ const memo=(el?.value||'').trim();
+ const r=await fetch('/api/admin/trainees/'+id+'/memo',{method:'PUT',headers:auth(),body:JSON.stringify({memo})});
+ const d=await r.json().catch(()=>({}));
+ if(!r.ok){alert(d.error||'管理メモを保存できませんでした');return}
+ alert('管理メモを保存しました');
+}
+
 async function setOrientationStatus(id,completed){
  if(!confirm('オリエンテーションを「'+(completed?'済':'未')+'」に変更しますか？'))return;
  const r=await fetch('/api/admin/trainees/'+id+'/orientation',{
@@ -2722,7 +2781,15 @@ async function handle(request, env) {
      ORDER BY COALESCE(p.sort_order,0),p.id
    `).bind(key,key,key).all();
 
-   return json({programs:Array.isArray(q?.results)?q.results:[]});
+   const programs=Array.isArray(q?.results)?q.results:[];
+   const completedCount=programs.filter(x=>x.status==="completed").length;
+   const allCompleted=programs.length>0 && completedCount===programs.length;
+   let allCompletedAt="";
+   if(allCompleted){
+     const refreshed=await refreshTraineeFullCompletion(env,Number(profile.id));
+     allCompletedAt=String(refreshed.date||"");
+   }
+   return json({programs,all_completed:allCompleted,all_completed_at:allCompletedAt});
  }
 
  if(path==="/api/trainee/profile" && method==="GET"){
@@ -2733,7 +2800,7 @@ async function handle(request, env) {
    const key=String(profile.discord_id||profile.login_name||profile.player_name||"").trim();
    const q=await env.DB.prepare("SELECT r.id,r.training_id,r.player_name,r.discord_id,r.affiliation,r.note,r.status,r.assigned_instructor,r.preferred_date,r.preferred_time,r.preferred_date2,r.preferred_time2,r.preferred_date3,r.preferred_time3,r.confirmed_date,r.confirmed_time,r.confirmed_preference,t.title FROM reservations r JOIN trainings t ON t.id=r.training_id WHERE lower(trim(COALESCE(r.discord_id,'')))=lower(trim(?)) ORDER BY r.id DESC").bind(key).all();
    const results=Array.isArray(q?.results)?q.results:[];
-   const stats={pending:0,reserved:0,completed:0,absent:0,cancelled:0};
+   const stats={pending:0,reserved:0,completed:0,retake:0,absent:0,cancelled:0};
    for(const x of results)if(stats[x.status]!==undefined)stats[x.status]++;
    return json({profile,stats,history:results});
  }
@@ -2834,7 +2901,7 @@ async function handle(request, env) {
  if(path==="/api/admin/trainees" && method==="GET"){
    await ensureTraineeProfiles(env);
    await ensureTrainingPrograms(env);
-   const {results:profiles}=await env.DB.prepare("SELECT id,player_name,login_name,discord_id,affiliation,rank FROM trainee_profiles ORDER BY player_name COLLATE NOCASE").all();
+   const {results:profiles}=await env.DB.prepare("SELECT id,player_name,login_name,discord_id,affiliation,rank,COALESCE(admin_memo,'') AS admin_memo,COALESCE(all_completed_at,'') AS all_completed_at FROM trainee_profiles ORDER BY player_name COLLATE NOCASE").all();
    const {results:programs}=await env.DB.prepare("SELECT p.training_id,p.name,p.sort_order,COALESCE(t.title,p.name) AS display_name FROM training_programs p LEFT JOIN trainings t ON t.id=p.training_id WHERE p.active=1 AND p.training_id IS NOT NULL ORDER BY p.sort_order,p.id").all();
    const out=[];
    for(const p of (profiles||[])){
@@ -2848,10 +2915,11 @@ async function handle(request, env) {
        if(h?.status==="completed"){completed++;continue}
        current=pr.display_name||pr.name;break;
      }
-     let pending=0,reserved=0,absent=0,cancelled=0;
+     let pending=0,reserved=0,retake=0,absent=0,cancelled=0;
      for(const h of (hist||[])){
        if(h.status==="pending")pending++;
        else if(h.status==="reserved")reserved++;
+       else if(h.status==="retake")retake++;
        else if(h.status==="absent")absent++;
        else if(h.status==="cancelled")cancelled++;
      }
@@ -2859,9 +2927,20 @@ async function handle(request, env) {
      const orientationProgram=(programs||[]).find(pr=>isOrientationTitle(pr.display_name||pr.name));
      const orientationRow=orientationProgram?latest.get(Number(orientationProgram.training_id)):null;
      const orientation_completed=!!(orientationRow && orientationRow.status==="completed");
-     out.push({...p,total:(hist||[]).length,pending,reserved,completed,absent,cancelled,orientation_completed,progress_completed:completed,progress_total:totalPrograms,progress_percent:totalPrograms?Math.round(completed/totalPrograms*100):0,current_training:current});
+     const full=await refreshTraineeFullCompletion(env,p.id);
+     out.push({...p,total:(hist||[]).length,pending,reserved,retake,completed,absent,cancelled,orientation_completed,all_completed:full.completed,all_completed_at:full.date,progress_completed:completed,progress_total:totalPrograms,progress_percent:totalPrograms?Math.round(completed/totalPrograms*100):0,current_training:current});
    }
    return json(out);
+ }
+
+ let traineeMemoMatch=path.match(/^\/api\/admin\/trainees\/(\d+)\/memo$/);
+ if(traineeMemoMatch && method==="PUT"){
+   await ensureTraineeProfiles(env);
+   const b=await request.json().catch(()=>({}));
+   const memo=String(b.memo||"").trim();
+   if(memo.length>5000)return json({error:"管理メモが長すぎます"},400);
+   await env.DB.prepare("UPDATE trainee_profiles SET admin_memo=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(memo,Number(traineeMemoMatch[1])).run();
+   return json({ok:true});
  }
 
  let orientationMatch=path.match(/^\/api\/admin\/trainees\/(\d+)\/orientation$/);
@@ -2913,6 +2992,7 @@ async function handle(request, env) {
      ).run();
    }
 
+   await refreshTraineeFullCompletion(env,Number(orientationMatch[1]));
    return json({ok:true,completed});
  }
 
@@ -3341,7 +3421,7 @@ async function handle(request, env) {
    if(!before)return json({error:"予約が見つかりません"},404);
 
    const b=await request.json().catch(()=>({}));
-   if(!['pending','reserved','completed','absent','cancelled'].includes(b.status))return json({error:"invalid status"},400);
+   if(!['pending','reserved','completed','retake','absent','cancelled'].includes(b.status))return json({error:"invalid status"},400);
 
    const assigned=String(b.assigned_instructor||"").trim();
    const confirmedPreference=Number(b.confirmed_preference||0);
@@ -3430,7 +3510,7 @@ async function handle(request, env) {
        confirmed_datetime:oldDateTime||newDateTime,
        assigned_instructor:oldInstructor||assigned
      });
-   }else if((b.status==="completed" || b.status==="absent") && previousStatus!==b.status){
+   }else if((b.status==="completed" || b.status==="retake" || b.status==="absent") && previousStatus!==b.status){
      dmResult=await sendReservationStatusDM(env,{
        discord_user_id:String(before.discord_id||""),
        status:b.status,
@@ -3439,6 +3519,8 @@ async function handle(request, env) {
        assigned_instructor:assigned
      });
    }
+
+   await refreshTraineeFullCompletionByDiscord(env,String(before.discord_id||""));
 
    return json({
      ok:true,
