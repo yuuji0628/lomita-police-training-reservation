@@ -1,4 +1,4 @@
-const APP_VERSION="1.55";
+const APP_VERSION="1.56";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -1394,6 +1394,36 @@ textarea{min-height:90px}
 .certificateDate{margin-top:14px;font-weight:900}
 .finishedTrainingCard{margin-top:12px;padding:14px;display:flex;gap:12px;align-items:center}
 .finishedTrainingCheck{width:42px;height:42px;border-radius:50%;background:#fff8dc;display:flex;align-items:center;justify-content:center;color:#c89d2d;font-size:24px;font-weight:1000;flex:0 0 auto}
+#adminProgressModal{z-index:90}
+.adminProgressSummary{
+  margin-bottom:12px;padding:12px;border:1px solid #d7ad45;border-radius:14px;background:#fffdf7;
+}
+.adminProgressSummary .name{font-size:18px;font-weight:1000;color:#0d223c}
+.adminProgressSummary .subrow{margin-top:5px;color:#6e7a8b;font-size:12px;font-weight:800}
+.adminProgressLedger{overflow-x:auto;-webkit-overflow-scrolling:touch;border:1px solid #cfd8e4;border-radius:14px;background:#fff}
+.adminProgressTable{border-collapse:collapse;min-width:920px;width:100%;table-layout:fixed}
+.adminProgressTable th,.adminProgressTable td{border:1px solid #19212d;text-align:center;vertical-align:middle;padding:8px 6px}
+.adminProgressTable th{width:110px;background:#f6f8fb;font-weight:1000;color:#0d223c}
+.adminProgressTable td{width:145px}
+.adminProgressStamp{
+  width:74px;height:74px;border-radius:50%;margin:0 auto;
+  border:4px solid #d3a62f;box-shadow:inset 0 0 0 3px #0b2d56,inset 0 0 0 6px #fff5c9;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  color:#0b2d56;font-size:10px;font-weight:1000;line-height:1.05;background:#fffdf6;
+}
+.adminProgressStamp b{font-size:14px;color:#c99720}
+.adminProgressPending{
+  width:70px;height:70px;border-radius:50%;margin:0 auto;
+  border:4px dashed #d7dee8;color:#a9b3c0;display:flex;align-items:center;justify-content:center;
+  font-weight:1000;font-size:14px;
+}
+.adminProgressDate{font-size:11px;font-weight:900;color:#0d223c;margin-top:6px}
+.adminProgressInstructor{font-size:10px;color:#758195;margin-top:3px}
+.adminProgressItem{font-size:12px;font-weight:1000;line-height:1.35;color:#0d223c}
+.adminProgressResult{font-size:10px;margin-top:4px;font-weight:900}
+.adminProgressResult.pass{color:#16834c}
+.adminProgressResult.fail{color:#b42318}
+
 @media(max-width:430px){
  .completionHeroGrid{grid-template-columns:1fr 80px;gap:10px}
  .completionBigSeal{width:76px;height:76px;font-size:23px}
@@ -2080,6 +2110,18 @@ const ADMIN_BODY = `
 
 <div id="resModal" class="modal"><div class="sheet"><button class="btn small" style="float:right" onclick="closeReservations()">閉じる</button><div class="title" id="resTitle">参加者管理</div><div id="resActionMsg"></div>
   <div id="resList"></div></div></div>
+<div id="adminProgressModal" class="modal">
+  <div class="modalCard" style="max-height:92vh;overflow:auto">
+    <div class="between">
+      <div>
+        <span class="goldTag">PROGRESS</span>
+        <div class="title" style="margin-top:5px">研修進捗表</div>
+      </div>
+      <button type="button" class="btn small" onclick="closeAdminProgress()">閉じる</button>
+    </div>
+    <div id="adminProgressBody" style="margin-top:12px"><div class="empty">読み込み中...</div></div>
+  </div>
+</div>
 <div id="traineeModal" class="modal"><div class="sheet">
  <button class="btn small" style="float:right" onclick="closeTraineeDetail()">閉じる</button>
  <span class="badge">TRAINEE</span><div class="title" id="traineeDetailTitle">研修生詳細</div>
@@ -2590,8 +2632,12 @@ function renderTrainees(){
    (x.all_completed?'<div style="margin-top:12px;padding:12px;border:2px solid #d7ad45;border-radius:14px;background:#fff9df"><div style="font-weight:1000;font-size:17px">🏅 全研修修了</div><div class="sub" style="margin-top:4px">修了日：'+esc(String(x.all_completed_at||'').replaceAll('-','/'))+'</div></div>':'')+
    '<div style="margin-top:14px"><div class="between"><b>研修進捗</b><b>'+done+'/'+total+' 完了</b></div><div style="height:10px;background:#e5e7eb;border-radius:999px;overflow:hidden;margin-top:7px"><div style="height:100%;width:'+pct+'%;background:#0b4fa3"></div></div><div class="sub" style="margin-top:7px">'+(x.current_training?'次の研修：'+esc(x.current_training):'全研修修了')+'</div></div><div class="meta"><span>承認待ち '+x.pending+'</span><span>予約 '+x.reserved+'</span><span>再受講 '+x.retake+'</span><span>欠席 '+x.absent+'</span></div>'+
    '<div style="margin-top:12px"><div class="sub" style="font-weight:900">管理メモ（管理者のみ）</div><textarea class="traineeAdminMemo" data-id="'+x.id+'" rows="3" maxlength="5000" placeholder="注意点・指導内容・今後の対応など" style="width:100%;margin-top:6px">'+esc(x.admin_memo||'')+'</textarea><button class="btn small saveTraineeMemoBtn" data-id="'+x.id+'" style="margin-top:6px">管理メモを保存</button></div>'+
-   '<button class="btn small traineeOpenBtn" style="margin-top:8px" data-discord="'+encodeURIComponent(x.discord_id||x.login_name||x.player_name)+'">受講履歴を見る</button></div>';
+   '<div class="row" style="margin-top:8px">'+
+     '<button class="btn small traineeProgressBtn" data-discord="'+encodeURIComponent(x.discord_id||x.login_name||x.player_name)+'">進捗表を見る</button>'+
+     '<button class="btn small traineeOpenBtn" data-discord="'+encodeURIComponent(x.discord_id||x.login_name||x.player_name)+'">受講履歴を見る</button>'+
+   '</div></div>';
  }).join('');
+ document.querySelectorAll('.traineeProgressBtn').forEach(btn=>btn.addEventListener('click',()=>openAdminProgress(decodeURIComponent(btn.dataset.discord))));
  document.querySelectorAll('.traineeOpenBtn').forEach(btn=>btn.addEventListener('click',()=>openTraineeDetail(decodeURIComponent(btn.dataset.discord))));
  document.querySelectorAll('.orientationToggleBtn').forEach(btn=>btn.addEventListener('click',()=>setOrientationStatus(Number(btn.dataset.id),btn.dataset.completed==='1')));
  document.querySelectorAll('.saveTraineeMemoBtn').forEach(btn=>btn.addEventListener('click',()=>saveTraineeMemo(Number(btn.dataset.id))));
@@ -2625,6 +2671,90 @@ async function deleteTrainee(id,name){
  await loadTrainees();
  await loadAdmin();
 }
+function adminProgressStamp(x){
+ const status=String(x.status||'');
+ if(status!=="completed"){
+   return '<div class="adminProgressPending">未</div>';
+ }
+ const date=String(x.completed_at||x.confirmed_date||'').replaceAll('-','/');
+ const instructor=String(x.assigned_instructor||'担当教官');
+ return '<div class="adminProgressStamp"><b>修了印</b><span>'+esc(instructor.slice(0,12))+'</span><span>承認</span></div>'+
+        '<div class="adminProgressDate">'+esc(date||'日付未記録')+'</div>'+
+        '<div class="adminProgressInstructor">'+esc(instructor)+'</div>';
+}
+
+function adminProgressResult(x){
+ const result=String(x.exam_result||'');
+ const score=(x.exam_score===null||x.exam_score===undefined)?'':String(x.exam_score);
+ if(!result && score==='')return '';
+ const label=result==='pass'?'合格':result==='fail'?'不合格':'';
+ return '<div class="adminProgressResult '+(result==='pass'?'pass':result==='fail'?'fail':'')+'">'+
+   (label?'判定：'+label:'')+
+   (score!==''?((label?' ／ ':'')+'得点：'+esc(score)+'点'):'')+
+ '</div>';
+}
+
+async function openAdminProgress(discord){
+ const modal=document.getElementById('adminProgressModal');
+ const body=document.getElementById('adminProgressBody');
+ modal.classList.add('open');
+ body.innerHTML='<div class="empty">読み込み中...</div>';
+
+ try{
+   const r=await fetch('/api/admin/trainee-progress?discord_id='+encodeURIComponent(discord),{
+     headers:auth(),
+     cache:'no-store'
+   });
+   const d=await r.json().catch(()=>({}));
+   if(!r.ok){
+     body.innerHTML='<div class="notice error">'+esc(d.error||'研修進捗表を取得できませんでした')+'</div>';
+     return;
+   }
+
+   const rows=Array.isArray(d.programs)?d.programs:[];
+   if(!rows.length){
+     body.innerHTML='<div class="empty">研修プログラムがありません。</div>';
+     return;
+   }
+
+   const profile=d.profile||{};
+   const summary=
+     '<div class="adminProgressSummary">'+
+       '<div class="name">'+esc(profile.player_name||'研修生')+'</div>'+
+       '<div class="subrow">'+esc([profile.affiliation,profile.rank].filter(Boolean).join(' / ')||'所属・階級 未登録')+'</div>'+
+       '<div class="subrow">進捗：'+Number(d.completed||0)+' / '+Number(d.total||0)+' 修了'+
+         (d.all_completed?'　🏅 全研修修了 '+esc(String(d.all_completed_at||'').replaceAll('-','/')):'')+
+       '</div>'+
+     '</div>';
+
+   const groups=[];
+   for(let i=0;i<rows.length;i+=8)groups.push(rows.slice(i,i+8));
+
+   let ledger='';
+   for(const group of groups){
+     ledger+=
+       '<table class="adminProgressTable">'+
+         '<tr><th>月日<br>修了印</th>'+
+           group.map(x=>'<td>'+adminProgressStamp(x)+'</td>').join('')+
+         '</tr>'+
+         '<tr><th>研修項目名</th>'+
+           group.map(x=>'<td><div class="adminProgressItem">'+esc(x.title||'研修')+'</div>'+adminProgressResult(x)+'</td>').join('')+
+         '</tr>'+
+       '</table>';
+   }
+
+   body.innerHTML=
+     summary+
+     '<div class="adminProgressLedger">'+ledger+'</div>'+
+     '<div class="sub" style="margin-top:8px">横にスワイプして進捗表全体を確認できます。</div>';
+ }catch(_){
+   body.innerHTML='<div class="notice error">研修進捗表を取得できませんでした。再読み込みしてください。</div>';
+ }
+}
+function closeAdminProgress(){
+ document.getElementById('adminProgressModal')?.classList.remove('open');
+}
+
 async function openTraineeDetail(discord){
  const modal=document.getElementById('traineeModal');
  const detail=document.getElementById('traineeDetail');
@@ -3423,6 +3553,88 @@ async function handle(request, env) {
    await env.DB.prepare("DELETE FROM reservations WHERE lower(trim(COALESCE(discord_id,'')))=lower(trim(?))").bind(key).run();
    await env.DB.prepare("DELETE FROM trainee_profiles WHERE id=?").bind(Number(traineeDeleteMatch[1])).run();
    return json({ok:true});
+ }
+
+ if(path==="/api/admin/trainee-progress" && method==="GET"){
+   if(!(await isAdmin()))return json({error:"unauthorized"},401);
+   try{
+     await ensureTraineeProfiles(env);
+     await ensureTrainingPrograms(env);
+     await ensureReservationNotifications(env);
+
+     const key=(url.searchParams.get("discord_id")||"").trim();
+     if(!key)return json({error:"研修生の識別情報が必要です"},400);
+
+     let profile=await env.DB.prepare(`
+       SELECT id,player_name,discord_id,login_name,affiliation,rank,
+              COALESCE(all_completed_at,'') AS all_completed_at
+       FROM trainee_profiles
+       WHERE lower(trim(COALESCE(discord_id,'')))=lower(trim(?))
+          OR lower(trim(COALESCE(login_name,'')))=lower(trim(?))
+          OR lower(trim(COALESCE(player_name,'')))=lower(trim(?))
+       LIMIT 1
+     `).bind(key,key,key).first();
+
+     if(!profile)return json({error:"研修生が見つかりません"},404);
+
+     const canonical=String(profile.discord_id||profile.login_name||profile.player_name||"").trim();
+     const q=await env.DB.prepare(`
+       SELECT
+         p.id AS program_id,
+         p.training_id,
+         COALESCE(t.title,p.name) AS title,
+         COALESCE(r.status,'') AS status,
+         COALESCE(r.completed_at,'') AS completed_at,
+         COALESCE(r.confirmed_date,'') AS confirmed_date,
+         COALESCE(r.confirmed_time,'') AS confirmed_time,
+         COALESCE(r.assigned_instructor,'') AS assigned_instructor,
+         COALESCE(r.exam_result,'') AS exam_result,
+         r.exam_score
+       FROM training_programs p
+       JOIN trainings t ON t.id=p.training_id
+       LEFT JOIN reservations r
+         ON r.id=(
+           SELECT r2.id
+           FROM reservations r2
+           WHERE r2.training_id=p.training_id
+             AND (
+               lower(trim(COALESCE(r2.discord_id,'')))=lower(trim(?))
+               OR lower(trim(COALESCE(r2.player_name,'')))=lower(trim(?))
+             )
+           ORDER BY
+             CASE r2.status
+               WHEN 'completed' THEN 0
+               WHEN 'reserved' THEN 1
+               WHEN 'pending' THEN 2
+               WHEN 'retake' THEN 3
+               WHEN 'absent' THEN 4
+               WHEN 'cancelled' THEN 5
+               ELSE 6
+             END,
+             r2.id DESC
+           LIMIT 1
+         )
+       WHERE COALESCE(p.active,1)=1
+       ORDER BY COALESCE(p.sort_order,0),p.id
+     `).bind(canonical,String(profile.player_name||key)).all();
+
+     const programs=Array.isArray(q?.results)?q.results:[];
+     const completed=programs.filter(x=>String(x.status)==="completed").length;
+     const refreshed=await refreshTraineeFullCompletion(env,Number(profile.id));
+     profile.all_completed_at=refreshed.completed?String(refreshed.date||profile.all_completed_at||""):"";
+
+     return json({
+       profile,
+       programs,
+       completed,
+       total:programs.length,
+       all_completed:refreshed.completed,
+       all_completed_at:profile.all_completed_at
+     });
+   }catch(err){
+     console.error("admin trainee progress error",err);
+     return json({error:"研修進捗表の取得中にエラーが発生しました"},500);
+   }
  }
 
  if(path==="/api/admin/trainee-history" && method==="GET"){
