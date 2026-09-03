@@ -1,4 +1,4 @@
-const APP_VERSION="1.58";
+const APP_VERSION="1.59";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -150,6 +150,9 @@ async function ensureReservationNotifications(env){
     }
     if(!cols.includes("exam_score")){
       try{await env.DB.prepare("ALTER TABLE reservations ADD COLUMN exam_score INTEGER").run()}catch(_){}
+    }
+    if(!cols.includes("pending_announce_sent_at")){
+      try{await env.DB.prepare("ALTER TABLE reservations ADD COLUMN pending_announce_sent_at TEXT DEFAULT ''").run()}catch(_){}
     }
   }catch(_){}
 }
@@ -322,6 +325,53 @@ async function sendReservationStatusDM(env,payload){
     ]);
   }
   return {ok:false,skipped:true,reason:"unsupported_status"};
+}
+
+async function sendPendingApprovalDiscordAnnouncement(env,rows){
+  const webhook=String(env.DISCORD_TRAINING_WEBHOOK_URL||"").trim();
+  if(!webhook || !rows?.length)return {ok:false,skipped:true};
+
+  const roleId=String(env.DISCORD_TRAINING_ROLE_ID||"").trim();
+  const validRoleId=/^\d{15,25}$/.test(roleId);
+
+  const fields=rows.slice(0,10).map((r,i)=>({
+    name:(i+1)+". "+String(r.training_title||"研修"),
+    value:
+      "研修生："+String(r.player_name||"研修生")+
+      "\n第1希望："+[r.preferred_date,r.preferred_time].filter(Boolean).join(" ")+
+      (r.preferred_date2?"\n第2希望："+[r.preferred_date2,r.preferred_time2].filter(Boolean).join(" "):"")+
+      (r.preferred_date3?"\n第3希望："+[r.preferred_date3,r.preferred_time3].filter(Boolean).join(" "):""),
+    inline:false
+  }));
+
+  const body={
+    username:"LOMITA POLICE 研修管理",
+    content:validRoleId
+      ?"<@&"+roleId+"> 承認待ちの研修申請があります。担当教官がまだ決まっていません。"
+      :"承認待ちの研修申請があります。担当教官がまだ決まっていません。",
+    allowed_mentions:validRoleId?{parse:[],roles:[roleId]}:{parse:[]},
+    embeds:[{
+      title:"⚠️ 研修申請 承認待ち",
+      description:
+        "まだ担当教官が決まっていない申請があります。\n管理画面から確認・承認をお願いします。\n\n"+
+        "🔗 [管理画面を開く](https://lomita-police-training-reservation.rrwpvwmz8p.workers.dev/admin)",
+      color:13610549,
+      fields,
+      timestamp:new Date().toISOString(),
+      footer:{text:"LOMITA POLICE TRAINING"}
+    }]
+  };
+
+  try{
+    const r=await fetch(webhook,{
+      method:"POST",
+      headers:{"content-type":"application/json"},
+      body:JSON.stringify(body)
+    });
+    return {ok:r.ok,status:r.status};
+  }catch(_){
+    return {ok:false,status:0};
+  }
 }
 
 async function sendTrainingApplicationDiscordNotification(env,payload){
@@ -4002,6 +4052,12 @@ async function handle(request, env) {
    return json({ok:true});
  }
 
+ if(path==="/api/admin/pending-approval-announcement/run" && method==="POST"){
+   if(!(await isAdmin()))return json({error:"unauthorized"},401);
+   const result=await runPendingApprovalAnnouncement(env);
+   return json({ok:true,...result});
+ }
+
  if(path==="/api/admin/discord-reminder-today/run" && method==="POST"){
    if(!(await isAdmin()))return json({error:"unauthorized"},401);
    const result=await runSameDayReminder(env);
@@ -4386,6 +4442,13 @@ async function handle(request, env) {
          exam_score=NULL
      WHERE id=?
    `).bind(reservationId).run();
+
+   if(b.status!=="pending"){
+     try{
+       await env.DB.prepare("UPDATE reservations SET pending_announce_sent_at='' WHERE id=?")
+         .bind(reservationId).run();
+     }catch(_){}
+   }
 
    await refreshTraineeFullCompletionByDiscord(env,String(before.discord_id||""));
 
@@ -4789,6 +4852,46 @@ async function runSameDayReminder(env){
   return {date:today,total:rows.length,sent,failed};
 }
 
+async function runPendingApprovalAnnouncement(env){
+  await ensureReservationInstructor(env);
+  await ensureReservationPreferredSchedule(env);
+  await ensureReservationNotifications(env);
+
+  const cutoff=new Date(Date.now()-3*60*60*1000).toISOString();
+
+  const q=await env.DB.prepare(`
+    SELECT
+      r.id,r.player_name,r.preferred_date,r.preferred_time,
+      r.preferred_date2,r.preferred_time2,r.preferred_date3,r.preferred_time3,
+      COALESCE(t.title,'研修') AS training_title,
+      COALESCE(r.pending_announce_sent_at,'') AS pending_announce_sent_at
+    FROM reservations r
+    LEFT JOIN trainings t ON t.id=r.training_id
+    WHERE r.status='pending'
+      AND trim(COALESCE(r.assigned_instructor,''))=''
+      AND (
+        COALESCE(r.pending_announce_sent_at,'')=''
+        OR r.pending_announce_sent_at<=?
+      )
+    ORDER BY r.id ASC
+    LIMIT 10
+  `).bind(cutoff).all();
+
+  const rows=Array.isArray(q?.results)?q.results:[];
+  if(!rows.length)return {ok:true,total:0,sent:0};
+
+  const result=await sendPendingApprovalDiscordAnnouncement(env,rows);
+  if(!result.ok)return {ok:false,total:rows.length,sent:0,status:result.status||0};
+
+  const sentAt=new Date().toISOString();
+  for(const row of rows){
+    await env.DB.prepare("UPDATE reservations SET pending_announce_sent_at=? WHERE id=?")
+      .bind(sentAt,Number(row.id)).run();
+  }
+
+  return {ok:true,total:rows.length,sent:rows.length};
+}
+
 async function runTrainingReminder(env){
   await ensureReservationPreferredSchedule(env);
   await ensureReservationNotifications(env);
@@ -4840,6 +4943,7 @@ async function scheduled(event,env,ctx){
   const task=(async()=>{
     await runTrainingReminder(env);
     await runSameDayReminder(env);
+    await runPendingApprovalAnnouncement(env);
   })();
   if(ctx && typeof ctx.waitUntil==="function")ctx.waitUntil(task);
   else await task;
