@@ -1,4 +1,4 @@
-const APP_VERSION="1.29";
+const APP_VERSION="1.30";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -992,7 +992,6 @@ textarea{min-height:90px}
   margin-top:6px;
 }
 .adminStatusBtn{
-  appearance:none;
   border:1px solid #cfd8e4;
   background:#fff;
   color:#23384f;
@@ -1001,30 +1000,10 @@ textarea{min-height:90px}
   padding:8px 6px;
   font-size:11px;
   font-weight:900;
-  line-height:1.15;
-  text-align:center;
 }
-.adminStatusBtn.active[data-status="reserved"]{
-  background:#0a2b50;
-  color:#fff;
-  border-color:#0a2b50;
-  box-shadow:0 2px 7px rgba(10,43,80,.18);
-}
-.adminStatusBtn.active[data-status="completed"]{
-  background:#16834c;
-  color:#fff;
-  border-color:#16834c;
-  box-shadow:0 2px 7px rgba(22,131,76,.18);
-}
-.adminStatusBtn.active[data-status="absent"]{
-  background:#b42318;
-  color:#fff;
-  border-color:#b42318;
-  box-shadow:0 2px 7px rgba(180,35,24,.18);
-}
-@media(max-width:420px){
-  .adminStatusBtn{font-size:10px;min-height:42px;padding:7px 4px}
-}
+.adminStatusBtn.active[data-status="reserved"]{background:#0a2b50;color:#fff;border-color:#0a2b50}
+.adminStatusBtn.active[data-status="completed"]{background:#16834c;color:#fff;border-color:#16834c}
+.adminStatusBtn.active[data-status="absent"]{background:#b42318;color:#fff;border-color:#b42318}
 
 </style></head><body>${body}<script>${script}</script></body></html>`, {headers:{"content-type":"text/html; charset=utf-8"}});
 
@@ -1585,7 +1564,7 @@ async function loadReservationControl(){
        '</div>'+
      '</div>'+
      '<div class="field" style="margin-top:12px"><label>承認する日時</label><select id="reservationPreference_'+x.id+'"><option value="">希望日時を選択</option>'+preferenceOptions+'</select></div>'+
-     '<div class="field"><label>状態</label>'+reservationStatusButtons(x.id,x.status)+'</div>'+
+     '<div class="field"><label>状態</label>'+renderReservationStatusButtons(x.id,x.status)+'</div>'+
      '<div class="field"><label>担当教官</label><select id="reservationInstructor_'+x.id+'">'+instructorOptions+'</select></div>'+
      '<button class="btn primary" style="width:100%" type="button" onclick="saveReservationFromList('+Number(x.id)+')">変更を保存</button>'+
      (x.note?'<div class="sub" style="margin-top:8px">備考：'+esc(x.note)+'</div>':'')+
@@ -1593,25 +1572,30 @@ async function loadReservationControl(){
  }).join('');
 }
 
-function setReservationStatusButton(id,status){
+function chooseReservationStatus(id,status){
  const hidden=document.getElementById('reservationStatus_'+id);
- if(hidden)hidden.value=status;
- document.querySelectorAll('.adminStatusBtn[data-id="'+id+'"]').forEach(btn=>{
+ if(hidden) hidden.value=status;
+ document.querySelectorAll('.adminStatusBtn[data-reservation-id="'+id+'"]').forEach(btn=>{
    btn.classList.toggle('active',btn.dataset.status===status);
  });
 }
-function reservationStatusButtons(id,currentStatus){
- const options=[
-   ['reserved','予約確定'],
-   ['completed','受講済み'],
-   ['absent','欠席']
- ];
+function renderReservationStatusButtons(id,currentStatus){
  const normalized=['reserved','completed','absent'].includes(currentStatus)?currentStatus:'reserved';
  return '<input type="hidden" id="reservationStatus_'+id+'" value="'+esc(normalized)+'">'+
    '<div class="adminStatusButtons">'+
-   options.map(([value,label])=>'<button type="button" class="adminStatusBtn '+(normalized===value?'active':'')+'" data-id="'+id+'" data-status="'+value+'" onclick="setReservationStatusButton('+id+',\\''+value+'\\')">'+label+'</button>').join('')+
+     '<button type="button" class="adminStatusBtn '+(normalized==='reserved'?'active':'')+'" data-reservation-id="'+id+'" data-status="reserved">予約確定</button>'+
+     '<button type="button" class="adminStatusBtn '+(normalized==='completed'?'active':'')+'" data-reservation-id="'+id+'" data-status="completed">受講済み</button>'+
+     '<button type="button" class="adminStatusBtn '+(normalized==='absent'?'active':'')+'" data-reservation-id="'+id+'" data-status="absent">欠席</button>'+
    '</div>';
 }
+
+document.addEventListener('click',e=>{
+ const btn=e.target.closest?.('.adminStatusBtn');
+ if(!btn)return;
+ const id=Number(btn.dataset.reservationId||0);
+ const status=String(btn.dataset.status||'');
+ if(id&&status)chooseReservationStatus(id,status);
+});
 
 async function saveReservationFromList(id){
  const statusEl=document.getElementById('reservationStatus_'+id);
@@ -1892,7 +1876,7 @@ async function loadReservations(){
    (x.note?'<div class="sub" style="margin-top:6px">備考：'+esc(x.note)+'</div>':'')+
    (x.status==='pending'?'<div class="field" style="margin:10px 0"><label>承認する日時</label><select id="reservationPreference_'+x.id+'"><option value="">希望日時を選択</option>'+choices+'</select></div>':'')+
    '<div class="field" style="margin:10px 0"><label>担当教官</label><select id="reservationInstructor_'+x.id+'"><option value="">担当教官を選択</option>'+instructorRows.map(i=>'<option value="'+esc(i.name)+'" '+(x.assigned_instructor===i.name?'selected':'')+'>'+esc(i.name)+'</option>').join('')+'</select></div><div class="statusButtons">'+
-   (x.status==='pending'?'<button class="btn primary small statusBtn" data-id="'+x.id+'" data-status="reserved">予約確定</button>':'')+
+   (x.status==='pending'?'<button class="btn primary small statusBtn" data-id="'+x.id+'" data-status="reserved">日時を選んで承認</button>':'')+
    '<button class="btn small statusBtn" data-id="'+x.id+'" data-status="completed">受講済み</button><button class="btn small statusBtn" data-id="'+x.id+'" data-status="absent">欠席</button><button class="btn danger small statusBtn" data-id="'+x.id+'" data-status="cancelled">取消</button><button class="btn danger small hardDeleteReservationBtn" data-id="'+x.id+'">申請を完全削除</button></div></div>';
  }).join('');
  document.querySelectorAll('.statusBtn').forEach(btn=>btn.addEventListener('click',()=>setStatus(Number(btn.dataset.id),btn.dataset.status)));
