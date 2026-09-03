@@ -1,4 +1,4 @@
-const APP_VERSION="1.38";
+const APP_VERSION="1.39";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -108,6 +108,12 @@ async function ensureReservationNotifications(env){
     }
     if(!cols.includes("completed_at")){
       try{await env.DB.prepare("ALTER TABLE reservations ADD COLUMN completed_at TEXT DEFAULT ''").run()}catch(_){}
+    }
+    if(!cols.includes("same_day_reminder_sent_at")){
+      try{await env.DB.prepare("ALTER TABLE reservations ADD COLUMN same_day_reminder_sent_at TEXT DEFAULT ''").run()}catch(_){}
+    }
+    if(!cols.includes("instructor_reminder_sent_at")){
+      try{await env.DB.prepare("ALTER TABLE reservations ADD COLUMN instructor_reminder_sent_at TEXT DEFAULT ''").run()}catch(_){}
     }
   }catch(_){}
 }
@@ -269,9 +275,17 @@ async function ensureInstructors(env) {
     CREATE TABLE IF NOT EXISTS instructors (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+      discord_user_id TEXT DEFAULT '',
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
   `).run();
+  try{
+    const q=await env.DB.prepare("PRAGMA table_info(instructors)").all();
+    const cols=(q.results||[]).map(x=>String(x.name||""));
+    if(!cols.includes("discord_user_id")){
+      try{await env.DB.prepare("ALTER TABLE instructors ADD COLUMN discord_user_id TEXT DEFAULT ''").run()}catch(_){}
+    }
+  }catch(_){}
 }
 
 async function ensureTrainingPrograms(env) {
@@ -1492,7 +1506,7 @@ const ADMIN_BODY = `
    <div class="card">
      <div class="title" style="font-size:16px">教官を登録</div>
      <div class="sub" style="margin:6px 0 12px">ここで登録した教官を研修の担当者として選べます。</div>
-     <div class="field"><label>教官名 *</label><input id="instructorName" maxlength="80" placeholder="教官名を入力"></div>
+     <div class="field"><label>教官名 *</label><input id="instructorName" maxlength="80" placeholder="教官名を入力"><input id="instructorDiscordId" inputmode="numeric" placeholder="DiscordユーザーID（任意）" style="margin-top:8px"></div>
      <button id="createInstructorBtn" class="btn primary" type="button" style="width:100%">教官を登録</button>
      <div id="instructorMsg"></div>
    </div>
@@ -1902,7 +1916,8 @@ async function loadInstructors(){
 function renderInstructors(){
  const e=document.getElementById('instructorList');
  if(!instructorRows.length){e.innerHTML='<div class="empty">まだ教官は登録されていません。</div>';return}
- e.innerHTML=instructorRows.map(x=>'<div class="card"><div class="between"><div><div class="title">'+esc(x.name)+'</div><div class="sub">登録済み教官</div></div><button class="btn small danger" data-delete-instructor="'+x.id+'">削除</button></div></div>').join('');
+ e.innerHTML=instructorRows.map(x=>'<div class="card"><div class="between"><div style="min-width:0;flex:1"><div class="title">'+esc(x.name)+'</div><div class="sub">Discord通知：'+(x.discord_user_id?'設定済み':'未設定')+'</div><div style="display:flex;gap:6px;margin-top:8px"><input data-instructor-discord="'+x.id+'" inputmode="numeric" placeholder="DiscordユーザーID" value="'+esc(x.discord_user_id||'')+'" style="min-width:0;flex:1"><button class="btn small" data-save-instructor-discord="'+x.id+'">保存</button></div></div><button class="btn small danger" data-delete-instructor="'+x.id+'">削除</button></div></div>').join('');
+ document.querySelectorAll('[data-save-instructor-discord]').forEach(b=>b.addEventListener('click',()=>saveInstructorDiscord(Number(b.dataset.saveInstructorDiscord))));
  document.querySelectorAll('[data-delete-instructor]').forEach(b=>b.addEventListener('click',()=>deleteInstructor(Number(b.dataset.deleteInstructor))));
 }
 function refreshInstructorSelect(selected){
@@ -1913,17 +1928,27 @@ function refreshInstructorSelect(selected){
 }
 async function createInstructor(){
  const name=document.getElementById('instructorName').value.trim();
+ const discord_user_id=(document.getElementById('instructorDiscordId')?.value||'').trim();
  if(!name){noticeInAdmin('instructorMsg','教官名を入力してください','error');return}
  const btn=document.getElementById('createInstructorBtn');btn.disabled=true;btn.textContent='登録中...';
  try{
-   const r=await fetch('/api/admin/instructors',{method:'POST',headers:auth(),body:JSON.stringify({name})});
+   const r=await fetch('/api/admin/instructors',{method:'POST',headers:auth(),body:JSON.stringify({name,discord_user_id})});
    const d=await r.json().catch(()=>({}));
    if(!r.ok){noticeInAdmin('instructorMsg',d.error||'登録できませんでした','error');return}
-   document.getElementById('instructorName').value='';
+   document.getElementById('instructorName').value=''; if(document.getElementById('instructorDiscordId'))document.getElementById('instructorDiscordId').value='';
    noticeInAdmin('instructorMsg','教官を登録しました','success');
    await loadInstructors();
  }finally{btn.disabled=false;btn.textContent='教官を登録'}
 }
+async function saveInstructorDiscord(id){
+ const input=document.querySelector('[data-instructor-discord="'+id+'"]');
+ const discord_user_id=(input?.value||'').trim();
+ const r=await fetch('/api/admin/instructors/'+id,{method:'PATCH',headers:auth(),body:JSON.stringify({discord_user_id})});
+ const d=await r.json().catch(()=>({}));
+ if(!r.ok){alert(d.error||'DiscordユーザーIDを保存できませんでした');return}
+ await loadInstructors();
+}
+
 async function deleteInstructor(id){
  if(!confirm('この教官を削除しますか？\\n既存研修の担当者名はそのまま残ります。'))return;
  const r=await fetch('/api/admin/instructors/'+id,{method:'DELETE',headers:auth()});
@@ -2706,6 +2731,12 @@ async function handle(request, env) {
    return json({profile,stats,history:results});
  }
 
+ if(path==="/api/admin/discord-reminder-today/run" && method==="POST"){
+   if(!(await isAdmin()))return json({error:"unauthorized"},401);
+   const result=await runSameDayAndInstructorReminder(env);
+   return json({ok:true,...result});
+ }
+
  if(path==="/api/admin/discord-reminder/run" && method==="POST"){
    if(!(await isAdmin()))return json({error:"unauthorized"},401);
    const result=await runTrainingReminder(env);
@@ -2786,7 +2817,7 @@ async function handle(request, env) {
 
  if(path==="/api/admin/instructors" && method==="GET"){
    await ensureInstructors(env);
-   const {results}=await env.DB.prepare("SELECT id,name,created_at FROM instructors ORDER BY name COLLATE NOCASE").all();
+   const {results}=await env.DB.prepare("SELECT id,name,COALESCE(discord_user_id,'') AS discord_user_id,created_at FROM instructors ORDER BY name COLLATE NOCASE").all();
    return json(results);
  }
 
@@ -2794,9 +2825,11 @@ async function handle(request, env) {
    await ensureInstructors(env);
    const b=await request.json().catch(()=>({}));
    const name=String(b.name||"").trim();
+   const discordUserId=String(b.discord_user_id||"").trim();
    if(!name)return json({error:"教官名は必須です"},400);
+   if(discordUserId && !/^\d{15,25}$/.test(discordUserId))return json({error:"DiscordユーザーIDの形式が正しくありません"},400);
    try{
-     const r=await env.DB.prepare("INSERT INTO instructors(name) VALUES(?)").bind(name).run();
+     const r=await env.DB.prepare("INSERT INTO instructors(name,discord_user_id) VALUES(?,?)").bind(name,discordUserId).run();
      return json({ok:true,id:r.meta?.last_row_id||null},201);
    }catch(e){
      const message=String(e?.message||e);
@@ -2806,6 +2839,14 @@ async function handle(request, env) {
  }
 
  let im=path.match(/^\/api\/admin\/instructors\/(\d+)$/);
+ if(im && method==="PATCH"){
+   await ensureInstructors(env);
+   const b=await request.json().catch(()=>({}));
+   const discordUserId=String(b.discord_user_id||"").trim();
+   if(discordUserId && !/^\d{15,25}$/.test(discordUserId))return json({error:"DiscordユーザーIDの形式が正しくありません"},400);
+   await env.DB.prepare("UPDATE instructors SET discord_user_id=? WHERE id=?").bind(discordUserId,Number(im[1])).run();
+   return json({ok:true});
+ }
  if(im && method==="DELETE"){
    await ensureInstructors(env);
    await env.DB.prepare("DELETE FROM instructors WHERE id=?").bind(Number(im[1])).run();
@@ -3343,6 +3384,87 @@ if(path==="/api/admin/github/upload-worker" && method==="POST"){
 }
 
 
+function jstParts(date=new Date()){
+  const j=new Date(date.getTime()+9*60*60*1000);
+  return {
+    y:j.getUTCFullYear(),
+    m:String(j.getUTCMonth()+1).padStart(2,"0"),
+    d:String(j.getUTCDate()).padStart(2,"0")
+  };
+}
+
+async function runSameDayAndInstructorReminder(env){
+  await ensureReservationPreferredSchedule(env);
+  await ensureReservationNotifications(env);
+  await ensureInstructors(env);
+
+  const now=Date.now();
+  const p=jstParts(new Date(now));
+  const today=`${p.y}-${p.m}-${p.d}`;
+
+  const q=await env.DB.prepare(`
+    SELECT r.id,r.discord_id,r.confirmed_date,r.confirmed_time,r.assigned_instructor,
+           r.same_day_reminder_sent_at,r.instructor_reminder_sent_at,t.title,
+           COALESCE(i.discord_user_id,'') AS instructor_discord_user_id
+    FROM reservations r
+    LEFT JOIN trainings t ON t.id=r.training_id
+    LEFT JOIN instructors i ON lower(trim(i.name))=lower(trim(r.assigned_instructor))
+    WHERE r.status='reserved'
+      AND r.confirmed_date=?
+      AND COALESCE(r.confirmed_time,'')<>''
+    ORDER BY r.confirmed_time,r.id
+  `).bind(today).all();
+
+  const rows=Array.isArray(q?.results)?q.results:[];
+  let traineeSent=0,instructorSent=0,failed=0;
+
+  for(const r of rows){
+    const parts=String(r.confirmed_time||"").split(":");
+    const hh=Number(parts[0]), mm=Number(parts[1]);
+    if(!Number.isFinite(hh)||!Number.isFinite(mm))continue;
+
+    const targetUtc=Date.UTC(Number(p.y),Number(p.m)-1,Number(p.d),hh-9,mm,0);
+    const diff=targetUtc-now;
+
+    if(diff>0 && diff<=2*60*60*1000){
+      if(!String(r.same_day_reminder_sent_at||"")){
+        const tr=await sendDiscordDM(env,String(r.discord_id||""),[
+          "🔔 **本日の研修リマインドです**",
+          "",
+          "**研修**："+String(r.title||"研修"),
+          "**日時**："+[r.confirmed_date,r.confirmed_time].filter(Boolean).join(" "),
+          "**担当教官**："+String(r.assigned_instructor||"未設定"),
+          "",
+          "開始時刻が近づいています。時間に余裕を持ってご参加ください。"
+        ]);
+        if(tr.ok){
+          traineeSent++;
+          await env.DB.prepare("UPDATE reservations SET same_day_reminder_sent_at=? WHERE id=?")
+            .bind(new Date().toISOString(),Number(r.id)).run();
+        }else failed++;
+      }
+
+      if(!String(r.instructor_reminder_sent_at||"") && String(r.instructor_discord_user_id||"")){
+        const ir=await sendDiscordDM(env,String(r.instructor_discord_user_id||""),[
+          "👮 **担当研修の事前通知です**",
+          "",
+          "**研修**："+String(r.title||"研修"),
+          "**日時**："+[r.confirmed_date,r.confirmed_time].filter(Boolean).join(" "),
+          "",
+          "約2時間以内に担当研修があります。ご確認ください。"
+        ]);
+        if(ir.ok){
+          instructorSent++;
+          await env.DB.prepare("UPDATE reservations SET instructor_reminder_sent_at=? WHERE id=?")
+            .bind(new Date().toISOString(),Number(r.id)).run();
+        }else failed++;
+      }
+    }
+  }
+
+  return {date:today,total:rows.length,trainee_sent:traineeSent,instructor_sent:instructorSent,failed};
+}
+
 async function runTrainingReminder(env){
   await ensureReservationPreferredSchedule(env);
   await ensureReservationNotifications(env);
@@ -3391,7 +3513,10 @@ async function runTrainingReminder(env){
 }
 
 async function scheduled(event,env,ctx){
-  const task=runTrainingReminder(env);
+  const task=(async()=>{
+    await runTrainingReminder(env);
+    await runSameDayAndInstructorReminder(env);
+  })();
   if(ctx && typeof ctx.waitUntil==="function")ctx.waitUntil(task);
   else await task;
 }
