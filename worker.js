@@ -1,4 +1,4 @@
-const APP_VERSION="1.24";
+const APP_VERSION="1.25";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -924,6 +924,106 @@ textarea{min-height:90px}
  .ledgerCell .itemTitle{font-size:8px;max-width:70px}
 }
 
+
+/* Version 1.25: mobile-first training ledger cards */
+.mobileLedger{
+  display:grid;
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:8px;
+  margin-top:8px;
+}
+.mobileLedgerCard{
+  position:relative;
+  background:#fff;
+  border:1px solid #d9e1ea;
+  border-radius:12px;
+  min-height:118px;
+  padding:10px 54px 9px 10px;
+  box-shadow:0 2px 7px rgba(10,34,61,.05);
+  overflow:hidden;
+}
+.mobileLedgerCard.done{
+  border-left:4px solid #d6ae35;
+  background:#fffdf7;
+}
+.mobileLedgerNo{
+  font-size:9px;
+  font-weight:900;
+  color:#7c8898;
+  letter-spacing:.3px;
+  margin-bottom:4px;
+}
+.mobileLedgerTitle{
+  font-size:12px;
+  line-height:1.3;
+  font-weight:950;
+  color:#0d223c;
+  word-break:break-word;
+}
+.mobileLedgerState{
+  margin-top:7px;
+  display:inline-flex;
+  align-items:center;
+  gap:4px;
+  font-size:9px;
+  font-weight:900;
+  padding:4px 7px;
+  border-radius:999px;
+}
+.mobileLedgerState.done{background:#eef8f1;color:#187a42;border:1px solid #c7e8d2}
+.mobileLedgerState.pending{background:#f4f6f8;color:#7c8796;border:1px solid #dde3ea}
+.mobileLedgerTeacher{
+  margin-top:5px;
+  font-size:8px;
+  line-height:1.25;
+  color:#6d7888;
+  word-break:break-word;
+}
+.mobileLedgerStampSlot{
+  position:absolute;
+  right:7px;
+  top:50%;
+  transform:translateY(-50%);
+  width:46px;
+  height:46px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+}
+.mobileLedger .ledgerStampMini{
+  width:44px!important;
+  height:44px!important;
+}
+.mobileLedgerEmptyStamp{
+  width:40px;
+  height:40px;
+  border:1.5px dashed #d3dae3;
+  border-radius:50%;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  color:#aab3bf;
+  font-size:8px;
+  background:#fafbfc;
+}
+.mobileLedgerSummary{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  gap:8px;
+  padding:8px 10px;
+  border:1px solid #d9e1ea;
+  border-radius:10px;
+  background:#f8fafc;
+  font-size:10px;
+  color:#667386;
+}
+.mobileLedgerSummary b{color:#0d223c}
+@media(max-width:390px){
+  .mobileLedger{grid-template-columns:1fr}
+  .mobileLedgerCard{min-height:96px}
+}
+
 </style></head><body>${body}<script>${script}</script></body></html>`, {headers:{"content-type":"text/html; charset=utf-8"}});
 
 
@@ -1112,55 +1212,25 @@ async function loadProgress(){
    }
    const completed=rows.filter(p=>p.status==='completed').length;
    const traineeName=(window.myProfile&&window.myProfile.player_name)||'研修生';
-   const perRow=8;
-   const groups=[];
-   for(let i=0;i<rows.length;i+=perRow)groups.push(rows.slice(i,i+perRow));
-
-   const makeCells=(group,offset)=>{
-     const filled=[...group];
-     while(filled.length<perRow)filled.push(null);
-
-     const stampRow=
-       '<div class="ledgerCell label">月日<br>指導員印</div>'+
-       filled.map((p,j)=>{
-         if(!p)return '<div class="ledgerCell empty">—</div>';
-         const done=p.status==='completed';
-         return '<div class="ledgerCell item '+(done?'done':'pending')+'">'+
-           '<div class="itemNo">'+(offset+j+1)+'</div>'+
-           (done?ledgerStamp(p.assigned_instructor):'<span style="color:#b6bec9">未修了</span>')+
-         '</div>';
-       }).join('');
-
-     const itemRow=
-       '<div class="ledgerCell label">研修項目名</div>'+
-       filled.map((p,j)=>{
-         if(!p)return '<div class="ledgerCell empty">—</div>';
-         return '<div class="ledgerCell item">'+
-           '<div class="itemTitle">'+esc(p.title||('研修 '+(offset+j+1)))+'</div>'+
-           (p.status==='completed'?'<div class="itemTeacher">'+esc(p.assigned_instructor||'')+'</div>':'')+
-         '</div>';
-       }).join('');
-
-     const statusRow=
-       '<div class="ledgerCell label">修了状況</div>'+
-       filled.map(p=>{
-         if(!p)return '<div class="ledgerCell empty">—</div>';
-         return '<div class="ledgerCell">'+(p.status==='completed'?'修了':'未修了')+'</div>';
-       }).join('');
-
-     return stampRow+itemRow+statusRow;
-   };
 
    el.innerHTML=
-    '<div class="ledgerScroll">'+
-      '<div class="ledgerPaper">'+
-        '<div class="ledgerTop">'+
-          '<div><b>研修原簿</b>　研修生：'+esc(traineeName)+'</div>'+
-          '<div>修了 '+completed+' / '+rows.length+'</div>'+
-        '</div>'+
-        groups.map((g,idx)=>'<div class="ledgerTable">'+makeCells(g,idx*perRow)+'</div>').join('')+
-        '<div class="ledgerLegend">横にスワイプして原簿全体を確認できます。</div>'+
-      '</div>'+
+    '<div class="mobileLedgerSummary">'+
+      '<span>研修生：<b>'+esc(traineeName)+'</b></span>'+
+      '<span>修了：<b>'+completed+' / '+rows.length+'</b></span>'+
+    '</div>'+
+    '<div class="mobileLedger">'+
+      rows.map((p,i)=>{
+        const done=p.status==='completed';
+        return '<div class="mobileLedgerCard '+(done?'done':'')+'">'+
+          '<div class="mobileLedgerNo">項目 '+(i+1)+'</div>'+
+          '<div class="mobileLedgerTitle">'+esc(p.title||('研修 '+(i+1)))+'</div>'+
+          '<div class="mobileLedgerState '+(done?'done':'pending')+'">'+(done?'修了':'未修了')+'</div>'+
+          (done?'<div class="mobileLedgerTeacher">担当：'+esc(p.assigned_instructor||'未設定')+'</div>':'')+
+          '<div class="mobileLedgerStampSlot">'+
+            (done?ledgerStamp(p.assigned_instructor):'<div class="mobileLedgerEmptyStamp">印</div>')+
+          '</div>'+
+        '</div>';
+      }).join('')+
     '</div>' }catch(_){
    el.innerHTML='<div class="notice error">進捗を取得できませんでした。</div>';
  }
@@ -1179,7 +1249,7 @@ async function loadMyPage(){
     '<div><div class="compactUserName">'+esc(d.profile.player_name||'研修生')+'</div><div class="compactUserSub">ログイン中</div></div>'+
   '</div>'+
   '<div class="dashboardProgressBox">'+
-    '<div class="dashboardProgressHead"><div class="dashboardProgressTitle">研修原簿</div><div class="sub">教習原簿形式</div></div>'+
+    '<div class="dashboardProgressHead"><div class="dashboardProgressTitle">研修原簿</div><div class="sub">スマホ表示</div></div>'+
     '<div id="trainingProgressList" class="trainingProgressGrid"><div class="empty">進捗を読み込み中...</div></div>'+
   '</div>';
  loadProgress();
