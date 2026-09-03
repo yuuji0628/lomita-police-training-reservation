@@ -1,4 +1,4 @@
-const APP_VERSION="1.66";
+const APP_VERSION="1.67";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -1041,6 +1041,56 @@ textarea{min-height:90px}
 #traineeApp .meta{margin:5px 0;font-size:12px}
 #traineeApp .pill{padding:4px 8px;font-size:11px}
 
+
+/* Admin command dashboard - v1.67 */
+.adminCommand{
+  margin:12px 0 16px;
+  padding:12px;
+  border:1px solid #cad7e6;
+  border-radius:17px;
+  background:linear-gradient(180deg,#f9fbfe,#eef4fa);
+}
+.adminCommandHead{display:flex;align-items:flex-end;justify-content:space-between;gap:8px;margin-bottom:10px}
+.adminCommandTitle{font-size:17px;font-weight:1000;color:#0d223c}
+.adminCommandSub{font-size:10px;color:#738096;font-weight:800;margin-top:2px}
+.adminDashGrid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}
+.adminDashTile{
+  appearance:none;-webkit-appearance:none;
+  border:1px solid #c7d4e3;
+  border-radius:14px;
+  background:#fff;
+  padding:11px;
+  min-height:86px;
+  text-align:left;
+  box-shadow:0 3px 10px rgba(18,48,79,.05);
+}
+.adminDashTile:active{transform:scale(.985)}
+.adminDashTile .label{font-size:11px;font-weight:900;color:#68778b}
+.adminDashTile .num{font-size:27px;font-weight:1000;color:#0b2d56;line-height:1.05;margin-top:6px}
+.adminDashTile .hint{font-size:9px;color:#8a96a7;margin-top:4px;font-weight:800}
+.adminDashTile.alert{border-color:#e0b954;background:#fffdf5}
+.adminDashTile.alert .num{color:#9a6700}
+.adminDashTile.good{border-color:#d7ad45;background:#fffaf0}
+.adminDashTile.good .num{color:#8b6715}
+.adminDashSectionTitle{font-size:12px;font-weight:1000;color:#0d223c;margin:13px 2px 7px}
+.adminMiniGrid{display:grid;grid-template-columns:repeat(2,1fr);gap:7px}
+.adminMiniTile{
+  appearance:none;-webkit-appearance:none;
+  border:1px solid #d3dce7;border-radius:12px;background:#fff;padding:9px;text-align:left;
+}
+.adminMiniTile .between{gap:6px}
+.adminMiniTile .name{font-size:10px;font-weight:950;color:#566579}
+.adminMiniTile .count{font-size:19px;font-weight:1000;color:#0d223c}
+.adminMiniTile.warn .count{color:#a15c00}
+.adminDashboardFilter{
+  display:flex;align-items:center;justify-content:space-between;gap:8px;
+  padding:9px 10px;margin-bottom:9px;border-radius:11px;background:#eef4fb;border:1px solid #c6d5e5;
+  font-size:11px;font-weight:900;color:#0d223c;
+}
+@media(max-width:370px){
+  .adminDashTile{padding:9px;min-height:80px}
+  .adminDashTile .num{font-size:24px}
+}
 
 /* Smart compact admin dashboard - v1.11 */
 #adminView .wrap{max-width:760px;padding-bottom:88px}
@@ -2186,7 +2236,43 @@ const ADMIN_BODY = `
 <div id="adminView" style="display:none"><div class="wrap">
  <div class="header"><div class="between"><div><span class="badge">LOMITA POLICE</span><div class="brand">研修管理本部</div><div class="sub">研修・参加申請・受講状況を一括管理</div><div class="sub" style="margin-top:6px;opacity:.78">Version ${APP_VERSION}</div><div id="adminRoleLabel" class="sub" style="margin-top:4px"></div></div><div class="row"><button class="btn small" onclick="logout()">ログアウト</button><button class="btn small" onclick="openManageMenu()">⚠️ここは触らない⚠️</button> </div></div></div>
  <div id="msg"></div>
- <div class="grid"><div class="stat"><span class="sub">今後の研修</span><b id="sTrain">0</b></div><div class="stat"><span class="sub">承認待ち</span><b id="sPending">0</b></div><div class="stat"><span class="sub">予約確定</span><b id="sReserved">0</b></div><div class="stat"><span class="sub">受講済み</span><b id="sCompleted">0</b></div></div>
+ <div class="adminCommand">
+   <div class="adminCommandHead">
+     <div><div class="adminCommandTitle">管理ダッシュボード</div><div class="adminCommandSub">今対応する内容をここで確認できます</div></div>
+     <button class="btn small" type="button" onclick="loadAdmin()">更新</button>
+   </div>
+
+   <div class="adminDashGrid">
+     <button class="adminDashTile" type="button" onclick="openDashboardReservations('today')">
+       <div class="label">今日の研修予定</div><div id="dashToday" class="num">0</div><div class="hint">タップして今日の予約へ</div>
+     </button>
+     <button class="adminDashTile" type="button" onclick="openDashboardReservations('week')">
+       <div class="label">今週の研修予定</div><div id="dashWeek" class="num">0</div><div class="hint">今日〜日曜日</div>
+     </button>
+     <button class="adminDashTile alert" type="button" onclick="openDashboardReservations('needsAction')">
+       <div class="label">対応が必要</div><div id="dashNeedsAction" class="num">0</div><div class="hint">承認待ち・再受講・期限超過</div>
+     </button>
+     <button class="adminDashTile good" type="button" onclick="openDashboardTrainees('completed')">
+       <div class="label">全研修修了</div><div id="dashFullCompleted" class="num">0</div><div class="hint">修了した研修生</div>
+     </button>
+   </div>
+
+   <div class="adminDashSectionTitle">対応が必要な予約</div>
+   <div class="adminMiniGrid">
+     <button class="adminMiniTile warn" type="button" onclick="openDashboardReservations('pending')"><div class="between"><span class="name">承認待ち</span><span id="dashPending" class="count">0</span></div></button>
+     <button class="adminMiniTile warn" type="button" onclick="openDashboardReservations('unassigned')"><div class="between"><span class="name">教官未決定</span><span id="dashUnassigned" class="count">0</span></div></button>
+     <button class="adminMiniTile warn" type="button" onclick="openDashboardReservations('expired')"><div class="between"><span class="name">希望日時超過</span><span id="dashExpired" class="count">0</span></div></button>
+     <button class="adminMiniTile warn" type="button" onclick="openDashboardReservations('retake')"><div class="between"><span class="name">再受講</span><span id="dashRetake" class="count">0</span></div></button>
+   </div>
+
+   <div class="adminDashSectionTitle">研修生の進捗状況</div>
+   <div class="adminMiniGrid">
+     <button class="adminMiniTile" type="button" onclick="openDashboardTrainees('all')"><div class="between"><span class="name">登録研修生</span><span id="dashTrainees" class="count">0</span></div></button>
+     <button class="adminMiniTile" type="button" onclick="openDashboardTrainees('inProgress')"><div class="between"><span class="name">研修中・未修了</span><span id="dashInProgress" class="count">0</span></div></button>
+     <button class="adminMiniTile" type="button" onclick="openDashboardTrainees('completed')"><div class="between"><span class="name">全研修修了</span><span id="dashFullCompletedMini" class="count">0</span></div></button>
+     <button class="adminMiniTile warn" type="button" onclick="openDashboardTrainees('retake')"><div class="between"><span class="name">再受講あり</span><span id="dashRetakeTrainees" class="count">0</span></div></button>
+   </div>
+ </div>
 
  <div class="menuTabs" style="grid-template-columns:repeat(2,1fr)">
     <button id="tabPrograms" class="btn" type="button" onclick="showAdminSection('programs')">研修プログラム管理</button>
@@ -2232,6 +2318,7 @@ const ADMIN_BODY = `
        <button class="btn small" type="button" onclick="loadReservationControl()">更新</button>
      </div>
    </div>
+   <div id="reservationDashboardFilterBar" class="adminDashboardFilter" style="display:none"><span id="reservationDashboardFilterLabel"></span><button class="btn small" type="button" onclick="clearDashboardReservationFilter()">絞り込み解除</button></div>
    <div id="reservationControlList"><div class="empty">予約一覧を読み込んでいます...</div></div>
    <div class="completedAdminBox">
      <div class="completedAdminHead"><div class="completedAdminTitle">受講済み履歴</div><div id="completedAdminCount" class="completedAdminCount">0</div></div>
@@ -2252,6 +2339,7 @@ const ADMIN_BODY = `
  <div id="traineeSection" style="display:none">
    <div class="section">研修生一覧・TRAINEE STATUS</div>
    <div class="card"><input id="traineeSearch" placeholder="名前・Discord ID・所属で検索"></div>
+   <div id="traineeDashboardFilterBar" class="adminDashboardFilter" style="display:none"><span id="traineeDashboardFilterLabel"></span><button class="btn small" type="button" onclick="clearDashboardTraineeFilter()">絞り込み解除</button></div>
    <div id="traineeList"><div class="empty">研修生情報を読み込んでいます...</div></div>
  </div>
 </div><div class="footerNav"><a href="/">トップ</a><a class="active" href="/admin">管理画面</a></div></div>
@@ -2472,6 +2560,64 @@ async function testDiscordWebhook(){
 }
 function openManageMenu(){setTimeout(checkDiscordWebhookStatus,150);setTimeout(loadAdminTrainingPolicy,150);document.getElementById('manageModal').classList.add('open');setTimeout(()=>loadBuildStatus(),150)}
 function closeManageMenu(){document.getElementById('manageModal').classList.remove('open')}
+let adminReservationFilter='all';
+let traineeDashboardFilter='all';
+let dashboardToday='';
+let dashboardWeekEnd='';
+
+const reservationFilterLabels={
+  all:'すべての対応中予約',
+  today:'今日の研修予定',
+  week:'今週の研修予定',
+  needsAction:'対応が必要な予約',
+  pending:'承認待ち',
+  unassigned:'担当教官未決定',
+  expired:'希望日時超過',
+  retake:'再受講'
+};
+const traineeFilterLabels={
+  all:'すべての研修生',
+  inProgress:'研修中・未修了',
+  completed:'全研修修了',
+  retake:'再受講あり'
+};
+
+function openDashboardReservations(filter){
+ adminReservationFilter=filter||'all';
+ showAdminSection('reservations');
+ if(adminReservationFilter==='expired'){
+   setTimeout(()=>document.getElementById('expiredAdminList')?.scrollIntoView({behavior:'smooth',block:'start'}),250);
+ }
+}
+function clearDashboardReservationFilter(){
+ adminReservationFilter='all';
+ loadReservationControl();
+}
+function openDashboardTrainees(filter){
+ traineeDashboardFilter=filter||'all';
+ showAdminSection('trainees');
+}
+function clearDashboardTraineeFilter(){
+ traineeDashboardFilter='all';
+ renderTrainees();
+}
+function updateReservationFilterBar(){
+ const bar=document.getElementById('reservationDashboardFilterBar');
+ const label=document.getElementById('reservationDashboardFilterLabel');
+ if(!bar||!label)return;
+ if(adminReservationFilter==='all'){bar.style.display='none';return}
+ bar.style.display='flex';
+ label.textContent='表示中：'+(reservationFilterLabels[adminReservationFilter]||'絞り込み');
+}
+function updateTraineeFilterBar(){
+ const bar=document.getElementById('traineeDashboardFilterBar');
+ const label=document.getElementById('traineeDashboardFilterLabel');
+ if(!bar||!label)return;
+ if(traineeDashboardFilter==='all'){bar.style.display='none';return}
+ bar.style.display='flex';
+ label.textContent='表示中：'+(traineeFilterLabels[traineeDashboardFilter]||'絞り込み');
+}
+
 function showAdminSection(section){
  const programs=section==='programs';
  const instructors=section==='instructors';
@@ -2519,6 +2665,24 @@ async function loadReservationControl(){
  const expiredHistory=all.filter(x=>x.status==='expired');
  const active=all.filter(x=>x.status!=='completed' && x.status!=='expired');
 
+ let displayActive=active;
+ if(adminReservationFilter==='today'){
+   displayActive=active.filter(x=>x.status==='reserved' && String(x.confirmed_date||'')===dashboardToday);
+ }else if(adminReservationFilter==='week'){
+   displayActive=active.filter(x=>x.status==='reserved' && String(x.confirmed_date||'')>=dashboardToday && String(x.confirmed_date||'')<=dashboardWeekEnd);
+ }else if(adminReservationFilter==='needsAction'){
+   displayActive=active.filter(x=>x.status==='pending' || x.status==='retake');
+ }else if(adminReservationFilter==='pending'){
+   displayActive=active.filter(x=>x.status==='pending');
+ }else if(adminReservationFilter==='unassigned'){
+   displayActive=active.filter(x=>x.status==='pending' && !String(x.assigned_instructor||'').trim());
+ }else if(adminReservationFilter==='retake'){
+   displayActive=active.filter(x=>x.status==='retake');
+ }else if(adminReservationFilter==='expired'){
+   displayActive=[];
+ }
+ updateReservationFilterBar();
+
  if(completedCount)completedCount.textContent=String(completed.length);
  if(expiredCount)expiredCount.textContent=String(expiredHistory.length);
 
@@ -2565,12 +2729,14 @@ async function loadReservationControl(){
    ).join(''):'<div class="empty">まだ実績はありません。</div>';
  }
 
- if(!active.length){
-   e.innerHTML='<div class="empty">現在、対応中の予約はありません。</div>';
+ if(!displayActive.length){
+   e.innerHTML=adminReservationFilter==='expired'
+     ?'<div class="empty">希望日時超過は下の履歴で確認できます。</div>'
+     :'<div class="empty">この条件に該当する予約はありません。</div>';
    return;
  }
 
- e.innerHTML=active.map(x=>{
+ e.innerHTML=displayActive.map(x=>{
    const preferredText=[x.preferred_date||'',x.preferred_time||''].filter(Boolean).join(' ');
    const preferredText2=[x.preferred_date2||'',x.preferred_time2||''].filter(Boolean).join(' ');
    const preferredText3=[x.preferred_date3||'',x.preferred_time3||''].filter(Boolean).join(' ');
@@ -2887,7 +3053,11 @@ async function loadTrainees(){
 }
 function renderTrainees(){
  const q=(document.getElementById('traineeSearch')?.value||'').trim().toLowerCase();
- const rows=traineeRows.filter(x=>!q||[x.player_name,x.login_name,x.discord_id,x.affiliation].some(v=>String(v||'').toLowerCase().includes(q)));
+ let rows=traineeRows.filter(x=>!q||[x.player_name,x.login_name,x.discord_id,x.affiliation].some(v=>String(v||'').toLowerCase().includes(q)));
+ if(traineeDashboardFilter==='completed')rows=rows.filter(x=>!!x.all_completed);
+ else if(traineeDashboardFilter==='inProgress')rows=rows.filter(x=>!x.all_completed);
+ else if(traineeDashboardFilter==='retake')rows=rows.filter(x=>Number(x.retake||0)>0);
+ updateTraineeFilterBar();
  const e=document.getElementById('traineeList');
  if(!rows.length){e.innerHTML='<div class="empty">該当する研修生はいません。</div>';return}
  e.innerHTML=rows.map(x=>{
@@ -3121,8 +3291,26 @@ function fmt(d){return new Date(d+'T00:00:00').toLocaleDateString('ja-JP',{month
 async function loadAdmin(){
  if(!instructorRows.length){const ir=await fetch('/api/admin/instructors',{headers:auth()});if(ir.ok)instructorRows=await ir.json().catch(()=>[]);}
  const r=await fetch('/api/admin/trainings',{headers:auth()}); if(r.status===401)return logout(); trainings=await r.json(); render();
- const s=await fetch('/api/admin/stats',{headers:auth()}); const st=await s.json();
- document.getElementById('sTrain').textContent=st.trainings;document.getElementById('sPending').textContent=st.pending;document.getElementById('sReserved').textContent=st.reserved;document.getElementById('sCompleted').textContent=st.completed;
+ const s=await fetch('/api/admin/stats',{headers:auth(),cache:'no-store'}); const st=await s.json().catch(()=>({}));
+ if(s.ok){
+   dashboardToday=String(st.today_date||'');
+   dashboardWeekEnd=String(st.week_end||'');
+   const values={
+     dashToday:st.today,
+     dashWeek:st.week,
+     dashNeedsAction:st.needs_action,
+     dashFullCompleted:st.full_completed,
+     dashPending:st.pending,
+     dashUnassigned:st.unassigned,
+     dashExpired:st.expired,
+     dashRetake:st.retake,
+     dashTrainees:st.trainees,
+     dashInProgress:st.in_progress,
+     dashFullCompletedMini:st.full_completed,
+     dashRetakeTrainees:st.retake_trainees
+   };
+   Object.entries(values).forEach(([id,v])=>{const el=document.getElementById(id);if(el)el.textContent=String(Number(v||0));});
+ }
 }
 function render(){const e=document.getElementById('adminList');if(!trainings.length){e.innerHTML='<div class="empty">研修がありません。「＋研修追加」から作成してください。</div>';return}
  e.innerHTML=trainings.map(t=>{
@@ -3762,12 +3950,69 @@ async function handle(request, env) {
  if(path.startsWith("/api/admin/") && !(await isAdmin())) return json({error:"unauthorized"},401);
 
  if(path==="/api/admin/stats" && method==="GET"){
+   if(!(await isAdmin()))return json({error:"unauthorized"},401);
+   await ensureTraineeProfiles(env);
+   await ensureReservationInstructor(env);
+   await ensureReservationPreferredSchedule(env);
+   await ensureReservationNotifications(env);
    await runExpiredPendingReservations(env);
-   const trainings=await env.DB.prepare("SELECT COUNT(*) c FROM trainings WHERE date(training_date)>=date('now')").first();
+
+   const jstNow=new Date(Date.now()+9*60*60*1000);
+   const fmtDate=d=>{
+     const y=d.getUTCFullYear();
+     const m=String(d.getUTCMonth()+1).padStart(2,"0");
+     const day=String(d.getUTCDate()).padStart(2,"0");
+     return `${y}-${m}-${day}`;
+   };
+   const todayDate=fmtDate(jstNow);
+   const daysToSunday=(7-jstNow.getUTCDay())%7;
+   const weekEndDate=fmtDate(new Date(jstNow.getTime()+daysToSunday*24*60*60*1000));
+
+   const today=await env.DB.prepare(
+     "SELECT COUNT(*) c FROM reservations WHERE status='reserved' AND confirmed_date=?"
+   ).bind(todayDate).first();
+   const week=await env.DB.prepare(
+     "SELECT COUNT(*) c FROM reservations WHERE status='reserved' AND confirmed_date>=? AND confirmed_date<=?"
+   ).bind(todayDate,weekEndDate).first();
    const pending=await env.DB.prepare("SELECT COUNT(*) c FROM reservations WHERE status='pending'").first();
-   const reserved=await env.DB.prepare("SELECT COUNT(*) c FROM reservations WHERE status='reserved'").first();
-   const completed=await env.DB.prepare("SELECT COUNT(*) c FROM reservations WHERE status='completed'").first();
-   return json({trainings:trainings.c,pending:pending.c,reserved:reserved.c,completed:completed.c});
+   const unassigned=await env.DB.prepare(
+     "SELECT COUNT(*) c FROM reservations WHERE status='pending' AND trim(COALESCE(assigned_instructor,''))=''"
+   ).first();
+   const expired=await env.DB.prepare("SELECT COUNT(*) c FROM reservations WHERE status='expired'").first();
+   const retake=await env.DB.prepare("SELECT COUNT(*) c FROM reservations WHERE status='retake'").first();
+
+   const trainees=await env.DB.prepare("SELECT COUNT(*) c FROM trainee_profiles").first();
+   const fullCompleted=await env.DB.prepare(
+     "SELECT COUNT(*) c FROM trainee_profiles WHERE trim(COALESCE(all_completed_at,''))<>''"
+   ).first();
+   const retakeTrainees=await env.DB.prepare(`
+     SELECT COUNT(DISTINCT lower(trim(COALESCE(discord_id,player_name,'')))) c
+     FROM reservations
+     WHERE status='retake'
+       AND trim(COALESCE(discord_id,player_name,''))<>''
+   `).first();
+
+   const pendingCount=Number(pending?.c||0);
+   const expiredCount=Number(expired?.c||0);
+   const retakeCount=Number(retake?.c||0);
+   const traineeCount=Number(trainees?.c||0);
+   const fullCount=Number(fullCompleted?.c||0);
+
+   return json({
+     today_date:todayDate,
+     week_end:weekEndDate,
+     today:Number(today?.c||0),
+     week:Number(week?.c||0),
+     needs_action:pendingCount+expiredCount+retakeCount,
+     pending:pendingCount,
+     unassigned:Number(unassigned?.c||0),
+     expired:expiredCount,
+     retake:retakeCount,
+     trainees:traineeCount,
+     in_progress:Math.max(0,traineeCount-fullCount),
+     full_completed:fullCount,
+     retake_trainees:Number(retakeTrainees?.c||0)
+   });
  }
 
  if(path==="/api/admin/training-start-options" && method==="GET"){
