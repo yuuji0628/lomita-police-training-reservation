@@ -1,4 +1,4 @@
-const APP_VERSION="1.51";
+const APP_VERSION="1.52";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -432,9 +432,12 @@ async function ensureTrainingPrograms(env) {
   }
 
   // Existing programs become application-ready trainings automatically.
-  const {results:orphans} = await env.DB.prepare(
-    "SELECT id,name,description FROM training_programs WHERE training_id IS NULL"
-  ).all();
+  const {results:orphans} = await env.DB.prepare(`
+    SELECT p.id,p.name,p.description,p.training_id
+    FROM training_programs p
+    LEFT JOIN trainings t ON t.id=p.training_id
+    WHERE p.training_id IS NULL OR t.id IS NULL
+  `).all();
 
   for (const p of (orphans || [])) {
     // First reuse an existing training with the exact same title.
@@ -466,7 +469,8 @@ async function ensureTrainingPrograms(env) {
     }
 
     if(tid){
-      await env.DB.prepare("UPDATE training_programs SET training_id=? WHERE id=? AND training_id IS NULL")
+      // Also repair dangling IDs that point to a deleted/nonexistent training.
+      await env.DB.prepare("UPDATE training_programs SET training_id=? WHERE id=?")
         .bind(tid,p.id).run();
     }
   }
@@ -3016,9 +3020,8 @@ async function handle(request, env) {
          LIMIT 1
        ),'') AS completed_date
      FROM training_programs p
-     LEFT JOIN trainings t ON t.id=p.training_id
+     JOIN trainings t ON t.id=p.training_id
      WHERE COALESCE(p.active,1)=1
-       AND p.training_id IS NOT NULL
      ORDER BY COALESCE(p.sort_order,0),p.id
    `).bind(key,key,key).all();
 
@@ -3060,8 +3063,12 @@ async function handle(request, env) {
    if((preferredDate2||preferredTime2)&&(!/^\d{4}-\d{2}-\d{2}$/.test(preferredDate2)||!/^\d{2}:\d{2}$/.test(preferredTime2)))return json({error:"第2希望は日付と時間を両方入力してください"},400);
    if((preferredDate3||preferredTime3)&&(!/^\d{4}-\d{2}-\d{2}$/.test(preferredDate3)||!/^\d{2}:\d{2}$/.test(preferredTime3)))return json({error:"第3希望は日付と時間を両方入力してください"},400);
    const key=String(profile.discord_id||profile.login_name||profile.player_name||"").trim();
-   const t=await env.DB.prepare("SELECT id,title FROM trainings WHERE id=?").bind(trainingId).first();
-   if(!t)return json({error:"研修が見つかりません"},404);
+   let t=await env.DB.prepare("SELECT id,title FROM trainings WHERE id=?").bind(trainingId).first();
+   if(!t){
+     await ensureTrainingPrograms(env);
+     t=await env.DB.prepare("SELECT id,title FROM trainings WHERE id=?").bind(trainingId).first();
+   }
+   if(!t)return json({error:"研修情報を更新しました。画面を再読み込みして、もう一度申請してください。"},409);
    if(isOrientationTitle(t.title))return json({error:"オリエンテーションは管理者が受講済みを登録します"},400);
    const dup=await env.DB.prepare("SELECT id,status FROM reservations WHERE training_id=? AND lower(trim(COALESCE(discord_id,'')))=lower(trim(?)) AND status IN ('pending','reserved','completed') ORDER BY id DESC LIMIT 1").bind(trainingId,key).first();
    if(dup)return json({error:dup.status==="completed"?"この研修は受講済みです":"すでに申請済みです"},409);
