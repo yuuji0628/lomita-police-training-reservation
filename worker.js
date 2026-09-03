@@ -1,4 +1,4 @@
-const APP_VERSION="1.27";
+const APP_VERSION="1.28";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -856,7 +856,7 @@ textarea{min-height:90px}
   border-left:1px solid #111;
 }
 .ledgerCell{
-  min-height:56px;
+  min-height:62px;
   border-right:1px solid #111;
   border-bottom:1px solid #111;
   display:flex;
@@ -949,8 +949,39 @@ textarea{min-height:90px}
  .ledgerScroll{margin-left:-2px;margin-right:-2px}
  .ledgerPaper{min-width:754px}
  .ledgerTable{grid-template-columns:66px repeat(8,86px)}
- .ledgerCell{min-height:52px}
+ .ledgerCell{min-height:58px}
  .ledgerCell .itemTitle{font-size:8px;max-width:70px}
+}
+
+
+.ledgerCell .completionSealWrap{
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  justify-content:center;
+  gap:3px;
+  width:100%;
+}
+.ledgerCell .completionTeacher{
+  font-size:7px;
+  line-height:1.1;
+  color:#667386;
+  max-width:72px;
+  white-space:normal;
+  word-break:break-word;
+  text-align:center;
+}
+.ledgerPendingSeal{
+  width:44px;
+  height:44px;
+  border:2px dashed #d5dce5;
+  border-radius:50%;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  color:#b2bbc6;
+  font-size:8px;
+  background:#fcfcfd;
 }
 
 </style></head><body>${body}<script>${script}</script></body></html>`, {headers:{"content-type":"text/html; charset=utf-8"}});
@@ -1117,7 +1148,7 @@ function ledgerStamp(name){
  const n=String(name||'担当教官').trim()||'担当教官';
  const cls=n.length>=9?'s2 long':'s2';
  return '<div class="ledgerStampMini" title="担当教官：'+esc(n)+'">'+
-   '<div class="s1">教官印</div>'+
+   '<div class="s1">修了印</div>'+
    '<div class="'+cls+'">'+esc(n)+'</div>'+
    '<div class="s3">承認</div>'+
  '</div>';
@@ -1150,13 +1181,16 @@ async function loadProgress(){
      while(filled.length<perRow)filled.push(null);
 
      const stampRow=
-       '<div class="ledgerCell label">月日<br>指導員印</div>'+
+       '<div class="ledgerCell label">月日<br>修了印</div>'+
        filled.map((p,j)=>{
          if(!p)return '<div class="ledgerCell empty">—</div>';
          const done=p.status==='completed';
          return '<div class="ledgerCell item '+(done?'done':'pending')+'">'+
            '<div class="itemNo">'+(offset+j+1)+'</div>'+
-           (done?ledgerStamp(p.assigned_instructor):'<span style="color:#b6bec9">未修了</span>')+
+           '<div class="completionSealWrap">'+
+             (done?ledgerStamp(p.assigned_instructor):'<div class="ledgerPendingSeal">未</div>')+
+             (done?'<div class="completionTeacher">'+esc(p.assigned_instructor||'')+'</div>':'')+
+           '</div>'+
          '</div>';
        }).join('');
 
@@ -1166,18 +1200,10 @@ async function loadProgress(){
          if(!p)return '<div class="ledgerCell empty">—</div>';
          return '<div class="ledgerCell item">'+
            '<div class="itemTitle">'+esc(p.title||('研修 '+(offset+j+1)))+'</div>'+
-           (p.status==='completed'?'<div class="itemTeacher">'+esc(p.assigned_instructor||'')+'</div>':'')+
          '</div>';
        }).join('');
 
-     const statusRow=
-       '<div class="ledgerCell label">修了状況</div>'+
-       filled.map(p=>{
-         if(!p)return '<div class="ledgerCell empty">—</div>';
-         return '<div class="ledgerCell">'+(p.status==='completed'?'修了':'未修了')+'</div>';
-       }).join('');
-
-     return stampRow+itemRow+statusRow;
+     return stampRow+itemRow;
    };
 
    el.innerHTML=
