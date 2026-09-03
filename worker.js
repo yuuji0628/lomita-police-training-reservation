@@ -1,4 +1,4 @@
-const APP_VERSION="1.30";
+const APP_VERSION="1.31";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -1005,6 +1005,18 @@ textarea{min-height:90px}
 .adminStatusBtn.active[data-status="completed"]{background:#16834c;color:#fff;border-color:#16834c}
 .adminStatusBtn.active[data-status="absent"]{background:#b42318;color:#fff;border-color:#b42318}
 
+
+.completedAdminBox{margin-top:14px;background:#fff;border:1px solid #d8e0ea;border-radius:15px;padding:12px;box-shadow:0 2px 7px rgba(10,34,61,.05)}
+.completedAdminHead{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px}
+.completedAdminTitle{font-size:16px;font-weight:950;color:#0d223c}
+.completedAdminCount{min-width:30px;padding:5px 9px;border-radius:999px;text-align:center;background:#eef8f1;color:#187a42;border:1px solid #c6e7d2;font-size:11px;font-weight:950}
+.completedHistoryRow{padding:10px 2px;border-bottom:1px solid #e7ebf0}.completedHistoryRow:last-child{border-bottom:0}
+.completedHistoryRow .name{font-size:12px;font-weight:900;color:#0d223c}.completedHistoryRow .meta{font-size:10px;line-height:1.45;color:#687689;margin-top:4px}
+.instructorRanking{display:grid;gap:7px;margin-top:9px}
+.instructorRankRow{display:grid;grid-template-columns:34px minmax(0,1fr) 62px;gap:8px;align-items:center;padding:9px;border:1px solid #e0e6ee;border-radius:11px}
+.instructorRankNo{width:27px;height:27px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:#f1f4f8;font-size:11px;font-weight:950}
+.instructorRankRow:nth-child(1) .instructorRankNo{background:#f7e6a7;color:#6e5200}.instructorRankRow:nth-child(2) .instructorRankNo{background:#e8edf3;color:#52606f}.instructorRankRow:nth-child(3) .instructorRankNo{background:#efd5bf;color:#7a3f18}
+.instructorRankName{font-size:12px;font-weight:900;color:#0d223c;word-break:break-word}.instructorRankCount{text-align:right;font-size:11px;font-weight:950;color:#0a2b50}
 </style></head><body>${body}<script>${script}</script></body></html>`, {headers:{"content-type":"text/html; charset=utf-8"}});
 
 
@@ -1368,12 +1380,21 @@ const ADMIN_BODY = `
      <div class="between">
        <div>
          <div class="title" style="font-size:16px">予約ステータス管理</div>
-         <div class="sub" style="margin-top:5px">新規申請は承認待ちで表示され、予約確定・受講済み・欠席へ変更できます。</div>
+         <div class="sub" style="margin-top:5px">新規申請は承認待ちで表示されます。受講済みにすると下の「受講済み履歴」へ移動します。</div>
        </div>
        <button class="btn small" type="button" onclick="loadReservationControl()">更新</button>
      </div>
    </div>
    <div id="reservationControlList"><div class="empty">予約一覧を読み込んでいます...</div></div>
+   <div class="completedAdminBox">
+     <div class="completedAdminHead"><div class="completedAdminTitle">受講済み履歴</div><div id="completedAdminCount" class="completedAdminCount">0</div></div>
+     <div id="completedAdminList"><div class="empty">受講済み履歴はありません。</div></div>
+   </div>
+   <div class="completedAdminBox">
+     <div class="completedAdminHead"><div class="completedAdminTitle">教官 講師回数ランキング</div></div>
+     <div class="sub">受講済みになった研修を担当教官ごとに自動集計</div>
+     <div id="instructorRankingList" class="instructorRanking"><div class="empty">まだ実績はありません。</div></div>
+   </div>
  </div>
 
  <div id="traineeSection" style="display:none">
@@ -1508,6 +1529,9 @@ function showAdminSection(section){
 }
 async function loadReservationControl(){
  const e=document.getElementById('reservationControlList');
+ const completedEl=document.getElementById('completedAdminList');
+ const completedCount=document.getElementById('completedAdminCount');
+ const rankingEl=document.getElementById('instructorRankingList');
  if(!e)return;
  e.innerHTML='<div class="empty">予約一覧を読み込んでいます...</div>';
 
@@ -1525,12 +1549,42 @@ async function loadReservationControl(){
    e.innerHTML='<div class="notice error">'+esc(d.error||'予約一覧を取得できませんでした')+'</div>';
    return;
  }
- if(!d.length){
-   e.innerHTML='<div class="empty">現在、予約データはありません。</div>';
+ const all=Array.isArray(d)?d:[];
+ const completed=all.filter(x=>x.status==='completed');
+ const active=all.filter(x=>x.status!=='completed');
+
+ if(completedCount)completedCount.textContent=String(completed.length);
+
+ if(completedEl){
+   completedEl.innerHTML=completed.length?completed.map(x=>{
+     const confirmed=[x.confirmed_date||'',x.confirmed_time||''].filter(Boolean).join(' ');
+     return '<div class="completedHistoryRow"><div class="name">'+esc(x.title||'研修')+'</div>'+
+       '<div class="meta">研修生：'+esc(x.player_name||'')+
+       (x.assigned_instructor?' ／ 担当教官：'+esc(x.assigned_instructor):'')+
+       (confirmed?' ／ '+esc(confirmed):'')+'</div></div>';
+   }).join(''):'<div class="empty">受講済み履歴はありません。</div>';
+ }
+
+ if(rankingEl){
+   const counts=new Map();
+   completed.forEach(x=>{
+     const name=String(x.assigned_instructor||'').trim();
+     if(name)counts.set(name,(counts.get(name)||0)+1);
+   });
+   const ranking=[...counts.entries()].sort((a,b)=>b[1]-a[1]||a[0].localeCompare(b[0],'ja'));
+   rankingEl.innerHTML=ranking.length?ranking.map(([name,count],i)=>
+     '<div class="instructorRankRow"><div class="instructorRankNo">'+(i+1)+'</div>'+
+     '<div class="instructorRankName">'+esc(name)+'</div>'+
+     '<div class="instructorRankCount">'+count+'件</div></div>'
+   ).join(''):'<div class="empty">まだ実績はありません。</div>';
+ }
+
+ if(!active.length){
+   e.innerHTML='<div class="empty">現在、対応中の予約はありません。</div>';
    return;
  }
 
- e.innerHTML=d.map(x=>{
+ e.innerHTML=active.map(x=>{
    const preferredText=[x.preferred_date||'',x.preferred_time||''].filter(Boolean).join(' ');
    const preferredText2=[x.preferred_date2||'',x.preferred_time2||''].filter(Boolean).join(' ');
    const preferredText3=[x.preferred_date3||'',x.preferred_time3||''].filter(Boolean).join(' ');
@@ -1541,28 +1595,21 @@ async function loadReservationControl(){
      preferredText3?'<option value="3" '+(Number(x.confirmed_preference)===3?'selected':'')+'>第3希望：'+esc(preferredText3)+'</option>':''
    ].filter(Boolean).join('');
    const statusLabel=labels[x.status]||x.status;
-   const statusOptions=[
-     ['reserved','予約確定'],
-     ['completed','受講済み'],
-     ['absent','欠席']
-   ].map(s=>'<option value="'+s[0]+'" '+(((x.status==='pending'?'reserved':x.status)===s[0])?'selected':'')+'>'+s[1]+'</option>').join('');
    const instructorOptions='<option value="">担当教官なし</option>'+
      instructorRows.map(i=>'<option value="'+esc(i.name)+'" '+(x.assigned_instructor===i.name?'selected':'')+'>'+esc(i.name)+'</option>').join('');
-   const border=x.status==='pending'?'#d9b33b':x.status==='reserved'?'#0b4fa3':x.status==='completed'?'#147d43':'#a15c00';
+   const border=x.status==='pending'?'#d9b33b':x.status==='reserved'?'#0b4fa3':'#a15c00';
 
    return '<div class="card" style="border-left:4px solid '+border+'">'+
-     '<div class="between" style="gap:12px;align-items:flex-start">'+
-       '<div style="min-width:0">'+
-         '<span class="pill '+esc(x.status)+'">'+esc(statusLabel)+'</span>'+
-         '<div class="title" style="margin-top:7px">'+esc(x.title||'研修')+'</div>'+
-         '<div class="sub" style="margin-top:5px">研修生：'+esc(x.player_name||'')+'</div>'+
-         (x.affiliation?'<div class="sub">所属：'+esc(x.affiliation)+'</div>':'')+
-         '<div class="sub" style="margin-top:6px;font-weight:800">第1希望：'+esc(preferredText||'未入力')+'</div>'+
-         (preferredText2?'<div class="sub" style="font-weight:800">第2希望：'+esc(preferredText2)+'</div>':'')+
-         (preferredText3?'<div class="sub" style="font-weight:800">第3希望：'+esc(preferredText3)+'</div>':'')+
-         (confirmedText?'<div style="margin-top:8px;padding:7px 9px;border-radius:10px;background:#eef6ff;font-weight:900">✅ 確定日時：'+esc(confirmedText)+'</div>':'')+
-       '</div>'+
-     '</div>'+
+     '<div class="between" style="gap:12px;align-items:flex-start"><div style="min-width:0">'+
+     '<span class="pill '+esc(x.status)+'">'+esc(statusLabel)+'</span>'+
+     '<div class="title" style="margin-top:7px">'+esc(x.title||'研修')+'</div>'+
+     '<div class="sub" style="margin-top:5px">研修生：'+esc(x.player_name||'')+'</div>'+
+     (x.affiliation?'<div class="sub">所属：'+esc(x.affiliation)+'</div>':'')+
+     '<div class="sub" style="margin-top:6px;font-weight:800">第1希望：'+esc(preferredText||'未入力')+'</div>'+
+     (preferredText2?'<div class="sub" style="font-weight:800">第2希望：'+esc(preferredText2)+'</div>':'')+
+     (preferredText3?'<div class="sub" style="font-weight:800">第3希望：'+esc(preferredText3)+'</div>':'')+
+     (confirmedText?'<div style="margin-top:8px;padding:7px 9px;border-radius:10px;background:#eef6ff;font-weight:900">✅ 確定日時：'+esc(confirmedText)+'</div>':'')+
+     '</div></div>'+
      '<div class="field" style="margin-top:12px"><label>承認する日時</label><select id="reservationPreference_'+x.id+'"><option value="">希望日時を選択</option>'+preferenceOptions+'</select></div>'+
      '<div class="field"><label>状態</label>'+renderReservationStatusButtons(x.id,x.status)+'</div>'+
      '<div class="field"><label>担当教官</label><select id="reservationInstructor_'+x.id+'">'+instructorOptions+'</select></div>'+
