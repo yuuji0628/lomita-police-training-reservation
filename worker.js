@@ -1,4 +1,4 @@
-const APP_VERSION="1.41";
+const APP_VERSION="1.42";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -646,6 +646,8 @@ textarea{min-height:90px}
   z-index:30;
 }
 .modal.open{display:flex}
+#policyModal{z-index:80}
+#policyModal .sheet{max-height:88vh}
 .sheet{
   background:linear-gradient(180deg,#fff,#f8fafc);
   width:100%;
@@ -1236,7 +1238,7 @@ const PUBLIC_BODY = `
     <div class="historyLauncher"><button id="openHistoryBtn" class="btn small" type="button">申請・受講履歴を見る</button></div>
 
 <div id="policyModal" class="modal"><div class="sheet">
-  <button id="closePolicyBtn" class="btn small" style="float:right" type="button">閉じる</button>
+  <button id="closePolicyBtn" class="btn small" style="float:right" type="button" onclick="closeTrainingPolicy()">閉じる</button>
   <div class="title">研修ポリシー</div>
   <div id="policyBody" style="white-space:pre-wrap;line-height:1.75;margin-top:14px">読み込み中...</div>
 </div></div>
@@ -1287,7 +1289,7 @@ const PUBLIC_BODY = `
   <div class="field"><label>備考</label><textarea id="note" maxlength="250" placeholder="必要な場合のみ入力"></textarea></div>
   <div class="card" style="margin:12px 0;border:1px solid #d7ad45;padding:12px">
     <div style="font-weight:900">研修ポリシー</div>
-    <button id="openPolicyBtn" type="button" class="btn small" style="margin-top:8px">内容を確認</button>
+    <button id="openPolicyBtn" type="button" class="btn small" style="margin-top:8px" onclick="openTrainingPolicy()">内容を確認</button>
     <label style="display:flex;gap:8px;align-items:flex-start;margin-top:10px;font-weight:800;line-height:1.4">
       <input id="policyAgree" type="checkbox" style="width:20px;height:20px;margin-top:1px">
       <span>研修ポリシーを確認し、内容に同意します</span>
