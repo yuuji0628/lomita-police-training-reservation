@@ -1,4 +1,4 @@
-const APP_VERSION="1.48";
+const APP_VERSION="1.49";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -2379,7 +2379,7 @@ async function openTraineeDetail(discord){
    let d={};
    try{d=text?JSON.parse(text):{}}catch(_){d={error:'研修履歴データを読み取れませんでした'};}
    if(!r.ok){
-     detail.innerHTML='<div class="notice error">'+esc(d.error||('取得できませんでした（HTTP '+r.status+'）'))+'</div>';
+     detail.innerHTML='<div class="notice error">'+esc(d.error||('取得できませんでした（HTTP '+r.status+'）'))+'<div class="sub" style="margin-top:6px">画面を再読み込みしてもう一度お試しください。</div></div>';
      return;
    }
    document.getElementById('traineeDetailTitle').textContent=(d.profile?.player_name||'研修生')+' / 研修履歴';
@@ -3148,56 +3148,70 @@ async function handle(request, env) {
  }
 
  if(path==="/api/admin/trainee-history" && method==="GET"){
-   await ensureTraineeProfiles(env);
-   await ensureReservationNotifications(env);
-   const key=(url.searchParams.get("discord_id")||"").trim();
-   if(!key)return json({error:"研修生の識別情報が必要です"},400);
+   try{
+     await ensureTraineeProfiles(env);
+     await ensureReservationNotifications(env);
+     const key=(url.searchParams.get("discord_id")||"").trim();
+     if(!key)return json({error:"研修生の識別情報が必要です"},400);
 
-   let profile=await env.DB.prepare(`
-     SELECT id,player_name,discord_id,login_name,affiliation,rank,
-            COALESCE(admin_memo,'') AS admin_memo,
-            COALESCE(all_completed_at,'') AS all_completed_at
-     FROM trainee_profiles
-     WHERE lower(trim(COALESCE(discord_id,'')))=lower(trim(?))
-        OR lower(trim(COALESCE(login_name,'')))=lower(trim(?))
-        OR lower(trim(COALESCE(player_name,'')))=lower(trim(?))
-     LIMIT 1
-   `).bind(key,key,key).first();
+     let profile=await env.DB.prepare(`
+       SELECT id,player_name,discord_id,login_name,affiliation,rank,
+              COALESCE(admin_memo,'') AS admin_memo,
+              COALESCE(all_completed_at,'') AS all_completed_at
+       FROM trainee_profiles
+       WHERE lower(trim(COALESCE(discord_id,'')))=lower(trim(?))
+          OR lower(trim(COALESCE(login_name,'')))=lower(trim(?))
+          OR lower(trim(COALESCE(player_name,'')))=lower(trim(?))
+       LIMIT 1
+     `).bind(key,key,key).first();
 
-   const canonical=String(profile?.discord_id||profile?.login_name||profile?.player_name||key).trim();
-   const {results}=await env.DB.prepare(`
-     SELECT r.*,t.title,t.training_date,t.start_time,t.end_time,t.location,t.category
-     FROM reservations r
-     LEFT JOIN trainings t ON t.id=r.training_id
-     WHERE lower(trim(COALESCE(r.discord_id,'')))=lower(trim(?))
-        OR lower(trim(COALESCE(r.player_name,'')))=lower(trim(?))
-     ORDER BY COALESCE(NULLIF(r.completed_at,''),r.confirmed_date,t.training_date,'') DESC,
-              COALESCE(r.confirmed_time,t.start_time,'') DESC,
-              r.id DESC
-   `).bind(canonical,String(profile?.player_name||key)).all();
+     const canonical=String(profile?.discord_id||profile?.login_name||key).trim();
+     const playerName=String(profile?.player_name||key).trim();
 
-   const history=Array.isArray(results)?results:[];
-   if(!profile && !history.length)return json({error:"研修生が見つかりません"},404);
+     const q=await env.DB.prepare(`
+       SELECT
+         r.id,r.training_id,r.player_name,r.discord_id,r.affiliation,r.note,r.status,
+         r.assigned_instructor,r.confirmed_date,r.confirmed_time,
+         r.preferred_date,r.preferred_time,
+         COALESCE(r.completed_at,'') AS completed_at,
+         COALESCE(t.title,'研修') AS title
+       FROM reservations r
+       LEFT JOIN trainings t ON t.id=r.training_id
+       WHERE lower(trim(COALESCE(r.discord_id,'')))=lower(trim(?))
+          OR lower(trim(COALESCE(r.player_name,'')))=lower(trim(?))
+       ORDER BY r.id DESC
+     `).bind(canonical,playerName).all();
 
-   if(!profile){
-     const latest=history[0]||{};
-     profile={
-       player_name:latest.player_name||"研修生",
-       discord_id:latest.discord_id||"",
-       affiliation:latest.affiliation||"",
-       rank:"",
-       admin_memo:"",
-       all_completed_at:""
-     };
-   }else{
-     const refreshed=await refreshTraineeFullCompletion(env,Number(profile.id));
-     profile.all_completed_at=refreshed.completed?String(refreshed.date||profile.all_completed_at||""):"";
+     const history=Array.isArray(q?.results)?q.results:[];
+     if(!profile && !history.length)return json({error:"研修生が見つかりません"},404);
+
+     if(!profile){
+       const latest=history[0]||{};
+       profile={
+         player_name:latest.player_name||"研修生",
+         discord_id:latest.discord_id||"",
+         affiliation:latest.affiliation||"",
+         rank:"",
+         admin_memo:"",
+         all_completed_at:""
+       };
+     }
+
+     const stats={pending:0,reserved:0,completed:0,retake:0,absent:0,cancelled:0};
+     for(const x of history)if(stats[x.status]!==undefined)stats[x.status]++;
+
+     const safeHistory=history.map(x=>({
+       ...x,
+       training_date:String(x.completed_at||x.confirmed_date||x.preferred_date||""),
+       start_time:String(x.confirmed_time||x.preferred_time||""),
+       end_time:""
+     }));
+
+     return json({profile,stats,history:safeHistory});
+   }catch(err){
+     console.error("trainee-history error",err);
+     return json({error:"研修履歴の取得中にエラーが発生しました"},500);
    }
-
-   const stats={pending:0,reserved:0,completed:0,retake:0,absent:0,cancelled:0};
-   for(const x of history)if(stats[x.status]!==undefined)stats[x.status]++;
-
-   return json({profile,stats,history});
  }
 
  if(path==="/api/training-policy" && method==="GET"){
