@@ -1,4 +1,4 @@
-const APP_VERSION="1.50";
+const APP_VERSION="1.51";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -1507,14 +1507,83 @@ async function traineeLogout(){
  myProfile=null;showAuth();
 }
 async function load(){
- const r=await fetch('/api/trainings');
- const data=await r.json().catch(()=>[]);
  const el=document.getElementById('list');
- if(r.status===401){showAuth();return}
- if(!r.ok){el.innerHTML='<div class="notice error">'+esc((data.error||'研修を取得できませんでした')+(data.detail?'：'+data.detail:''))+'</div>';return}
- if(!data.length){el.innerHTML='<div class="empty">すべての研修を受講済みです。</div>';return}
- el.innerHTML=data.map(t=>'<div class="card profileCard"><div class="title">'+esc(t.title)+'</div>'+(t.description?'<div class="sub" style="margin:10px 0 12px;white-space:pre-wrap">'+esc(t.description)+'</div>':'')+'<div class="between"><span class="sub">'+(t.manual_only?'オリエンテーションは管理者が受講済みを登録します。':t.setup_required?'この研修は管理側で準備中です。修了扱いにはなっていません。':t.current_status==='pending'?'現在、承認待ちです。':t.current_status==='reserved'?'承認済みです。受講完了後に次の研修が表示されます。':'申請後、管理者が担当教官を選んで承認します。')+'</span><button class="btn primary bookingBtn" data-id="'+t.id+'" data-title="'+encodeURIComponent(t.title)+'" '+(t.already_applied?'disabled':'')+'>'+(t.manual_only?'管理者確認待ち':t.setup_required?'準備中':t.current_status==='pending'?'承認待ち':t.current_status==='reserved'?'受講待ち':'申請する')+'</button></div></div>').join('');
- document.querySelectorAll('.bookingBtn:not([disabled])').forEach(btn=>btn.addEventListener('click',()=>openBooking(Number(btn.dataset.id),decodeURIComponent(btn.dataset.title))));
+ try{
+   // IMPORTANT:
+   // "現在の研修" uses the same progress API as the ledger.
+   // This prevents the ledger and current-training section from disagreeing.
+   const [progressRes,profileRes]=await Promise.all([
+     fetch('/api/trainee/progress',{cache:'no-store'}),
+     fetch('/api/trainee/profile',{cache:'no-store'})
+   ]);
+
+   if(progressRes.status===401 || profileRes.status===401){showAuth();return}
+
+   const progressData=await progressRes.json().catch(()=>({}));
+   const profileData=await profileRes.json().catch(()=>({}));
+
+   if(!progressRes.ok){
+     el.innerHTML='<div class="notice error">'+esc(progressData.error||'研修進捗を取得できませんでした')+'</div>';
+     return;
+   }
+
+   const programs=Array.isArray(progressData.programs)?progressData.programs:[];
+   if(!programs.length){
+     el.innerHTML='<div class="empty">研修プログラムが登録されていません。</div>';
+     return;
+   }
+
+   // The first unfinished program in the ledger is always the current training.
+   const current=programs.find(p=>String(p.status||'')!=='completed');
+
+   if(!current){
+     el.innerHTML='<div class="empty">すべての研修を受講済みです。</div>';
+     return;
+   }
+
+   const history=Array.isArray(profileData.history)?profileData.history:[];
+   const latest=history.find(x=>Number(x.training_id)===Number(current.training_id));
+   const state=String(latest?.status||'');
+
+   const orientation=String(current.title||'').trim()==='オリエンテーション';
+   const waiting=state==='pending';
+   const reserved=state==='reserved';
+   const disabled=orientation||waiting||reserved;
+   const message=orientation
+     ?'オリエンテーションは管理者が受講済みを登録します。'
+     :waiting
+       ?'現在、承認待ちです。'
+       :reserved
+         ?'承認済みです。受講完了後に次の研修が表示されます。'
+         :state==='retake'
+           ?'再受講が必要です。もう一度申請してください。'
+           :'次に受講する研修です。希望日時を選んで申請してください。';
+
+   const buttonText=orientation
+     ?'管理者確認待ち'
+     :waiting
+       ?'承認待ち'
+       :reserved
+         ?'受講待ち'
+         :state==='retake'
+           ?'再申請する'
+           :'申請する';
+
+   el.innerHTML=
+     '<div class="card profileCard">'+
+       '<div class="title">'+esc(current.title||'研修')+'</div>'+
+       '<div class="between" style="margin-top:10px">'+
+         '<span class="sub">'+message+'</span>'+
+         '<button class="btn primary bookingBtn" data-id="'+Number(current.training_id||0)+'" data-title="'+encodeURIComponent(current.title||'研修')+'" '+(disabled?'disabled':'')+'>'+buttonText+'</button>'+
+       '</div>'+
+     '</div>';
+
+   document.querySelectorAll('.bookingBtn:not([disabled])').forEach(btn=>
+     btn.addEventListener('click',()=>openBooking(Number(btn.dataset.id),decodeURIComponent(btn.dataset.title)))
+   );
+ }catch(_){
+   el.innerHTML='<div class="notice error">現在の研修を取得できませんでした。再読み込みしてください。</div>';
+ }
 }
 function openBooking(id,title){
  selectedTraining={id,title};
@@ -2918,6 +2987,7 @@ async function handle(request, env) {
        p.id AS program_id,
        p.training_id,
        COALESCE(t.title,p.name) AS title,
+       COALESCE(NULLIF(t.description,''),p.description,'') AS description,
        COALESCE((
          SELECT r.status
          FROM reservations r
