@@ -1,4 +1,4 @@
-const APP_VERSION="1.61";
+const APP_VERSION="1.62";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -862,6 +862,11 @@ a{color:inherit;text-decoration:none}
 .pill.reserved{background:#e9f2ff;color:#164f92;border-color:#bdd5f5}
 .pill.completed{background:#e8f7ef;color:#147d43;border-color:#bfe3cf}
 .pill.cancelled,.pill.absent,.pill.expired{background:#fff0ef;color:var(--danger);border-color:#efc0bc}
+.expiredReadOnly{
+  border-left:5px solid #b45f06;
+  background:#fffaf4;
+}
+
 
 .grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
 .stat{
@@ -2563,7 +2568,24 @@ async function loadReservationControl(){
    const instructorOptions='<option value="">担当教官なし</option>'+
      instructorRows.map(i=>'<option value="'+esc(i.name)+'" '+(x.assigned_instructor===i.name?'selected':'')+'>'+esc(i.name)+'</option>').join('');
    const border=x.status==='pending'?'#d9b33b':x.status==='reserved'?'#0b4fa3':x.status==='retake'?'#9a6700':'#a15c00';
-   const isFinalExam=isFinalEmploymentExamName(x.title);
+      if(String(x.status||'')==='expired'){
+     return '<div class="card" style="border-left:5px solid #b45f06">'+
+       '<div class="between">'+
+         '<span class="pill expired">希望日時超過</span>'+
+       '</div>'+
+       '<h3 style="margin:12px 0 6px">'+esc(x.title||'研修')+'</h3>'+
+       '<div class="sub">研修生："+esc(x.player_name||'研修生')+'</div>'+
+       '<div class="sub" style="margin-top:7px">第1希望：'+esc([x.preferred_date,x.preferred_time].filter(Boolean).join(' ')||'未登録')+'</div>'+
+       (x.preferred_date2?'<div class="sub">第2希望：'+esc([x.preferred_date2,x.preferred_time2].filter(Boolean).join(' '))+'</div>':'')+
+       (x.preferred_date3?'<div class="sub">第3希望：'+esc([x.preferred_date3,x.preferred_time3].filter(Boolean).join(' '))+'</div>':'')+
+       '<div class="notice" style="margin-top:12px">'+
+         '<b>この申請は期限切れです。</b><br>'+
+         '研修生の再申請をお待ちください。管理者側での操作は不要です。'+
+       '</div>'+
+     '</div>';
+   }
+
+const isFinalExam=isFinalEmploymentExamName(x.title);
    const isViolationTest=isViolationTestName(x.title);
    const isJudgementExam=isFinalExam||isViolationTest;
    const examResult=String(x.exam_result||'');
