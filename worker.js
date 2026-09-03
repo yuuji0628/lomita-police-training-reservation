@@ -1,4 +1,4 @@
-const APP_VERSION="1.20";
+const APP_VERSION="1.21";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -683,22 +683,59 @@ textarea{min-height:90px}
   .menuTabs{grid-template-columns:repeat(2,1fr)}
 }
 
-/* automatic instructor completion stamp */
-.instructorStamp{width:78px;height:78px;border:3px solid #9f1d1d;border-radius:50%;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;color:#9f1d1d;background:rgba(255,255,255,.92);font-weight:950;line-height:1.05;transform:rotate(-7deg);box-shadow:inset 0 0 0 3px #fff,inset 0 0 0 5px #9f1d1d;flex:0 0 78px}
-.instructorStamp .stTop{font-size:7px;letter-spacing:.8px}
-.instructorStamp .stName{font-size:10px;max-width:60px;line-height:1.05;white-space:normal;word-break:break-word;overflow-wrap:anywhere;margin:3px 0;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
-.instructorStamp .stName.long{font-size:8px;max-width:62px}
-.instructorStamp .stDone{font-size:8px;letter-spacing:.5px}.instructorStamp .stStar{font-size:11px}
+/* automatic instructor completion stamp - police seal */
+.instructorStamp{
+  width:76px;height:76px;border-radius:50%;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  text-align:center;line-height:1.02;transform:rotate(-5deg);
+  font-weight:950;color:#0a2748;background:#fff;
+  border:3px solid #0a2748;
+  box-shadow:
+    inset 0 0 0 3px #fff,
+    inset 0 0 0 5px #d6ae35,
+    inset 0 0 0 7px #0a2748,
+    0 4px 10px rgba(10,39,72,.16);
+  flex:0 0 76px;position:relative;overflow:hidden;
+}
+.instructorStamp:before,.instructorStamp:after{
+  content:"";position:absolute;left:13px;right:13px;height:1px;background:#d6ae35;
+}
+.instructorStamp:before{top:25px}.instructorStamp:after{bottom:22px}
+.instructorStamp .stStar{
+  font-size:12px;line-height:1;color:#d6ae35;margin-bottom:2px;
+}
+.instructorStamp .stTop{
+  font-size:6px;letter-spacing:1px;color:#0a2748;font-weight:950;
+}
+.instructorStamp .stName{
+  font-size:9px;max-width:56px;line-height:1.05;white-space:normal;
+  word-break:break-word;overflow-wrap:anywhere;margin:4px 0 3px;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;
+}
+.instructorStamp .stName.long{font-size:7px;max-width:58px}
+.instructorStamp .stDone{
+  font-size:7px;letter-spacing:.9px;color:#0a2748;font-weight:950;
+}
 .completedHistory{display:flex;gap:10px;align-items:center}.completedHistoryMain{min-width:0;flex:1}
-.trainingProgressGrid{display:grid;grid-template-columns:1fr;gap:10px;margin-top:10px}
-.trainingProgressCard{background:#fff;border:1px solid #d9e1ec;border-radius:15px;padding:12px 13px;box-shadow:0 2px 8px rgba(10,34,61,.05)}
+.trainingProgressGrid{display:grid;grid-template-columns:1fr;gap:9px;margin-top:9px}
+.trainingProgressCard{background:#fff;border:1px solid #d9e1ec;border-radius:14px;padding:11px 12px;box-shadow:0 2px 8px rgba(10,34,61,.05)}
 .trainingProgressCard.done{border-left:5px solid #d6ae35}
 .trainingProgressRow{display:flex;align-items:center;justify-content:space-between;gap:10px}
 .trainingProgressMain{min-width:0;flex:1}
-.trainingProgressTitle{font-weight:900;font-size:15px;line-height:1.35;color:#0d223c}
+.trainingProgressTitle{font-weight:900;font-size:14px;line-height:1.35;color:#0d223c}
 .trainingProgressMeta{font-size:11px;color:#758195;margin-top:5px}
-.trainingProgressEmpty{width:68px;height:68px;border:2px dashed #ccd5e2;border-radius:50%;display:flex;align-items:center;justify-content:center;text-align:center;font-size:9px;color:#9aa6b5;flex:0 0 68px}
-@media(max-width:520px){.instructorStamp{width:68px;height:68px;flex-basis:68px}.instructorStamp .stName{font-size:9px;max-width:53px}.instructorStamp .stName.long{font-size:7px;max-width:55px}}
+.trainingProgressEmpty{width:66px;height:66px;border:2px dashed #ccd5e2;border-radius:50%;display:flex;align-items:center;justify-content:center;text-align:center;font-size:9px;color:#9aa6b5;flex:0 0 66px}
+.dashboardProgressBox{margin-top:14px;padding-top:12px;border-top:1px solid #e4e9f0}
+.dashboardProgressHead{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:4px}
+.dashboardProgressTitle{font-size:15px;font-weight:950;color:#0d223c}
+.historyLauncher{display:flex;justify-content:flex-end;margin:12px 0 4px}
+.historyLauncher .btn{min-height:42px}
+@media(max-width:520px){
+ .instructorStamp{width:68px;height:68px;flex-basis:68px}
+ .instructorStamp .stName{font-size:8px;max-width:50px}
+ .instructorStamp .stName.long{font-size:6px;max-width:52px}
+ .trainingProgressEmpty{width:60px;height:60px;flex-basis:60px}
+}
 </style></head><body>${body}<script>${script}</script></body></html>`, {headers:{"content-type":"text/html; charset=utf-8"}});
 
 
@@ -748,12 +785,20 @@ const PUBLIC_BODY = `
       <button id="traineeLogoutBtn" class="btn small" type="button">ログアウト</button>
     </div>
     <div id="mySummary"></div>
-    <div class="section">研修プログラム進捗</div>
-    <div class="sub" style="margin:-4px 0 8px">完了した研修には担当教官のスタンプが押されます。</div>
-    <div id="trainingProgressList" class="trainingProgressGrid"><div class="empty">進捗を読み込み中...</div></div>
+    <div class="historyLauncher"><button id="openHistoryBtn" class="btn" type="button">申請・受講履歴を見る</button></div>
 
-    <div class="section">申請・受講履歴</div>
-    <div id="myHistory"></div>
+<div id="historyModal" class="modal">
+  <div class="modalCard">
+    <div class="between">
+      <div>
+        <div class="title">申請・受講履歴</div>
+        <div class="sub">過去の申請・予約・受講履歴</div>
+      </div>
+      <button id="closeHistoryBtn" class="btn small" type="button">閉じる</button>
+    </div>
+    <div id="myHistory" style="margin-top:12px"></div>
+  </div>
+</div>
     <div id="msg"></div>
     <div class="section">現在の研修</div>
     <div id="list"><div class="empty">読み込み中...</div></div>
@@ -849,7 +894,7 @@ function closeBooking(){document.getElementById('booking').classList.remove('ope
 function instructorStamp(name){
  const n=String(name||'担当教官').trim()||'担当教官';
  const cls=n.length>=9?'stName long':'stName';
- return '<div class="instructorStamp" title="担当教官：'+esc(n)+'"><div class="stStar">★</div><div class="stTop">LOMITA POLICE</div><div class="'+cls+'">'+esc(n)+'</div><div class="stDone">COMPLETED</div></div>';
+ return '<div class="instructorStamp" title="担当教官：'+esc(n)+'"><div class="stStar">★</div><div class="stTop">LOMITA POLICE</div><div class="'+cls+'">'+esc(n)+'</div><div class="stDone">CERTIFIED</div></div>';
 }
 
 async function loadProgress(){
@@ -889,8 +934,15 @@ async function loadMyPage(){
  if(r.status===401){showAuth();return}
  if(!r.ok)return;
  myProfile=d.profile;
- loadProgress();
  document.getElementById('mySummary').innerHTML='<div class="card"><div class="profileHead"><div class="avatar">'+esc((d.profile.player_name||'?').slice(0,1))+'</div><div><div class="title">'+esc(d.profile.player_name)+'</div><div class="sub">ログイン中</div></div></div><div class="grid" style="margin-top:14px"><div class="stat"><span class="sub">承認待ち</span><b>'+d.stats.pending+'</b></div><div class="stat"><span class="sub">予約確定</span><b>'+d.stats.reserved+'</b></div><div class="stat"><span class="sub">受講済み</span><b>'+d.stats.completed+'</b></div><div class="stat"><span class="sub">欠席</span><b>'+d.stats.absent+'</b></div></div></div>';
+
+ document.getElementById('mySummary').insertAdjacentHTML('beforeend',
+  '<div class="dashboardProgressBox">'+
+   '<div class="dashboardProgressHead"><div class="dashboardProgressTitle">研修プログラム進捗</div><div class="sub">完了スタンプ</div></div>'+
+   '<div id="trainingProgressList" class="trainingProgressGrid"><div class="empty">進捗を読み込み中...</div></div>'+
+  '</div>'
+ );
+ loadProgress();
  const h=document.getElementById('myHistory');
  h.innerHTML=d.history.length?d.history.map(x=>'<div class="card">'+(x.status==='completed'?'<div class="completedHistory"><div class="completedHistoryMain">':'')+'<div class="between"><div><span class="pill '+esc(x.status)+'">'+esc(statusLabels[x.status]||x.status)+'</span><div class="title" style="margin-top:7px">'+esc(x.title)+'</div></div>'+(x.status==='pending'||x.status==='reserved'?'<button class="btn danger small traineeCancelBtn" data-id="'+x.id+'">申請キャンセル</button>':'')+'</div>'+(x.preferred_date||x.preferred_time?'<div class="sub" style="margin-top:7px">第1希望：'+esc([x.preferred_date||'',x.preferred_time||''].filter(Boolean).join(' '))+'</div>':'')+
 (x.preferred_date2||x.preferred_time2?'<div class="sub"><b>第2希望：</b>'+esc([x.preferred_date2||'',x.preferred_time2||''].filter(Boolean).join(' '))+'</div>':'')+
@@ -928,6 +980,11 @@ async function submitBooking(){
  }finally{btn.disabled=false;btn.textContent='申請する'}
 }
 document.getElementById('bookingSubmitBtn')?.addEventListener('click',submitBooking);
+
+document.getElementById('openHistoryBtn')?.addEventListener('click',()=>document.getElementById('historyModal')?.classList.add('open'));
+document.getElementById('closeHistoryBtn')?.addEventListener('click',()=>document.getElementById('historyModal')?.classList.remove('open'));
+document.getElementById('historyModal')?.addEventListener('click',e=>{if(e.target.id==='historyModal')e.currentTarget.classList.remove('open')});
+
 loadDiscordLoginConfig();restoreTrainee();`;
 
 const ADMIN_BODY = `
