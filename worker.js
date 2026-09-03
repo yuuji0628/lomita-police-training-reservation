@@ -1,4 +1,4 @@
-const APP_VERSION="1.39";
+const APP_VERSION="1.41";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -99,6 +99,33 @@ async function createTraineeSessionCookie(env,profileId){
 
 
 
+const DEFAULT_TRAINING_POLICY=`【LOMITA POLICE 研修ポリシー】
+
+1. 予約確定後の無断欠席は禁止します。
+2. 遅刻・欠席する場合は、可能な限り事前に連絡してください。
+3. 研修中は担当教官の指示に従ってください。
+4. 研修の妨害、過度な私語、進行を妨げる行為は禁止します。
+5. 修了基準に達しない場合、再受講となる場合があります。
+6. 欠席・遅刻・不適切な受講が続く場合、研修申請を制限する場合があります。
+7. 研修内容・修了判定の最終判断は、担当教官および研修管理本部が行います。
+8. 代理受講、不正受講、虚偽申請は禁止します。
+9. 予約枠の確保のみを目的とした申請は禁止します。`;
+
+async function ensureTrainingPolicy(env){
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS training_policy (
+    id INTEGER PRIMARY KEY CHECK(id=1),
+    body TEXT NOT NULL,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  )`).run();
+  const row=await env.DB.prepare("SELECT id FROM training_policy WHERE id=1").first();
+  if(!row)await env.DB.prepare("INSERT INTO training_policy(id,body) VALUES(1,?)").bind(DEFAULT_TRAINING_POLICY).run();
+}
+async function getTrainingPolicy(env){
+  await ensureTrainingPolicy(env);
+  const row=await env.DB.prepare("SELECT body,updated_at FROM training_policy WHERE id=1").first();
+  return {body:String(row?.body||DEFAULT_TRAINING_POLICY),updated_at:String(row?.updated_at||"")};
+}
+
 async function ensureReservationNotifications(env){
   try{
     const q=await env.DB.prepare("PRAGMA table_info(reservations)").all();
@@ -111,9 +138,6 @@ async function ensureReservationNotifications(env){
     }
     if(!cols.includes("same_day_reminder_sent_at")){
       try{await env.DB.prepare("ALTER TABLE reservations ADD COLUMN same_day_reminder_sent_at TEXT DEFAULT ''").run()}catch(_){}
-    }
-    if(!cols.includes("instructor_reminder_sent_at")){
-      try{await env.DB.prepare("ALTER TABLE reservations ADD COLUMN instructor_reminder_sent_at TEXT DEFAULT ''").run()}catch(_){}
     }
   }catch(_){}
 }
@@ -275,17 +299,9 @@ async function ensureInstructors(env) {
     CREATE TABLE IF NOT EXISTS instructors (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL UNIQUE COLLATE NOCASE,
-      discord_user_id TEXT DEFAULT '',
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
   `).run();
-  try{
-    const q=await env.DB.prepare("PRAGMA table_info(instructors)").all();
-    const cols=(q.results||[]).map(x=>String(x.name||""));
-    if(!cols.includes("discord_user_id")){
-      try{await env.DB.prepare("ALTER TABLE instructors ADD COLUMN discord_user_id TEXT DEFAULT ''").run()}catch(_){}
-    }
-  }catch(_){}
 }
 
 async function ensureTrainingPrograms(env) {
@@ -1219,6 +1235,11 @@ const PUBLIC_BODY = `
     <div id="mySummary"></div>
     <div class="historyLauncher"><button id="openHistoryBtn" class="btn small" type="button">申請・受講履歴を見る</button></div>
 
+<div id="policyModal" class="modal"><div class="sheet">
+  <button id="closePolicyBtn" class="btn small" style="float:right" type="button">閉じる</button>
+  <div class="title">研修ポリシー</div>
+  <div id="policyBody" style="white-space:pre-wrap;line-height:1.75;margin-top:14px">読み込み中...</div>
+</div></div>
 <div id="historyModal" class="modal">
   <div class="modalCard">
     <div class="between">
@@ -1264,6 +1285,14 @@ const PUBLIC_BODY = `
     </div>
   </div>
   <div class="field"><label>備考</label><textarea id="note" maxlength="250" placeholder="必要な場合のみ入力"></textarea></div>
+  <div class="card" style="margin:12px 0;border:1px solid #d7ad45;padding:12px">
+    <div style="font-weight:900">研修ポリシー</div>
+    <button id="openPolicyBtn" type="button" class="btn small" style="margin-top:8px">内容を確認</button>
+    <label style="display:flex;gap:8px;align-items:flex-start;margin-top:10px;font-weight:800;line-height:1.4">
+      <input id="policyAgree" type="checkbox" style="width:20px;height:20px;margin-top:1px">
+      <span>研修ポリシーを確認し、内容に同意します</span>
+    </label>
+  </div>
   <button id="bookingSubmitBtn" type="button" class="btn primary" style="width:100%">申請する</button>
 </div></div>`;
 
@@ -1316,6 +1345,7 @@ async function load(){
 function openBooking(id,title){
  selectedTraining={id,title};
  document.getElementById('bookingMsg').innerHTML='';
+ if(document.getElementById('policyAgree'))document.getElementById('policyAgree').checked=false;
  document.getElementById('bookTitle').textContent=title+' 申請';
  const now=new Date();
  const local=new Date(now.getTime()-now.getTimezoneOffset()*60000).toISOString().slice(0,10);
@@ -1438,8 +1468,23 @@ async function cancelMyReservation(id){
  show('申請をキャンセルしました。','success');
  await loadMyPage();
 }
+async function openTrainingPolicy(){
+ const m=document.getElementById('policyModal'),e=document.getElementById('policyBody');
+ if(!m||!e)return;
+ m.classList.add('open');e.textContent='読み込み中...';
+ try{
+  const r=await fetch('/api/training-policy',{cache:'no-store'});
+  const d=await r.json().catch(()=>({}));
+  e.textContent=String(d.body||'研修ポリシーを取得できませんでした。');
+ }catch(_){e.textContent='研修ポリシーを取得できませんでした。'}
+}
+function closeTrainingPolicy(){document.getElementById('policyModal')?.classList.remove('open')}
+
 async function submitBooking(){
  if(!selectedTraining)return;
+ if(!document.getElementById('policyAgree')?.checked){
+  noticeIn('bookingMsg','研修ポリシーを確認し、同意してから申請してください。','error');return;
+ }
  const ids=['preferredDate','preferredTime','preferredDate2','preferredTime2','preferredDate3','preferredTime3'];
  const v=Object.fromEntries(ids.map(id=>[id,document.getElementById(id).value]));
  if(!v.preferredDate||!v.preferredTime){noticeIn('bookingMsg','第1希望の日時は必ず入力してください。','error');return}
@@ -1448,7 +1493,7 @@ async function submitBooking(){
  const btn=document.getElementById('bookingSubmitBtn');btn.disabled=true;btn.textContent='申請中...';
  try{
   const r=await fetch('/api/reservations',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({
-   training_id:selectedTraining.id,preferred_date:v.preferredDate,preferred_time:v.preferredTime,
+   policy_agreed:true,training_id:selectedTraining.id,preferred_date:v.preferredDate,preferred_time:v.preferredTime,
    preferred_date2:v.preferredDate2,preferred_time2:v.preferredTime2,
    preferred_date3:v.preferredDate3,preferred_time3:v.preferredTime3,note:document.getElementById('note').value.trim()
   })});
@@ -1460,6 +1505,9 @@ async function submitBooking(){
  }finally{btn.disabled=false;btn.textContent='申請する'}
 }
 document.getElementById('bookingSubmitBtn')?.addEventListener('click',submitBooking);
+document.getElementById('openPolicyBtn')?.addEventListener('click',openTrainingPolicy);
+document.getElementById('closePolicyBtn')?.addEventListener('click',closeTrainingPolicy);
+document.getElementById('policyModal')?.addEventListener('click',e=>{if(e.target.id==='policyModal')closeTrainingPolicy()});
 
 document.getElementById('openHistoryBtn')?.addEventListener('click',()=>document.getElementById('historyModal')?.classList.add('open'));
 document.getElementById('closeHistoryBtn')?.addEventListener('click',()=>document.getElementById('historyModal')?.classList.remove('open'));
@@ -1506,7 +1554,7 @@ const ADMIN_BODY = `
    <div class="card">
      <div class="title" style="font-size:16px">教官を登録</div>
      <div class="sub" style="margin:6px 0 12px">ここで登録した教官を研修の担当者として選べます。</div>
-     <div class="field"><label>教官名 *</label><input id="instructorName" maxlength="80" placeholder="教官名を入力"><input id="instructorDiscordId" inputmode="numeric" placeholder="DiscordユーザーID（任意）" style="margin-top:8px"></div>
+     <div class="field"><label>教官名 *</label><input id="instructorName" maxlength="80" placeholder="教官名を入力"></div>
      <button id="createInstructorBtn" class="btn primary" type="button" style="width:100%">教官を登録</button>
      <div id="instructorMsg"></div>
    </div>
@@ -1561,6 +1609,16 @@ const ADMIN_BODY = `
  <span class="badge">ADMIN TOOLS</span><div class="title" style="font-size:24px">管理メニュー</div>
  <div class="sub" style="margin:5px 0 16px">システム更新・ビルド確認などの管理機能</div>
  
+<div class="card" style="margin-bottom:12px">
+  <div class="title">研修ポリシー管理</div>
+  <div class="sub" style="margin-top:4px">研修生が申請前に確認・同意する内容です。</div>
+  <textarea id="adminTrainingPolicy" rows="13" style="width:100%;margin-top:10px;line-height:1.6" placeholder="研修ポリシー"></textarea>
+  <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+    <button class="btn small" type="button" onclick="loadAdminTrainingPolicy()">読み込む</button>
+    <button class="btn primary small" type="button" onclick="saveAdminTrainingPolicy()">変更を保存</button>
+  </div>
+  <div id="adminTrainingPolicyMsg" class="sub" style="margin-top:8px"></div>
+</div>
 <div class="card" style="margin-bottom:12px">
   <div class="title">Discord 研修申請通知</div>
   <div class="sub" style="margin-top:4px">研修申請Webhookと「@学科講師」自動メンションの接続状態を確認できます。</div>
@@ -1669,6 +1727,31 @@ async function restoreAdmin(){
  if(r.ok){showAdmin();await loadCurrentAdminRole();await loadAdmin();await loadReservationControl()}
 }
 
+async function loadAdminTrainingPolicy(){
+ const el=document.getElementById('adminTrainingPolicy'),msg=document.getElementById('adminTrainingPolicyMsg');
+ if(!el)return;
+ if(msg)msg.textContent='読み込み中...';
+ try{
+  const r=await fetch('/api/admin/training-policy',{headers:auth()});
+  const d=await r.json().catch(()=>({}));
+  if(!r.ok)throw new Error();
+  el.value=String(d.body||'');
+  if(msg)msg.textContent='読み込みました';
+ }catch(_){if(msg)msg.textContent='⚠️ 読み込めませんでした';}
+}
+async function saveAdminTrainingPolicy(){
+ const el=document.getElementById('adminTrainingPolicy'),msg=document.getElementById('adminTrainingPolicyMsg');
+ if(!el)return;
+ const body=el.value.trim();
+ if(body.length<20){if(msg)msg.textContent='⚠️ 本文が短すぎます';return;}
+ try{
+  const r=await fetch('/api/admin/training-policy',{method:'PUT',headers:auth(),body:JSON.stringify({body})});
+  const d=await r.json().catch(()=>({}));
+  if(!r.ok)throw new Error(d.error||'save failed');
+  if(msg)msg.textContent='✅ 保存しました';
+ }catch(_){if(msg)msg.textContent='⚠️ 保存できませんでした';}
+}
+
 async function checkDiscordWebhookStatus(){
  const el=document.getElementById('discordWebhookStatus');
  const msg=document.getElementById('discordWebhookMsg');
@@ -1721,7 +1804,7 @@ async function testDiscordWebhook(){
    if(btn){btn.disabled=false;btn.textContent='テスト通知を送る'}
  }
 }
-function openManageMenu(){setTimeout(checkDiscordWebhookStatus,150);document.getElementById('manageModal').classList.add('open');setTimeout(()=>loadBuildStatus(),150)}
+function openManageMenu(){setTimeout(checkDiscordWebhookStatus,150);setTimeout(loadAdminTrainingPolicy,150);document.getElementById('manageModal').classList.add('open');setTimeout(()=>loadBuildStatus(),150)}
 function closeManageMenu(){document.getElementById('manageModal').classList.remove('open')}
 function showAdminSection(section){
  const training=section==='training';
@@ -1916,8 +1999,7 @@ async function loadInstructors(){
 function renderInstructors(){
  const e=document.getElementById('instructorList');
  if(!instructorRows.length){e.innerHTML='<div class="empty">まだ教官は登録されていません。</div>';return}
- e.innerHTML=instructorRows.map(x=>'<div class="card"><div class="between"><div style="min-width:0;flex:1"><div class="title">'+esc(x.name)+'</div><div class="sub">Discord通知：'+(x.discord_user_id?'設定済み':'未設定')+'</div><div style="display:flex;gap:6px;margin-top:8px"><input data-instructor-discord="'+x.id+'" inputmode="numeric" placeholder="DiscordユーザーID" value="'+esc(x.discord_user_id||'')+'" style="min-width:0;flex:1"><button class="btn small" data-save-instructor-discord="'+x.id+'">保存</button></div></div><button class="btn small danger" data-delete-instructor="'+x.id+'">削除</button></div></div>').join('');
- document.querySelectorAll('[data-save-instructor-discord]').forEach(b=>b.addEventListener('click',()=>saveInstructorDiscord(Number(b.dataset.saveInstructorDiscord))));
+ e.innerHTML=instructorRows.map(x=>'<div class="card"><div class="between"><div><div class="title">'+esc(x.name)+'</div><div class="sub">登録済み教官</div></div><button class="btn small danger" data-delete-instructor="'+x.id+'">削除</button></div></div>').join('');
  document.querySelectorAll('[data-delete-instructor]').forEach(b=>b.addEventListener('click',()=>deleteInstructor(Number(b.dataset.deleteInstructor))));
 }
 function refreshInstructorSelect(selected){
@@ -1928,27 +2010,17 @@ function refreshInstructorSelect(selected){
 }
 async function createInstructor(){
  const name=document.getElementById('instructorName').value.trim();
- const discord_user_id=(document.getElementById('instructorDiscordId')?.value||'').trim();
  if(!name){noticeInAdmin('instructorMsg','教官名を入力してください','error');return}
  const btn=document.getElementById('createInstructorBtn');btn.disabled=true;btn.textContent='登録中...';
  try{
-   const r=await fetch('/api/admin/instructors',{method:'POST',headers:auth(),body:JSON.stringify({name,discord_user_id})});
+   const r=await fetch('/api/admin/instructors',{method:'POST',headers:auth(),body:JSON.stringify({name})});
    const d=await r.json().catch(()=>({}));
    if(!r.ok){noticeInAdmin('instructorMsg',d.error||'登録できませんでした','error');return}
-   document.getElementById('instructorName').value=''; if(document.getElementById('instructorDiscordId'))document.getElementById('instructorDiscordId').value='';
+   document.getElementById('instructorName').value='';
    noticeInAdmin('instructorMsg','教官を登録しました','success');
    await loadInstructors();
  }finally{btn.disabled=false;btn.textContent='教官を登録'}
 }
-async function saveInstructorDiscord(id){
- const input=document.querySelector('[data-instructor-discord="'+id+'"]');
- const discord_user_id=(input?.value||'').trim();
- const r=await fetch('/api/admin/instructors/'+id,{method:'PATCH',headers:auth(),body:JSON.stringify({discord_user_id})});
- const d=await r.json().catch(()=>({}));
- if(!r.ok){alert(d.error||'DiscordユーザーIDを保存できませんでした');return}
- await loadInstructors();
-}
-
 async function deleteInstructor(id){
  if(!confirm('この教官を削除しますか？\\n既存研修の担当者名はそのまま残ります。'))return;
  const r=await fetch('/api/admin/instructors/'+id,{method:'DELETE',headers:auth()});
@@ -2582,6 +2654,7 @@ async function handle(request, env) {
    const profile=await getTraineeSession(request,env);
    if(!profile)return json({error:"ログインが必要です"},401);
    const b=await request.json().catch(()=>({}));
+   if(b.policy_agreed!==true)return json({error:"研修ポリシーへの同意が必要です"},400);
    const trainingId=Number(b.training_id);
    if(!trainingId)return json({error:"研修が選択されていません"},400);
    const preferredDate=String(b.preferred_date||"").trim(), preferredTime=String(b.preferred_time||"").trim();
@@ -2731,9 +2804,27 @@ async function handle(request, env) {
    return json({profile,stats,history:results});
  }
 
+ if(path==="/api/training-policy" && method==="GET"){
+   return json(await getTrainingPolicy(env));
+ }
+ if(path==="/api/admin/training-policy" && method==="GET"){
+   if(!(await isAdmin()))return json({error:"unauthorized"},401);
+   return json(await getTrainingPolicy(env));
+ }
+ if(path==="/api/admin/training-policy" && method==="PUT"){
+   if(!(await isAdmin()))return json({error:"unauthorized"},401);
+   const b=await request.json().catch(()=>({}));
+   const body=String(b.body||"").trim();
+   if(body.length<20)return json({error:"研修ポリシー本文が短すぎます"},400);
+   if(body.length>10000)return json({error:"研修ポリシー本文が長すぎます"},400);
+   await ensureTrainingPolicy(env);
+   await env.DB.prepare("UPDATE training_policy SET body=?,updated_at=CURRENT_TIMESTAMP WHERE id=1").bind(body).run();
+   return json({ok:true});
+ }
+
  if(path==="/api/admin/discord-reminder-today/run" && method==="POST"){
    if(!(await isAdmin()))return json({error:"unauthorized"},401);
-   const result=await runSameDayAndInstructorReminder(env);
+   const result=await runSameDayReminder(env);
    return json({ok:true,...result});
  }
 
@@ -2817,7 +2908,7 @@ async function handle(request, env) {
 
  if(path==="/api/admin/instructors" && method==="GET"){
    await ensureInstructors(env);
-   const {results}=await env.DB.prepare("SELECT id,name,COALESCE(discord_user_id,'') AS discord_user_id,created_at FROM instructors ORDER BY name COLLATE NOCASE").all();
+   const {results}=await env.DB.prepare("SELECT id,name,created_at FROM instructors ORDER BY name COLLATE NOCASE").all();
    return json(results);
  }
 
@@ -2825,11 +2916,9 @@ async function handle(request, env) {
    await ensureInstructors(env);
    const b=await request.json().catch(()=>({}));
    const name=String(b.name||"").trim();
-   const discordUserId=String(b.discord_user_id||"").trim();
    if(!name)return json({error:"教官名は必須です"},400);
-   if(discordUserId && !/^\d{15,25}$/.test(discordUserId))return json({error:"DiscordユーザーIDの形式が正しくありません"},400);
    try{
-     const r=await env.DB.prepare("INSERT INTO instructors(name,discord_user_id) VALUES(?,?)").bind(name,discordUserId).run();
+     const r=await env.DB.prepare("INSERT INTO instructors(name) VALUES(?)").bind(name).run();
      return json({ok:true,id:r.meta?.last_row_id||null},201);
    }catch(e){
      const message=String(e?.message||e);
@@ -2839,14 +2928,6 @@ async function handle(request, env) {
  }
 
  let im=path.match(/^\/api\/admin\/instructors\/(\d+)$/);
- if(im && method==="PATCH"){
-   await ensureInstructors(env);
-   const b=await request.json().catch(()=>({}));
-   const discordUserId=String(b.discord_user_id||"").trim();
-   if(discordUserId && !/^\d{15,25}$/.test(discordUserId))return json({error:"DiscordユーザーIDの形式が正しくありません"},400);
-   await env.DB.prepare("UPDATE instructors SET discord_user_id=? WHERE id=?").bind(discordUserId,Number(im[1])).run();
-   return json({ok:true});
- }
  if(im && method==="DELETE"){
    await ensureInstructors(env);
    await env.DB.prepare("DELETE FROM instructors WHERE id=?").bind(Number(im[1])).run();
@@ -3386,83 +3467,41 @@ if(path==="/api/admin/github/upload-worker" && method==="POST"){
 
 function jstParts(date=new Date()){
   const j=new Date(date.getTime()+9*60*60*1000);
-  return {
-    y:j.getUTCFullYear(),
-    m:String(j.getUTCMonth()+1).padStart(2,"0"),
-    d:String(j.getUTCDate()).padStart(2,"0")
-  };
+  return {y:j.getUTCFullYear(),m:String(j.getUTCMonth()+1).padStart(2,"0"),d:String(j.getUTCDate()).padStart(2,"0")};
 }
-
-async function runSameDayAndInstructorReminder(env){
+async function runSameDayReminder(env){
   await ensureReservationPreferredSchedule(env);
   await ensureReservationNotifications(env);
-  await ensureInstructors(env);
-
-  const now=Date.now();
-  const p=jstParts(new Date(now));
-  const today=`${p.y}-${p.m}-${p.d}`;
-
+  const now=Date.now(),p=jstParts(new Date(now)),today=`${p.y}-${p.m}-${p.d}`;
   const q=await env.DB.prepare(`
     SELECT r.id,r.discord_id,r.confirmed_date,r.confirmed_time,r.assigned_instructor,
-           r.same_day_reminder_sent_at,r.instructor_reminder_sent_at,t.title,
-           COALESCE(i.discord_user_id,'') AS instructor_discord_user_id
-    FROM reservations r
-    LEFT JOIN trainings t ON t.id=r.training_id
-    LEFT JOIN instructors i ON lower(trim(i.name))=lower(trim(r.assigned_instructor))
-    WHERE r.status='reserved'
-      AND r.confirmed_date=?
-      AND COALESCE(r.confirmed_time,'')<>''
+           r.same_day_reminder_sent_at,t.title
+    FROM reservations r LEFT JOIN trainings t ON t.id=r.training_id
+    WHERE r.status='reserved' AND r.confirmed_date=? AND COALESCE(r.confirmed_time,'')<>''
     ORDER BY r.confirmed_time,r.id
   `).bind(today).all();
-
   const rows=Array.isArray(q?.results)?q.results:[];
-  let traineeSent=0,instructorSent=0,failed=0;
-
+  let sent=0,failed=0;
   for(const r of rows){
-    const parts=String(r.confirmed_time||"").split(":");
-    const hh=Number(parts[0]), mm=Number(parts[1]);
+    const [hh,mm]=String(r.confirmed_time||"").split(":").map(Number);
     if(!Number.isFinite(hh)||!Number.isFinite(mm))continue;
-
     const targetUtc=Date.UTC(Number(p.y),Number(p.m)-1,Number(p.d),hh-9,mm,0);
     const diff=targetUtc-now;
-
-    if(diff>0 && diff<=2*60*60*1000){
-      if(!String(r.same_day_reminder_sent_at||"")){
-        const tr=await sendDiscordDM(env,String(r.discord_id||""),[
-          "🔔 **本日の研修リマインドです**",
-          "",
-          "**研修**："+String(r.title||"研修"),
-          "**日時**："+[r.confirmed_date,r.confirmed_time].filter(Boolean).join(" "),
-          "**担当教官**："+String(r.assigned_instructor||"未設定"),
-          "",
-          "開始時刻が近づいています。時間に余裕を持ってご参加ください。"
-        ]);
-        if(tr.ok){
-          traineeSent++;
-          await env.DB.prepare("UPDATE reservations SET same_day_reminder_sent_at=? WHERE id=?")
-            .bind(new Date().toISOString(),Number(r.id)).run();
-        }else failed++;
-      }
-
-      if(!String(r.instructor_reminder_sent_at||"") && String(r.instructor_discord_user_id||"")){
-        const ir=await sendDiscordDM(env,String(r.instructor_discord_user_id||""),[
-          "👮 **担当研修の事前通知です**",
-          "",
-          "**研修**："+String(r.title||"研修"),
-          "**日時**："+[r.confirmed_date,r.confirmed_time].filter(Boolean).join(" "),
-          "",
-          "約2時間以内に担当研修があります。ご確認ください。"
-        ]);
-        if(ir.ok){
-          instructorSent++;
-          await env.DB.prepare("UPDATE reservations SET instructor_reminder_sent_at=? WHERE id=?")
-            .bind(new Date().toISOString(),Number(r.id)).run();
-        }else failed++;
-      }
+    if(diff>0 && diff<=2*60*60*1000 && !String(r.same_day_reminder_sent_at||"")){
+      const result=await sendDiscordDM(env,String(r.discord_id||""),[
+        "🔔 **本日の研修リマインドです**","",
+        "**研修**："+String(r.title||"研修"),
+        "**日時**："+[r.confirmed_date,r.confirmed_time].filter(Boolean).join(" "),
+        "**担当教官**："+String(r.assigned_instructor||"未設定"),"",
+        "開始時刻が近づいています。時間に余裕を持ってご参加ください。"
+      ]);
+      if(result.ok){
+        sent++;
+        await env.DB.prepare("UPDATE reservations SET same_day_reminder_sent_at=? WHERE id=?").bind(new Date().toISOString(),Number(r.id)).run();
+      }else failed++;
     }
   }
-
-  return {date:today,total:rows.length,trainee_sent:traineeSent,instructor_sent:instructorSent,failed};
+  return {date:today,total:rows.length,sent,failed};
 }
 
 async function runTrainingReminder(env){
@@ -3515,7 +3554,7 @@ async function runTrainingReminder(env){
 async function scheduled(event,env,ctx){
   const task=(async()=>{
     await runTrainingReminder(env);
-    await runSameDayAndInstructorReminder(env);
+    await runSameDayReminder(env);
   })();
   if(ctx && typeof ctx.waitUntil==="function")ctx.waitUntil(task);
   else await task;
