@@ -1,4 +1,4 @@
-const APP_VERSION="1.62";
+const APP_VERSION="1.63";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -2574,7 +2574,7 @@ async function loadReservationControl(){
          '<span class="pill expired">希望日時超過</span>'+
        '</div>'+
        '<h3 style="margin:12px 0 6px">'+esc(x.title||'研修')+'</h3>'+
-       '<div class="sub">研修生："+esc(x.player_name||'研修生')+'</div>'+
+       '<div class="sub">研修生：'+esc(x.player_name||'研修生')+'</div>'+
        '<div class="sub" style="margin-top:7px">第1希望：'+esc([x.preferred_date,x.preferred_time].filter(Boolean).join(' ')||'未登録')+'</div>'+
        (x.preferred_date2?'<div class="sub">第2希望：'+esc([x.preferred_date2,x.preferred_time2].filter(Boolean).join(' '))+'</div>':'')+
        (x.preferred_date3?'<div class="sub">第3希望：'+esc([x.preferred_date3,x.preferred_time3].filter(Boolean).join(' '))+'</div>':'')+
