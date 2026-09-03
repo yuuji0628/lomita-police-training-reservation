@@ -1,4 +1,4 @@
-const APP_VERSION="1.60";
+const APP_VERSION="1.61";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -3514,6 +3514,7 @@ async function handle(request, env) {
  // The configured training title is the source of truth for trainee-facing subject names.
  // Never overwrite trainings.title from training_programs.name.
  if(path==="/api/trainings" && method==="GET"){
+   await runExpiredPendingReservations(env);
    try{
      await ensureTrainingPrograms(env);
      const profile=await getTraineeSession(request,env);
@@ -3561,6 +3562,8 @@ async function handle(request, env) {
  }
 
  if(path==="/api/trainee/progress" && method==="GET"){
+   // 研修生画面でも期限超過を即時反映
+   await runExpiredPendingReservations(env);
    await ensureTrainingPrograms(env);
    await ensureReservationInstructor(env);
    await ensureReservationNotifications(env);
@@ -3721,6 +3724,7 @@ async function handle(request, env) {
  if(path.startsWith("/api/admin/") && !(await isAdmin())) return json({error:"unauthorized"},401);
 
  if(path==="/api/admin/stats" && method==="GET"){
+   await runExpiredPendingReservations(env);
    const trainings=await env.DB.prepare("SELECT COUNT(*) c FROM trainings WHERE date(training_date)>=date('now')").first();
    const pending=await env.DB.prepare("SELECT COUNT(*) c FROM reservations WHERE status='pending'").first();
    const reserved=await env.DB.prepare("SELECT COUNT(*) c FROM reservations WHERE status='reserved'").first();
@@ -4166,6 +4170,8 @@ async function handle(request, env) {
 
  if(path==="/api/admin/reservation-control" && method==="GET"){
    if(!(await isAdmin()))return json({error:"unauthorized"},401);
+   // 画面を開いた時点で期限超過を即時反映
+   await runExpiredPendingReservations(env);
    await ensureReservationInstructor(env);
    await ensureReservationPreferredSchedule(env);
    await ensureReservationNotifications(env);
