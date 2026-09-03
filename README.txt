@@ -1,26 +1,12 @@
-LOMITA POLICE Training Reservation - Version 1.54
+LOMITA POLICE Training Reservation - Version 1.55
 
 追加
-- 「違反テスト」も合格 / 不合格判定に対応
+- 受講済み履歴に「受講済みを取り消す」ボタン
+- 取り消すと status を reserved（予約確定）へ戻す
+- completed_at（受講日）を解除
+- 本採用試験 / 違反テストの合否・得点を解除
+- 研修進捗表の修了印を解除
+- 全研修修了判定を自動再計算
+- 管理訂正扱いのため、取り消し時は本人へのDiscord DMなし
 
-違反テスト 合格
-- status = completed
-- 進捗表は修了扱い
-- Discord DM:
-  「違反テスト 合格」
-  「合格おめでとうございます。次の研修も頑張ってください。」
-
-違反テスト 不合格
-- status = retake
-- 修了扱いにしない
-- Discord DM:
-  「違反テスト 不合格」
-  「再度内容を復習し、教官の指示に従って再受験をお願いします。」
-
-本採用試験
-- Version 1.53の合格 / 不合格判定
-- 任意の100点満点入力
-- 合格時の正式本採用通知
-を維持
-
-Version 1.53までの既存機能を維持
+Version 1.54までの既存機能を維持
