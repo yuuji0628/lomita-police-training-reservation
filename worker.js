@@ -1,4 +1,4 @@
-const APP_VERSION="1.34";
+const APP_VERSION="1.35";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -122,7 +122,8 @@ async function sendTrainingApplicationDiscordNotification(env,payload){
     allowed_mentions:validRoleId?{parse:[],roles:[roleId]}:{parse:[]},
     embeds:[{
       title:"📘 新しい研修申請",
-      description:validRoleId?"学科講師の確認をお願いします。":"研修申請が届きました。",
+      description:(validRoleId?"学科講師の確認をお願いします。":"研修申請が届きました。")+
+        "\n\n🔗 [管理画面を開く](https://lomita-police-training-reservation.rrwpvwmz8p.workers.dev/admin)",
       color:13610549,
       fields,
       timestamp:new Date().toISOString(),
