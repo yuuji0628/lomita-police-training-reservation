@@ -1,4 +1,4 @@
-const APP_VERSION="1.47";
+const APP_VERSION="1.48";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -1246,6 +1246,60 @@ textarea{min-height:90px}
 }
 
 
+
+.completionHero{
+  position:relative;overflow:hidden;margin:0 0 14px;padding:20px 16px;
+  border:2px solid #d7ad45;border-radius:18px;
+  background:linear-gradient(145deg,#fffdf6,#fff8dc);
+  box-shadow:0 8px 22px rgba(14,35,62,.08);text-align:center;
+}
+.completionHero:before,.completionHero:after{content:"";position:absolute;width:34px;height:34px;border-color:#d7ad45;opacity:.75}
+.completionHero:before{left:8px;top:8px;border-left:3px solid;border-top:3px solid}
+.completionHero:after{right:8px;bottom:8px;border-right:3px solid;border-bottom:3px solid}
+.completionStars{color:#c69a27;font-size:18px;letter-spacing:7px;margin-bottom:4px}
+.completionHeroTitle{font-size:28px;font-weight:1000;color:#0c2748;letter-spacing:1px}
+.completionHeroLine{width:70%;height:2px;background:#d7ad45;margin:10px auto 14px;border-radius:999px}
+.completionHeroGrid{display:grid;grid-template-columns:1fr auto;gap:14px;align-items:center;text-align:left;max-width:420px;margin:0 auto}
+.completionHeroMeta{display:grid;gap:8px;font-weight:900;color:#1b2b40}
+.completionHeroMetaRow{display:grid;grid-template-columns:82px 1fr;gap:8px}
+.completionHeroMetaRow b{color:#0c2748}
+.completionBigSeal{
+  width:92px;height:92px;border-radius:50%;border:5px solid #c89d2d;
+  box-shadow:inset 0 0 0 4px #0d2b50,inset 0 0 0 8px #f6e5a8;
+  background:#0d2b50;color:#e7bc43;display:flex;align-items:center;justify-content:center;
+  font-size:28px;font-weight:1000;
+}
+.completionDivision{margin-top:14px;color:#a77d20;font-size:9px;font-weight:900;letter-spacing:2px}
+.completionCertBtn{
+  width:100%;margin:12px 0 0;border:2px solid #d7ad45;border-radius:14px;padding:13px 16px;
+  background:#0c2748;color:#fff;font-weight:1000;font-size:16px;
+}
+#completionCertificateModal{z-index:95}
+#completionCertificateModal .modalCard{max-height:90vh;overflow:auto}
+.certificatePaper{
+  background:linear-gradient(145deg,#fffdf7,#fff8dc);border:3px double #c89d2d;
+  border-radius:18px;padding:24px 18px;text-align:center;color:#0c2748;
+}
+.certificateKicker{color:#a77d20;font-size:11px;font-weight:1000;letter-spacing:2px}
+.certificateTitle{font-size:32px;font-weight:1000;margin-top:8px}
+.certificateSub{font-size:14px;font-weight:900;margin-top:4px}
+.certificateName{font-size:24px;font-weight:1000;margin:22px 0 8px}
+.certificateBody{font-size:13px;line-height:1.8;color:#34455b}
+.certificateSeal{
+  width:112px;height:112px;margin:22px auto 10px;border-radius:50%;border:5px solid #c89d2d;
+  box-shadow:inset 0 0 0 4px #0d2b50,inset 0 0 0 8px #f6e5a8;background:#0d2b50;
+  color:#e7bc43;display:flex;align-items:center;justify-content:center;font-size:32px;font-weight:1000;
+}
+.certificateDate{margin-top:14px;font-weight:900}
+.finishedTrainingCard{margin-top:12px;padding:14px;display:flex;gap:12px;align-items:center}
+.finishedTrainingCheck{width:42px;height:42px;border-radius:50%;background:#fff8dc;display:flex;align-items:center;justify-content:center;color:#c89d2d;font-size:24px;font-weight:1000;flex:0 0 auto}
+@media(max-width:430px){
+ .completionHeroGrid{grid-template-columns:1fr 80px;gap:10px}
+ .completionBigSeal{width:76px;height:76px;font-size:23px}
+ .completionHeroTitle{font-size:25px}
+ .completionHeroMetaRow{grid-template-columns:76px 1fr;font-size:13px}
+}
+
 .adminStatusButtons{
   display:grid;
   grid-template-columns:repeat(5,minmax(0,1fr));
@@ -1336,6 +1390,15 @@ const PUBLIC_BODY = `
   <div class="title">研修ポリシー</div>
   <div id="policyBody" style="white-space:pre-wrap;line-height:1.75;margin-top:14px">読み込み中...</div>
 </div></div>
+<div id="completionCertificateModal" class="modal">
+  <div class="modalCard">
+    <div class="between">
+      <div><div class="title">研修修了証</div><div class="sub">CERTIFICATE OF COMPLETION</div></div>
+      <button type="button" class="btn small" onclick="closeCompletionCertificate()">閉じる</button>
+    </div>
+    <div id="completionCertificateBody" style="margin-top:12px"></div>
+  </div>
+</div>
 <div id="historyModal" class="modal">
   <div class="modalCard">
     <div class="between">
@@ -1460,6 +1523,28 @@ function instructorStamp(name){
  const cls=n.length>=9?'stName long':'stName';
  return '<div class="instructorStamp" title="担当教官：'+esc(n)+'"><div class="stStar">★</div><div class="stTop">LOMITA POLICE</div><div class="'+cls+'">'+esc(n)+'</div><div class="stDone">CERTIFIED</div></div>';
 }
+function openCompletionCertificate(name,date,total){
+ const modal=document.getElementById('completionCertificateModal');
+ const body=document.getElementById('completionCertificateBody');
+ if(!modal||!body)return;
+ body.innerHTML=
+   '<div class="certificatePaper">'+
+     '<div class="certificateKicker">LOMITA POLICE TRAINING DIVISION</div>'+
+     '<div class="certificateTitle">研修修了証</div>'+
+     '<div class="certificateSub">CERTIFICATE OF COMPLETION</div>'+
+     '<div class="certificateName">'+esc(name||'研修生')+'</div>'+
+     '<div class="certificateBody">上記の者は、LOMITA POLICEが定める<br>全研修課程を修了したことを証します。</div>'+
+     '<div class="certificateSeal">修了</div>'+
+     '<div class="certificateDate">修了日：'+esc(String(date||'').replaceAll('-','/'))+'</div>'+
+     '<div class="certificateBody" style="margin-top:12px">修了研修：'+Number(total||0)+' / '+Number(total||0)+'</div>'+
+     '<div class="completionDivision">LOMITA POLICE TRAINING DIVISION</div>'+
+   '</div>';
+ modal.classList.add('open');
+}
+function closeCompletionCertificate(){
+ document.getElementById('completionCertificateModal')?.classList.remove('open');
+}
+
 function ledgerStamp(name){
  const n=String(name||'担当教官').trim()||'担当教官';
  const cls=n.length>=9?'s2 long':'s2';
@@ -1488,7 +1573,25 @@ async function loadProgress(){
      return;
    }
    const completed=rows.filter(p=>p.status==='completed').length;
-   const completionCard=d.all_completed?'<div style="margin-bottom:12px;padding:14px;border:2px solid #d7ad45;border-radius:14px;background:#fff9df;text-align:center"><div style="font-size:20px;font-weight:1000">🏅 全研修修了</div><div style="margin-top:5px;font-weight:900">LOMITA POLICE TRAINING COMPLETED</div><div class="sub" style="margin-top:5px">修了日：'+esc(String(d.all_completed_at||'').replaceAll('-','/'))+'</div></div>':'';
+   const completionDate=String(d.all_completed_at||'');
+   const completionName=String(myProfile?.player_name||'研修生');
+   const completionCard=d.all_completed
+     ?'<div class="completionHero">'+
+        '<div class="completionStars">★ ★ ★</div>'+
+        '<div class="completionHeroTitle">全研修修了</div>'+
+        '<div class="completionHeroLine"></div>'+
+        '<div class="completionHeroGrid">'+
+          '<div class="completionHeroMeta">'+
+            '<div class="completionHeroMetaRow"><span>研修生名</span><b>'+esc(completionName)+'</b></div>'+
+            '<div class="completionHeroMetaRow"><span>修了日</span><b>'+esc(completionDate.replaceAll('-','/'))+'</b></div>'+
+            '<div class="completionHeroMetaRow"><span>修了研修</span><b>'+completed+' / '+rows.length+'</b></div>'+
+          '</div>'+
+          '<div class="completionBigSeal">修了</div>'+
+        '</div>'+
+        '<div class="completionDivision">LOMITA POLICE TRAINING DIVISION</div>'+
+       '</div>'+
+       '<button type="button" class="completionCertBtn" id="completionCertBtn">▣　修了証を表示　›</button>'
+     :'';
    const perRow=8;
    const groups=[];
    for(let i=0;i<rows.length;i+=perRow)groups.push(rows.slice(i,i+perRow));
@@ -1535,7 +1638,12 @@ async function loadProgress(){
         groups.map((g,idx)=>'<div class="ledgerTable">'+makeCells(g,idx*perRow)+'</div>').join('')+
         '<div class="ledgerLegend">横にスワイプして原簿全体を確認できます。</div>'+
       '</div>'+
-    '</div>' }catch(_){
+    '</div>'+
+    (d.all_completed?'<div class="card finishedTrainingCard"><div class="finishedTrainingCheck">✓</div><div><div style="font-weight:1000;color:#0c2748">すべての研修が完了しています</div><div class="sub">お疲れさまでした。引き続き、日々の業務に励んでください。</div></div></div>':'');
+   if(d.all_completed){
+     document.getElementById('completionCertBtn')?.addEventListener('click',()=>openCompletionCertificate(completionName,completionDate,rows.length));
+   }
+ }catch(_){
    el.innerHTML='<div class="notice error">進捗を取得できませんでした。</div>';
  }
 }
