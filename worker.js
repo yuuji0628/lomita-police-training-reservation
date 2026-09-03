@@ -1,4 +1,4 @@
-const APP_VERSION="1.26";
+const APP_VERSION="1.27";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -1141,7 +1141,6 @@ async function loadProgress(){
      return;
    }
    const completed=rows.filter(p=>p.status==='completed').length;
-   const traineeName=(window.myProfile&&window.myProfile.player_name)||'研修生';
    const perRow=8;
    const groups=[];
    for(let i=0;i<rows.length;i+=perRow)groups.push(rows.slice(i,i+perRow));
@@ -1185,7 +1184,7 @@ async function loadProgress(){
     '<div class="ledgerScroll">'+
       '<div class="ledgerPaper">'+
         '<div class="ledgerTop">'+
-          '<div><b>研修原簿</b>　研修生：'+esc(traineeName)+'</div>'+
+          '<div><b>研修進捗表</b></div>'+
           '<div>修了 '+completed+' / '+rows.length+'</div>'+
         '</div>'+
         groups.map((g,idx)=>'<div class="ledgerTable">'+makeCells(g,idx*perRow)+'</div>').join('')+
@@ -1209,7 +1208,7 @@ async function loadMyPage(){
     '<div><div class="compactUserName">'+esc(d.profile.player_name||'研修生')+'</div><div class="compactUserSub">ログイン中</div></div>'+
   '</div>'+
   '<div class="dashboardProgressBox">'+
-    '<div class="dashboardProgressHead"><div class="dashboardProgressTitle">研修原簿</div><div class="sub">教習原簿形式</div></div>'+
+    '<div class="dashboardProgressHead"><div class="dashboardProgressTitle">研修進捗表</div></div>'+
     '<div id="trainingProgressList" class="trainingProgressGrid"><div class="empty">進捗を読み込み中...</div></div>'+
   '</div>';
  loadProgress();
