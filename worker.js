@@ -1,4 +1,4 @@
-const APP_VERSION="1.53";
+const APP_VERSION="1.54";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -221,6 +221,33 @@ async function sendReservationCancelledDM(env,payload){
   ]);
 }
 
+async function sendViolationTestResultDM(env,payload){
+  if(String(payload.exam_result)==="pass"){
+    return await sendDiscordDM(env,payload.discord_user_id,[
+      "✅ **違反テスト 合格**",
+      "",
+      "**研修生**："+String(payload.player_name||"研修生"),
+      "**試験**："+String(payload.training_title||"違反テスト"),
+      "",
+      "合格おめでとうございます。",
+      "**次の研修も頑張ってください。**"
+    ]);
+  }
+
+  if(String(payload.exam_result)==="fail"){
+    return await sendDiscordDM(env,payload.discord_user_id,[
+      "📘 **違反テスト 不合格**",
+      "",
+      "**研修生**："+String(payload.player_name||"研修生"),
+      "**試験**："+String(payload.training_title||"違反テスト"),
+      "",
+      "再度内容を復習し、教官の指示に従って再受験をお願いします。"
+    ]);
+  }
+
+  return {ok:false,skipped:true,reason:"invalid_violation_result"};
+}
+
 async function sendFinalEmploymentExamResultDM(env,payload){
   const score=payload.exam_score===null || payload.exam_score===undefined || payload.exam_score===""
     ? ""
@@ -419,6 +446,11 @@ async function refreshTraineeFullCompletionByDiscord(env,key){
   await ensureTraineeProfiles(env);
   const p=await env.DB.prepare("SELECT id FROM trainee_profiles WHERE lower(trim(COALESCE(discord_id,'')))=lower(trim(?)) OR lower(trim(COALESCE(login_name,'')))=lower(trim(?)) OR lower(trim(COALESCE(player_name,'')))=lower(trim(?)) LIMIT 1").bind(key,key,key).first();
   return p?await refreshTraineeFullCompletion(env,p.id):{completed:false,date:""};
+}
+
+function isViolationTestTitle(v){
+  const s=String(v||"").trim();
+  return s==="違反テスト" || (s.includes("違反") && s.includes("テスト"));
 }
 
 function isFinalEmploymentExamTitle(v){
@@ -2267,18 +2299,20 @@ async function loadReservationControl(){
      instructorRows.map(i=>'<option value="'+esc(i.name)+'" '+(x.assigned_instructor===i.name?'selected':'')+'>'+esc(i.name)+'</option>').join('');
    const border=x.status==='pending'?'#d9b33b':x.status==='reserved'?'#0b4fa3':x.status==='retake'?'#9a6700':'#a15c00';
    const isFinalExam=isFinalEmploymentExamName(x.title);
+   const isViolationTest=isViolationTestName(x.title);
+   const isJudgementExam=isFinalExam||isViolationTest;
    const examResult=String(x.exam_result||'');
    const examScore=(x.exam_score===null||x.exam_score===undefined)?'':String(x.exam_score);
-   const examBox=isFinalExam
+   const examBox=isJudgementExam
      ?'<div class="finalExamBox">'+
-        '<div class="finalExamTitle">本採用試験 判定</div>'+
+        '<div class="finalExamTitle">'+(isFinalExam?'本採用試験 判定':'違反テスト 判定')+'</div>'+
         '<div class="sub" style="margin-top:3px">試験終了後に「合格 / 不合格」を選択してください。</div>'+
         '<input type="hidden" id="examResult_'+x.id+'" value="'+esc(examResult)+'">'+
         '<div class="finalExamButtons">'+
           '<button type="button" class="finalExamBtn pass '+(examResult==='pass'?'active':'')+'" data-exam-id="'+x.id+'" data-exam-result="pass">合格</button>'+
           '<button type="button" class="finalExamBtn fail '+(examResult==='fail'?'active':'')+'" data-exam-id="'+x.id+'" data-exam-result="fail">不合格</button>'+
         '</div>'+
-        '<div class="field finalExamScore"><label>得点（任意・100点満点）</label><input id="examScore_'+x.id+'" type="number" inputmode="numeric" min="0" max="100" step="1" placeholder="例：85" value="'+esc(examScore)+'"></div>'+
+        (isFinalExam?'<div class="field finalExamScore"><label>得点（任意・100点満点）</label><input id="examScore_'+x.id+'" type="number" inputmode="numeric" min="0" max="100" step="1" placeholder="例：85" value="'+esc(examScore)+'"></div>':'')+
        '</div>'
      :'';
 
@@ -2369,7 +2403,7 @@ async function saveReservationFromList(id){
  }
 
  if(examResultEl && ['completed','retake'].includes(status) && !['pass','fail'].includes(exam_result)){
-   alert('本採用試験の「合格 / 不合格」を選択してください。');
+   alert('「合格 / 不合格」を選択してください。');
    return;
  }
 
@@ -2449,6 +2483,7 @@ async function deleteInstructor(id){
 }
 
 function isFinalEmploymentExamName(v){const s=String(v||'').trim();return s.includes('本採用')&&s.includes('試験')}
+function isViolationTestName(v){const s=String(v||'').trim();return s==='違反テスト'||(s.includes('違反')&&s.includes('テスト'))}
 function isOrientationProgramName(v){return String(v||'').trim()==='オリエンテーション'}
 let programRows=[];
 async function loadPrograms(){
@@ -3832,15 +3867,17 @@ async function handle(request, env) {
    const assigned=String(b.assigned_instructor||"").trim();
    const confirmedPreference=Number(b.confirmed_preference||0);
    const finalExam=isFinalEmploymentExamTitle(before.title);
+   const violationTest=isViolationTestTitle(before.title);
+   const judgementExam=finalExam||violationTest;
    const examResult=String(b.exam_result||"").trim();
    const examScoreRaw=b.exam_score;
    const examScore=(examScoreRaw===null || examScoreRaw===undefined || examScoreRaw==="")?null:Number(examScoreRaw);
 
-   if(finalExam && (b.status==="completed" || b.status==="retake")){
-     if(!["pass","fail"].includes(examResult))return json({error:"本採用試験の合格・不合格を選択してください"},400);
+   if(judgementExam && (b.status==="completed" || b.status==="retake")){
+     if(!["pass","fail"].includes(examResult))return json({error:"合格・不合格を選択してください"},400);
      if(examResult==="pass" && b.status!=="completed")return json({error:"合格判定は受講済みとして保存してください"},400);
      if(examResult==="fail" && b.status!=="retake")return json({error:"不合格判定は再受講として保存してください"},400);
-     if(examScore!==null && (!Number.isInteger(examScore) || examScore<0 || examScore>100))return json({error:"得点は0〜100の整数で入力してください"},400);
+     if(finalExam && examScore!==null && (!Number.isInteger(examScore) || examScore<0 || examScore>100))return json({error:"得点は0〜100の整数で入力してください"},400);
    }
 
    if(b.status==="reserved" && ![1,2,3].includes(confirmedPreference))return json({error:"承認する希望日時を選択してください"},400);
@@ -3882,10 +3919,10 @@ async function handle(request, env) {
 
    if(completedAt){
      await env.DB.prepare("UPDATE reservations SET status=?,assigned_instructor=?,confirmed_date=?,confirmed_time=?,confirmed_preference=?,completed_at=?,exam_result=?,exam_score=? WHERE id=?")
-       .bind(b.status,assigned,confirmedDate,confirmedTime,confirmedPref,completedAt,finalExam?examResult:"",finalExam?examScore:null,reservationId).run();
+       .bind(b.status,assigned,confirmedDate,confirmedTime,confirmedPref,completedAt,judgementExam?examResult:"",finalExam?examScore:null,reservationId).run();
    }else{
      await env.DB.prepare("UPDATE reservations SET status=?,assigned_instructor=?,confirmed_date=?,confirmed_time=?,confirmed_preference=?,exam_result=?,exam_score=? WHERE id=?")
-       .bind(b.status,assigned,confirmedDate,confirmedTime,confirmedPref,finalExam?examResult:"",finalExam?examScore:null,reservationId).run();
+       .bind(b.status,assigned,confirmedDate,confirmedTime,confirmedPref,judgementExam?examResult:"",finalExam?examScore:null,reservationId).run();
    }
 
    let dmResult={ok:false,skipped:true};
@@ -3911,6 +3948,13 @@ async function handle(request, env) {
        training_title:String(before.title||"本採用試験"),
        exam_result:examResult,
        exam_score:examScore
+     });
+   }else if(violationTest && ["pass","fail"].includes(examResult) && previousStatus!==b.status){
+     dmResult=await sendViolationTestResultDM(env,{
+       discord_user_id:String(before.discord_id||""),
+       player_name:String(before.player_name||"研修生"),
+       training_title:String(before.title||"違反テスト"),
+       exam_result:examResult
      });
    }else if(b.status==="reserved" && previousStatus!=="reserved"){
      dmResult=await sendReservationConfirmedDM(env,{
@@ -3952,7 +3996,7 @@ async function handle(request, env) {
      confirmed_date:confirmedDate,
      confirmed_time:confirmedTime,
      confirmed_preference:confirmedPref,
-     exam_result:finalExam?examResult:"",
+     exam_result:judgementExam?examResult:"",
      exam_score:finalExam?examScore:null,
      dm_sent:!!dmResult.ok,
      dm_skipped:!!dmResult.skipped
