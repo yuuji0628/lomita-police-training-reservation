@@ -1,11 +1,10 @@
-LOMITA POLICE Training Reservation - Version 1.48
+LOMITA POLICE Training Reservation - Version 1.49
 
-追加
-- 全研修修了時の専用カードを紺×ゴールドで強化
-- 研修生名 / 修了日 / 修了研修数を表示
-- 大型の修了シール
-- 「修了証を表示」ボタン
-- 修了証モーダル
-- 「すべての研修が完了しています」表示
+修正
+- 「受講履歴を見る」で「研修履歴データを読み取れませんでした」となる問題を修正
+- 研修履歴APIから環境差の出やすい trainings の補助列参照を削除
+- 履歴取得を confirmed_date / completed_at / preferred_date ベースに統一
+- API内部エラー時も必ずJSONで返却
+- WorkerのHTMLエラー画面が返ってフロントがJSON解析失敗する問題を防止
 
-既存機能はVersion 1.47を維持
+Version 1.48の修了証デザインを維持
