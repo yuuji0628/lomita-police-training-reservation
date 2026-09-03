@@ -1,4 +1,4 @@
-const APP_VERSION="1.63";
+const APP_VERSION="1.64";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -5032,7 +5032,7 @@ async function runPendingApprovalAnnouncement(env){
   await ensureReservationPreferredSchedule(env);
   await ensureReservationNotifications(env);
 
-  const cutoff=new Date(Date.now()-3*60*60*1000).toISOString();
+  const cutoff=new Date(Date.now()-1*60*60*1000).toISOString();
 
   const q=await env.DB.prepare(`
     SELECT
