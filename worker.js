@@ -1,4 +1,4 @@
-const APP_VERSION="1.43";
+const APP_VERSION="1.44";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -178,6 +178,34 @@ async function sendReservationConfirmedDM(env,payload){
     "**担当教官**："+String(payload.assigned_instructor||"未設定"),
     "",
     "当日は時間に余裕を持ってご参加ください。"
+  ]);
+}
+
+async function sendReservationChangedDM(env,payload){
+  const lines=[
+    "🔄 **研修予約の内容が変更されました**",
+    "",
+    "**研修**："+String(payload.training_title||"研修")
+  ];
+  if(payload.old_datetime || payload.new_datetime){
+    lines.push("**日時**："+String(payload.old_datetime||"未設定")+" → "+String(payload.new_datetime||"未設定"));
+  }
+  if(payload.old_instructor !== payload.new_instructor){
+    lines.push("**担当教官**："+String(payload.old_instructor||"未設定")+" → "+String(payload.new_instructor||"未設定"));
+  }
+  lines.push("","変更後の内容をご確認ください。");
+  return await sendDiscordDM(env,payload.discord_user_id,lines);
+}
+
+async function sendReservationCancelledDM(env,payload){
+  return await sendDiscordDM(env,payload.discord_user_id,[
+    "❌ **研修予約がキャンセルされました**",
+    "",
+    "**研修**："+String(payload.training_title||"研修"),
+    "**予定日時**："+String(payload.confirmed_datetime||"未設定"),
+    "**担当教官**："+String(payload.assigned_instructor||"未設定"),
+    "",
+    "必要な場合は、研修生ポータルから改めて申請してください。"
   ]);
 }
 
@@ -1156,7 +1184,7 @@ textarea{min-height:90px}
 
 .adminStatusButtons{
   display:grid;
-  grid-template-columns:repeat(3,minmax(0,1fr));
+  grid-template-columns:repeat(4,minmax(0,1fr));
   gap:7px;
   margin-top:6px;
 }
@@ -1173,6 +1201,7 @@ textarea{min-height:90px}
 .adminStatusBtn.active[data-status="reserved"]{background:#0a2b50;color:#fff;border-color:#0a2b50}
 .adminStatusBtn.active[data-status="completed"]{background:#16834c;color:#fff;border-color:#16834c}
 .adminStatusBtn.active[data-status="absent"]{background:#b42318;color:#fff;border-color:#b42318}
+.adminStatusBtn.active[data-status="cancelled"]{background:#5b6470;color:#fff;border-color:#5b6470}
 
 
 .completedAdminBox{margin-top:14px;background:#fff;border:1px solid #d8e0ea;border-radius:15px;padding:12px;box-shadow:0 2px 7px rgba(10,34,61,.05)}
@@ -1942,12 +1971,13 @@ function chooseReservationStatus(id,status){
  });
 }
 function renderReservationStatusButtons(id,currentStatus){
- const normalized=['reserved','completed','absent'].includes(currentStatus)?currentStatus:'reserved';
+ const normalized=['reserved','completed','absent','cancelled'].includes(currentStatus)?currentStatus:'reserved';
  return '<input type="hidden" id="reservationStatus_'+id+'" value="'+esc(normalized)+'">'+
    '<div class="adminStatusButtons">'+
      '<button type="button" class="adminStatusBtn '+(normalized==='reserved'?'active':'')+'" data-reservation-id="'+id+'" data-status="reserved">予約確定</button>'+
      '<button type="button" class="adminStatusBtn '+(normalized==='completed'?'active':'')+'" data-reservation-id="'+id+'" data-status="completed">受講済み</button>'+
      '<button type="button" class="adminStatusBtn '+(normalized==='absent'?'active':'')+'" data-reservation-id="'+id+'" data-status="absent">欠席</button>'+
+     '<button type="button" class="adminStatusBtn '+(normalized==='cancelled'?'active':'')+'" data-reservation-id="'+id+'" data-status="cancelled">キャンセル</button>'+
    '</div>';
 }
 
@@ -1981,7 +2011,10 @@ async function saveReservationFromList(id){
    return;
  }
  const label=labels[status]||status;
- if(!confirm('この予約を「'+label+'」に変更しますか？'))return;
+ const confirmText=status==='cancelled'
+   ?'この予約をキャンセルしますか？\n研修生本人へDiscord DMで通知されます。'
+   :'この予約を「'+label+'」に変更しますか？';
+ if(!confirm(confirmText))return;
 
  try{
    const r=await fetch('/api/admin/reservations/'+id,{
@@ -3204,7 +3237,7 @@ async function handle(request, env) {
    const reservationId=Number(m[1]);
    const before=await env.DB.prepare(`
      SELECT r.status,r.discord_id,r.player_name,r.assigned_instructor,
-            r.confirmed_date,r.confirmed_time,t.title
+            r.confirmed_date,r.confirmed_time,r.confirmed_preference,t.title
      FROM reservations r
      LEFT JOIN trainings t ON t.id=r.training_id
      WHERE r.id=?
@@ -3263,19 +3296,50 @@ async function handle(request, env) {
    }
 
    let dmResult={ok:false,skipped:true};
+   const oldDate=String(before.confirmed_date||"");
+   const oldTime=String(before.confirmed_time||"");
+   const oldInstructor=String(before.assigned_instructor||"");
+   const oldDateTime=[oldDate,oldTime].filter(Boolean).join(" ");
+   const newDateTime=[confirmedDate,confirmedTime].filter(Boolean).join(" ");
+   const reservedDetailsChanged=
+     previousStatus==="reserved" &&
+     b.status==="reserved" &&
+     (
+       oldDate!==confirmedDate ||
+       oldTime!==confirmedTime ||
+       oldInstructor!==assigned ||
+       Number(before.confirmed_preference||0)!==confirmedPref
+     );
+
    if(b.status==="reserved" && previousStatus!=="reserved"){
      dmResult=await sendReservationConfirmedDM(env,{
        discord_user_id:String(before.discord_id||""),
        training_title:String(before.title||"研修"),
-       confirmed_datetime:[confirmedDate,confirmedTime].filter(Boolean).join(" "),
+       confirmed_datetime:newDateTime,
        assigned_instructor:assigned
+     });
+   }else if(reservedDetailsChanged){
+     dmResult=await sendReservationChangedDM(env,{
+       discord_user_id:String(before.discord_id||""),
+       training_title:String(before.title||"研修"),
+       old_datetime:oldDateTime,
+       new_datetime:newDateTime,
+       old_instructor:oldInstructor,
+       new_instructor:assigned
+     });
+   }else if(b.status==="cancelled" && previousStatus!=="cancelled"){
+     dmResult=await sendReservationCancelledDM(env,{
+       discord_user_id:String(before.discord_id||""),
+       training_title:String(before.title||"研修"),
+       confirmed_datetime:oldDateTime||newDateTime,
+       assigned_instructor:oldInstructor||assigned
      });
    }else if((b.status==="completed" || b.status==="absent") && previousStatus!==b.status){
      dmResult=await sendReservationStatusDM(env,{
        discord_user_id:String(before.discord_id||""),
        status:b.status,
        training_title:String(before.title||"研修"),
-       confirmed_datetime:[confirmedDate,confirmedTime].filter(Boolean).join(" "),
+       confirmed_datetime:newDateTime,
        assigned_instructor:assigned
      });
    }
