@@ -1,4 +1,4 @@
-const APP_VERSION="1.74";
+const APP_VERSION="1.75";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -736,6 +736,26 @@ const html = (title, body, script = "") => new Response(`<!doctype html>
   --warn:#a15c00;
 }
 *{box-sizing:border-box}
+
+#historyModal{
+  align-items:flex-end;
+  overflow:hidden;
+  overscroll-behavior:contain;
+}
+#historyModal .modalCard{
+  width:100%;
+  max-height:88dvh;
+  overflow-y:auto !important;
+  overflow-x:hidden;
+  -webkit-overflow-scrolling:touch;
+  overscroll-behavior:contain;
+  touch-action:pan-y;
+  padding-bottom:calc(24px + env(safe-area-inset-bottom));
+}
+#historyModal #myHistory{overflow:visible}
+@supports not (height:1dvh){
+  #historyModal .modalCard{max-height:88vh}
+}
 body{
   margin:0;
   background:
@@ -1907,6 +1927,15 @@ const PUBLIC_BODY = `
 const PUBLIC_SCRIPT = String.raw`
 let selectedTraining=null,myProfile=null;
 const statusLabels={pending:'承認待ち',reserved:'予約確定',completed:'受講済み',retake:'再受講',absent:'欠席',cancelled:'キャンセル',expired:'希望日時超過'};
+
+function enableHistoryModalScroll(){
+ const modal=document.getElementById('historyModal');
+ const scroller=modal?.querySelector('.modalCard');
+ if(!scroller)return;
+ scroller.style.overflowY='auto';
+ scroller.style.webkitOverflowScrolling='touch';
+ scroller.style.touchAction='pan-y';
+}
 function esc(s){return String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 function noticeIn(id,t,c){document.getElementById(id).innerHTML='<div class="notice '+(c||'')+'">'+esc(t)+'</div>'}
 function show(t,c){const e=document.getElementById('msg');e.innerHTML='<div class="notice '+c+'">'+esc(t)+'</div>';setTimeout(()=>e.innerHTML='',4200)}
@@ -2307,7 +2336,13 @@ document.getElementById('openPolicyBtn')?.addEventListener('click',openTrainingP
 document.getElementById('closePolicyBtn')?.addEventListener('click',closeTrainingPolicy);
 document.getElementById('policyModal')?.addEventListener('click',e=>{if(e.target.id==='policyModal')closeTrainingPolicy()});
 
-document.getElementById('openHistoryBtn')?.addEventListener('click',()=>document.getElementById('historyModal')?.classList.add('open'));
+document.getElementById('openHistoryBtn')?.addEventListener('click',()=>{
+ const modal=document.getElementById('historyModal');
+ modal?.classList.add('open');
+ enableHistoryModalScroll();
+ const scroller=modal?.querySelector('.modalCard');
+ if(scroller)scroller.scrollTop=0;
+});
 document.getElementById('closeHistoryBtn')?.addEventListener('click',()=>document.getElementById('historyModal')?.classList.remove('open'));
 document.getElementById('historyModal')?.addEventListener('click',e=>{if(e.target.id==='historyModal')e.currentTarget.classList.remove('open')});
 
