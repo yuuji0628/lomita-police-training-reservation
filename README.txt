@@ -1,17 +1,15 @@
-LOMITA POLICE Training Reservation - Version 1.74
+LOMITA POLICE Training Reservation - Version 1.75
 
-プレイヤー名機能
-- 新規研修生はDiscord初回ログイン後、プレイヤー名入力が必須
-- Discord表示名を自動でプレイヤー名にしない
-- 既存研修生は研修生ポータルの「名前変更」から変更可能
-- 最大40文字
-- Discord IDとの紐づけ、進捗、履歴は維持
-- 名前変更時、既存予約の表示名も同じDiscord IDに対して同期
+修正
+- 「申請・受講履歴」モーダルがiPhone Safariでスクロールできない問題を修正
 
-検証
-- worker.js 全体構文チェック
-- 管理画面JavaScript単体構文チェック
-- 研修生ポータルJavaScript単体構文チェック
-- 初回登録モーダル
-- 既存研修生の名前変更
-- 予約表示名同期
+対応
+- historyModal の中身を縦スクロール対応
+- max-height: 88dvh
+- overflow-y: auto
+- -webkit-overflow-scrolling: touch
+- touch-action: pan-y
+- iPhoneのセーフエリア対応
+- 履歴を開くたびに先頭位置から表示
+
+Version 1.74までの既存機能は維持
