@@ -1,4 +1,4 @@
-const APP_VERSION="1.71";
+const APP_VERSION="1.72";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -1111,6 +1111,7 @@ textarea{min-height:90px}
 }
 .adminDashTile.compact .num{font-size:24px}
 .adminDashTile.compact .hint{font-size:8px}
+#reservationsSection,#traineeSection,#expiredAdminList{scroll-margin-top:18px}
 .adminDashboardFilter{
   display:flex;align-items:center;justify-content:space-between;gap:8px;
   padding:9px 10px;margin-bottom:9px;border-radius:11px;background:#eef4fb;border:1px solid #c6d5e5;
@@ -2278,8 +2279,8 @@ const ADMIN_BODY = `
      <button class="adminDashTile compact alert" type="button" onclick="openDashboardReservations('pending')">
        <div class="label">承認待ち</div><div id="dashPending" class="num">0</div><div class="hint">確認が必要</div>
      </button>
-     <button class="adminDashTile compact alert" type="button" onclick="openDashboardReservations('unassigned')">
-       <div class="label">教官未決定</div><div id="dashUnassigned" class="num">0</div><div class="hint">担当教官なし</div>
+     <button class="adminDashTile compact" type="button" onclick="openDashboardReservations('week')">
+       <div class="label">今週の研修</div><div id="dashWeek" class="num">0</div><div class="hint">今日〜日曜日</div>
      </button>
      <button class="adminDashTile compact alert" type="button" onclick="openDashboardReservations('retake')">
        <div class="label">再受講</div><div id="dashRetake" class="num">0</div><div class="hint">再受講が必要</div>
@@ -2290,7 +2291,7 @@ const ADMIN_BODY = `
      <summary>詳細情報を見る</summary>
      <div class="adminDashDetailsBody">
        <div class="adminMiniGrid">
-         <button class="adminMiniTile" type="button" onclick="openDashboardReservations('week')"><div class="between"><span class="name">今週の研修</span><span id="dashWeek" class="count">0</span></div></button>
+         <button class="adminMiniTile" type="button" onclick="openDashboardReservations('unassigned')"><div class="between"><span class="name">教官未決定</span><span id="dashUnassigned" class="count">0</span></div></button>
          <button class="adminMiniTile" type="button" onclick="openDashboardReservations('expired')"><div class="between"><span class="name">希望日時超過</span><span id="dashExpired" class="count">0</span></div></button>
          <button class="adminMiniTile" type="button" onclick="openDashboardTrainees('all')"><div class="between"><span class="name">登録研修生</span><span id="dashTrainees" class="count">0</span></div></button>
          <button class="adminMiniTile" type="button" onclick="openDashboardTrainees('inProgress')"><div class="between"><span class="name">研修中・未修了</span><span id="dashInProgress" class="count">0</span></div></button>
@@ -2629,20 +2630,38 @@ async function refreshAdminNow(){
  if(document.getElementById('reservationsSection')?.style.display!=='none')await loadReservationControl();
 }
 
-function openDashboardReservations(filter){
+async function openDashboardReservations(filter){
  adminReservationFilter=filter||'all';
  showAdminSection('reservations');
- if(adminReservationFilter==='expired'){
-   setTimeout(()=>document.getElementById('expiredAdminList')?.scrollIntoView({behavior:'smooth',block:'start'}),250);
- }
+ await loadReservationControl();
+
+ const targetId=adminReservationFilter==='expired'
+   ?'expiredAdminList'
+   :'reservationsSection';
+
+ setTimeout(()=>{
+   const target=document.getElementById(targetId);
+   if(target){
+     target.scrollIntoView({behavior:'smooth',block:'start'});
+     setTimeout(()=>window.scrollBy({top:-16,behavior:'smooth'}),280);
+   }
+ },120);
 }
 function clearDashboardReservationFilter(){
  adminReservationFilter='all';
  loadReservationControl();
 }
-function openDashboardTrainees(filter){
+async function openDashboardTrainees(filter){
  traineeDashboardFilter=filter||'all';
  showAdminSection('trainees');
+ await loadTrainees();
+ setTimeout(()=>{
+   const target=document.getElementById('traineeSection');
+   if(target){
+     target.scrollIntoView({behavior:'smooth',block:'start'});
+     setTimeout(()=>window.scrollBy({top:-16,behavior:'smooth'}),280);
+   }
+ },120);
 }
 function clearDashboardTraineeFilter(){
  traineeDashboardFilter='all';
