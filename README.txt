@@ -1,15 +1,10 @@
-LOMITA POLICE Training Reservation - Version 1.75
+LOMITA POLICE Training Reservation - Version 1.76
 
-修正
-- 「申請・受講履歴」モーダルがiPhone Safariでスクロールできない問題を修正
+研修生管理カードを見やすく改善
+- 常時表示をプレイヤー名 / Discord / オリエンテーション / 進捗 / 次の研修に整理
+- 途中参加・開始研修指定、管理メモ、進捗表、受講履歴は「管理メニューを開く」に収納
+- 進捗バーと件数表示をコンパクト化
+- 研修生削除は独立した小さな操作に分離
+- iPhoneで1人分のカードが縦に長くなりすぎないよう調整
 
-対応
-- historyModal の中身を縦スクロール対応
-- max-height: 88dvh
-- overflow-y: auto
-- -webkit-overflow-scrolling: touch
-- touch-action: pan-y
-- iPhoneのセーフエリア対応
-- 履歴を開くたびに先頭位置から表示
-
-Version 1.74までの既存機能は維持
+Version 1.75までの既存機能を維持
