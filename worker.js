@@ -1,4 +1,4 @@
-const APP_VERSION="1.67";
+const APP_VERSION="1.68";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -3289,30 +3289,44 @@ async function openTraineeDetail(discord){
 function closeTraineeDetail(){document.getElementById('traineeModal').classList.remove('open')}
 function fmt(d){return new Date(d+'T00:00:00').toLocaleDateString('ja-JP',{month:'numeric',day:'numeric',weekday:'short'})}
 async function loadAdmin(){
- if(!instructorRows.length){const ir=await fetch('/api/admin/instructors',{headers:auth()});if(ir.ok)instructorRows=await ir.json().catch(()=>[]);}
- const r=await fetch('/api/admin/trainings',{headers:auth()}); if(r.status===401)return logout(); trainings=await r.json(); render();
- const s=await fetch('/api/admin/stats',{headers:auth(),cache:'no-store'}); const st=await s.json().catch(()=>({}));
- if(s.ok){
-   dashboardToday=String(st.today_date||'');
-   dashboardWeekEnd=String(st.week_end||'');
-   const values={
-     dashToday:st.today,
-     dashWeek:st.week,
-     dashNeedsAction:st.needs_action,
-     dashFullCompleted:st.full_completed,
-     dashPending:st.pending,
-     dashUnassigned:st.unassigned,
-     dashExpired:st.expired,
-     dashRetake:st.retake,
-     dashTrainees:st.trainees,
-     dashInProgress:st.in_progress,
-     dashFullCompletedMini:st.full_completed,
-     dashRetakeTrainees:st.retake_trainees
-   };
-   Object.entries(values).forEach(([id,v])=>{const el=document.getElementById(id);if(el)el.textContent=String(Number(v||0));});
+ if(!instructorRows.length){
+   const ir=await fetch('/api/admin/instructors',{headers:auth(),cache:'no-store'});
+   if(ir.status===401)return logout();
+   if(ir.ok)instructorRows=await ir.json().catch(()=>[]);
  }
+
+ // 「研修管理」は廃止済みのため、旧 adminList/render() は呼ばない。
+ // ダッシュボード集計を直接読み込む。
+ const s=await fetch('/api/admin/stats',{headers:auth(),cache:'no-store'});
+ if(s.status===401)return logout();
+ const st=await s.json().catch(()=>({}));
+ if(!s.ok){
+   console.error('dashboard stats error',st);
+   return;
+ }
+
+ dashboardToday=String(st.today_date||'');
+ dashboardWeekEnd=String(st.week_end||'');
+ const values={
+   dashToday:st.today,
+   dashWeek:st.week,
+   dashNeedsAction:st.needs_action,
+   dashFullCompleted:st.full_completed,
+   dashPending:st.pending,
+   dashUnassigned:st.unassigned,
+   dashExpired:st.expired,
+   dashRetake:st.retake,
+   dashTrainees:st.trainees,
+   dashInProgress:st.in_progress,
+   dashFullCompletedMini:st.full_completed,
+   dashRetakeTrainees:st.retake_trainees
+ };
+ Object.entries(values).forEach(([id,v])=>{
+   const el=document.getElementById(id);
+   if(el)el.textContent=String(Number(v||0));
+ });
 }
-function render(){const e=document.getElementById('adminList');if(!trainings.length){e.innerHTML='<div class="empty">研修がありません。「＋研修追加」から作成してください。</div>';return}
+function render(){const e=document.getElementById('adminList');if(!e)return;if(!trainings.length){e.innerHTML='<div class="empty">研修がありません。「＋研修追加」から作成してください。</div>';return}
  e.innerHTML=trainings.map(t=>{
    const placeholder=String(t.training_date||'')==='2099-12-31' && String(t.start_time||'')==='00:00' && Number(t.capacity||0)===999;
    const schedule=placeholder
