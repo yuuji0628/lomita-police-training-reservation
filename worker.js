@@ -1,4 +1,4 @@
-const APP_VERSION="1.68";
+const APP_VERSION="1.69";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -2239,7 +2239,7 @@ const ADMIN_BODY = `
  <div class="adminCommand">
    <div class="adminCommandHead">
      <div><div class="adminCommandTitle">管理ダッシュボード</div><div class="adminCommandSub">今対応する内容をここで確認できます</div></div>
-     <button class="btn small" type="button" onclick="loadAdmin()">更新</button>
+     <button class="btn small" type="button" onclick="refreshAdminNow()">更新</button>
    </div>
 
    <div class="adminDashGrid">
@@ -2461,7 +2461,7 @@ async function login(){
      document.getElementById('loginMsg').innerHTML='<div class="notice error">'+(r.status===401?'パスワードが違います':'ログイン処理に失敗しました（HTTP '+r.status+'）')+'</div>';
      return;
    }
-   adminPassword='';showAdmin();await loadCurrentAdminRole();await loadAdmin();await loadReservationControl();
+   adminPassword='';showAdmin();await loadCurrentAdminRole();await loadAdmin();await loadReservationControl();scheduleAdminInitialRefresh();
  }finally{btn.disabled=false;btn.textContent='管理画面を開く'}
 }
 async function logout(){
@@ -2476,9 +2476,22 @@ async function loadCurrentAdminRole(){
  const label=document.getElementById('adminRoleLabel');
  if(label)label.textContent='システム管理者';
 }
+let adminInitialRefreshTimer1=null;
+let adminInitialRefreshTimer2=null;
+function scheduleAdminInitialRefresh(){
+ if(adminInitialRefreshTimer1)clearTimeout(adminInitialRefreshTimer1);
+ if(adminInitialRefreshTimer2)clearTimeout(adminInitialRefreshTimer2);
+ adminInitialRefreshTimer1=setTimeout(async()=>{
+   try{await loadAdmin();await loadReservationControl()}catch(_){}
+ },1200);
+ adminInitialRefreshTimer2=setTimeout(async()=>{
+   try{await loadAdmin();await loadReservationControl()}catch(_){}
+ },3200);
+}
+
 async function restoreAdmin(){
  const r=await fetch('/api/admin/check');
- if(r.ok){showAdmin();await loadCurrentAdminRole();await loadAdmin();await loadReservationControl()}
+ if(r.ok){showAdmin();await loadCurrentAdminRole();await loadAdmin();await loadReservationControl();scheduleAdminInitialRefresh()}
 }
 
 async function loadAdminTrainingPolicy(){
@@ -2581,6 +2594,11 @@ const traineeFilterLabels={
   completed:'全研修修了',
   retake:'再受講あり'
 };
+
+async function refreshAdminNow(){
+ await loadAdmin();
+ if(document.getElementById('reservationsSection')?.style.display!=='none')await loadReservationControl();
+}
 
 function openDashboardReservations(filter){
  adminReservationFilter=filter||'all';
