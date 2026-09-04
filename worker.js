@@ -1,4 +1,4 @@
-const APP_VERSION="1.75";
+const APP_VERSION="1.76";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -1716,6 +1716,50 @@ textarea{min-height:90px}
 .adminProgressResult{font-size:9px;margin-top:4px;font-weight:900}
 .adminProgressResult.pass{color:#16834c}
 .adminProgressResult.fail{color:#b42318}
+.traineeProgressCompact{
+  margin-top:11px;
+  padding-top:10px;
+  border-top:1px solid #e4e9ef;
+}
+.traineeProgressCompact .bar{
+  height:7px;background:#e5e7eb;border-radius:999px;overflow:hidden;margin-top:6px;
+}
+.traineeProgressCompact .fill{height:100%;background:#0b4fa3}
+.traineeAdminDetails{
+  margin-top:10px;
+  border:1px solid #d2dce7;
+  border-radius:12px;
+  overflow:hidden;
+  background:#f8fbff;
+}
+.traineeAdminDetails summary{
+  list-style:none;
+  cursor:pointer;
+  padding:10px 11px;
+  font-size:11px;
+  font-weight:1000;
+  color:#0d223c;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+}
+.traineeAdminDetails summary::-webkit-details-marker{display:none}
+.traineeAdminDetails summary::after{content:"＋";font-size:17px;color:#748195}
+.traineeAdminDetails[open] summary::after{content:"−"}
+.traineeAdminDetailsBody{padding:0 10px 10px}
+.traineeAdminActions{
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:7px;
+  margin-top:9px;
+}
+.traineeAdminDanger{
+  margin-top:9px;
+  padding-top:9px;
+  border-top:1px solid #eceff3;
+  text-align:right;
+}
+.traineeAdminDanger .btn{font-size:10px;padding:7px 9px}
 .transferStartBox{
   margin-top:12px;padding:11px;border:1px solid #b8c9dd;border-radius:13px;background:#f7fbff;
 }
@@ -3230,10 +3274,14 @@ function renderTrainees(){
  if(!rows.length){e.innerHTML='<div class="empty">該当する研修生はいません。</div>';return}
  e.innerHTML=rows.map(x=>{
    const done=Number(x.progress_completed||0),total=Number(x.progress_total||0),pct=Number(x.progress_percent||0);
-   return '<div class="card traineeCard"><div class="between"><div class="profileHead"><div class="avatar">'+esc((x.player_name||'?').slice(0,1))+'</div><div><div class="title">'+esc(x.player_name||'名前未登録')+'</div>'+(x.login_name?'<div class="sub">：'+esc(x.login_name)+'</div>':'')+'</div></div><button class="btn small danger traineeDeleteBtn" data-id="'+x.id+'" data-name="'+encodeURIComponent(x.player_name||'研修生')+'">研修生を削除</button></div>'+
+   return '<div class="card traineeCard"><div class="between"><div class="profileHead"><div class="avatar">'+esc((x.player_name||'?').slice(0,1))+'</div><div><div class="title">'+esc(x.player_name||'名前未登録')+'</div>'+(x.login_name?'<div class="sub">：'+esc(x.login_name)+'</div>':'')+'</div></div></div>'+
    '<div style="margin-top:12px;padding:10px;border:1px solid #d7ad45;border-radius:12px;background:#fffdf7"><div class="between"><div><b>オリエンテーション</b><div class="sub">'+(x.orientation_completed?'受講済み':'未受講')+'</div></div><div class="row"><button class="btn small '+(x.orientation_completed?'dark':'')+' orientationToggleBtn" data-id="'+x.id+'" data-completed="1">済</button><button class="btn small '+(!x.orientation_completed?'dark':'')+' orientationToggleBtn" data-id="'+x.id+'" data-completed="0">未</button></div></div></div>'+
    (x.all_completed?'<div style="margin-top:12px;padding:12px;border:2px solid #d7ad45;border-radius:14px;background:#fff9df"><div style="font-weight:1000;font-size:17px">🏅 全研修修了</div><div class="sub" style="margin-top:4px">修了日：'+esc(String(x.all_completed_at||'').replaceAll('-','/'))+'</div></div>':'')+
-   '<div style="margin-top:14px"><div class="between"><b>研修進捗</b><b>'+done+'/'+total+' 完了</b></div><div style="height:10px;background:#e5e7eb;border-radius:999px;overflow:hidden;margin-top:7px"><div style="height:100%;width:'+pct+'%;background:#0b4fa3"></div></div><div class="sub" style="margin-top:7px">'+(x.current_training?'次の研修：'+esc(x.current_training):'全研修修了')+'</div></div><div class="meta"><span>承認待ち '+x.pending+'</span><span>予約 '+x.reserved+'</span><span>再受講 '+x.retake+'</span><span>欠席 '+x.absent+'</span></div>'+
+   '<div class="traineeProgressCompact"><div class="between"><b>研修進捗</b><b>'+done+'/'+total+' 完了</b></div><div class="bar"><div class="fill" style="width:'+pct+'%"></div></div><div class="sub" style="margin-top:5px">'+(x.current_training?'次：'+esc(x.current_training):'全研修修了')+'</div></div>'+
+   '<div class="meta"><span>承認 '+x.pending+'</span><span>予約 '+x.reserved+'</span><span>再受講 '+x.retake+'</span><span>欠席 '+x.absent+'</span></div>'+
+   '<details class="traineeAdminDetails">'+
+     '<summary>管理メニューを開く</summary>'+
+     '<div class="traineeAdminDetailsBody">'+
    '<div class="transferStartBox">'+
      '<div class="transferStartTitle">途中参加・開始研修を指定</div>'+
      '<div class="sub" style="margin-top:3px">選択した研修より前を「既修了認定」にします。</div>'+
@@ -3248,10 +3296,13 @@ function renderTrainees(){
      '<div class="sub" style="margin-top:5px">認定日は任意です。未入力でも設定できます。</div>'+
    '</div>'+
    '<div style="margin-top:12px"><div class="sub" style="font-weight:900">管理メモ（管理者のみ）</div><textarea class="traineeAdminMemo" data-id="'+x.id+'" rows="3" maxlength="5000" placeholder="注意点・指導内容・今後の対応など" style="width:100%;margin-top:6px">'+esc(x.admin_memo||'')+'</textarea><button class="btn small saveTraineeMemoBtn" data-id="'+x.id+'" style="margin-top:6px">管理メモを保存</button></div>'+
-   '<div class="row" style="margin-top:8px">'+
+   '<div class="traineeAdminActions">'+
      '<button class="btn small traineeProgressBtn" data-discord="'+encodeURIComponent(x.discord_id||x.login_name||x.player_name)+'">進捗表を見る</button>'+
      '<button class="btn small traineeOpenBtn" data-discord="'+encodeURIComponent(x.discord_id||x.login_name||x.player_name)+'">受講履歴を見る</button>'+
-   '</div></div>';
+   '</div>'+
+   '</div></details>'+
+   '<div class="traineeAdminDanger"><button class="btn small danger traineeDeleteBtn" data-id="'+x.id+'" data-name="'+encodeURIComponent(x.player_name||'研修生')+'">研修生を削除</button></div>'+
+   '</div>';
  }).join('');
  document.querySelectorAll('.traineeProgressBtn').forEach(btn=>btn.addEventListener('click',()=>openAdminProgress(decodeURIComponent(btn.dataset.discord))));
  document.querySelectorAll('.traineeOpenBtn').forEach(btn=>btn.addEventListener('click',()=>openTraineeDetail(decodeURIComponent(btn.dataset.discord))));
