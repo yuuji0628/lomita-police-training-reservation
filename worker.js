@@ -1,4 +1,4 @@
-const APP_VERSION="1.69";
+const APP_VERSION="1.71";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -1082,6 +1082,35 @@ textarea{min-height:90px}
 .adminMiniTile .name{font-size:10px;font-weight:950;color:#566579}
 .adminMiniTile .count{font-size:19px;font-weight:1000;color:#0d223c}
 .adminMiniTile.warn .count{color:#a15c00}
+
+.adminDashDetails{
+  margin-top:10px;
+  border:1px solid #d3dce7;
+  border-radius:13px;
+  background:#fff;
+  overflow:hidden;
+}
+.adminDashDetails summary{
+  list-style:none;
+  cursor:pointer;
+  padding:11px 12px;
+  font-size:12px;
+  font-weight:1000;
+  color:#0d223c;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+}
+.adminDashDetails summary::-webkit-details-marker{display:none}
+.adminDashDetails summary::after{content:"＋";font-size:18px;color:#718096}
+.adminDashDetails[open] summary::after{content:"−"}
+.adminDashDetailsBody{padding:0 10px 10px}
+.adminDashTile.compact{
+  min-height:72px;
+  padding:10px;
+}
+.adminDashTile.compact .num{font-size:24px}
+.adminDashTile.compact .hint{font-size:8px}
 .adminDashboardFilter{
   display:flex;align-items:center;justify-content:space-between;gap:8px;
   padding:9px 10px;margin-bottom:9px;border-radius:11px;background:#eef4fb;border:1px solid #c6d5e5;
@@ -2243,35 +2272,35 @@ const ADMIN_BODY = `
    </div>
 
    <div class="adminDashGrid">
-     <button class="adminDashTile" type="button" onclick="openDashboardReservations('today')">
-       <div class="label">今日の研修予定</div><div id="dashToday" class="num">0</div><div class="hint">タップして今日の予約へ</div>
+     <button class="adminDashTile compact" type="button" onclick="openDashboardReservations('today')">
+       <div class="label">今日の研修</div><div id="dashToday" class="num">0</div><div class="hint">今日の予約</div>
      </button>
-     <button class="adminDashTile" type="button" onclick="openDashboardReservations('week')">
-       <div class="label">今週の研修予定</div><div id="dashWeek" class="num">0</div><div class="hint">今日〜日曜日</div>
+     <button class="adminDashTile compact alert" type="button" onclick="openDashboardReservations('pending')">
+       <div class="label">承認待ち</div><div id="dashPending" class="num">0</div><div class="hint">確認が必要</div>
      </button>
-     <button class="adminDashTile alert" type="button" onclick="openDashboardReservations('needsAction')">
-       <div class="label">対応が必要</div><div id="dashNeedsAction" class="num">0</div><div class="hint">承認待ち・再受講・期限超過</div>
+     <button class="adminDashTile compact alert" type="button" onclick="openDashboardReservations('unassigned')">
+       <div class="label">教官未決定</div><div id="dashUnassigned" class="num">0</div><div class="hint">担当教官なし</div>
      </button>
-     <button class="adminDashTile good" type="button" onclick="openDashboardTrainees('completed')">
-       <div class="label">全研修修了</div><div id="dashFullCompleted" class="num">0</div><div class="hint">修了した研修生</div>
+     <button class="adminDashTile compact alert" type="button" onclick="openDashboardReservations('retake')">
+       <div class="label">再受講</div><div id="dashRetake" class="num">0</div><div class="hint">再受講が必要</div>
      </button>
    </div>
 
-   <div class="adminDashSectionTitle">対応が必要な予約</div>
-   <div class="adminMiniGrid">
-     <button class="adminMiniTile warn" type="button" onclick="openDashboardReservations('pending')"><div class="between"><span class="name">承認待ち</span><span id="dashPending" class="count">0</span></div></button>
-     <button class="adminMiniTile warn" type="button" onclick="openDashboardReservations('unassigned')"><div class="between"><span class="name">教官未決定</span><span id="dashUnassigned" class="count">0</span></div></button>
-     <button class="adminMiniTile warn" type="button" onclick="openDashboardReservations('expired')"><div class="between"><span class="name">希望日時超過</span><span id="dashExpired" class="count">0</span></div></button>
-     <button class="adminMiniTile warn" type="button" onclick="openDashboardReservations('retake')"><div class="between"><span class="name">再受講</span><span id="dashRetake" class="count">0</span></div></button>
-   </div>
-
-   <div class="adminDashSectionTitle">研修生の進捗状況</div>
-   <div class="adminMiniGrid">
-     <button class="adminMiniTile" type="button" onclick="openDashboardTrainees('all')"><div class="between"><span class="name">登録研修生</span><span id="dashTrainees" class="count">0</span></div></button>
-     <button class="adminMiniTile" type="button" onclick="openDashboardTrainees('inProgress')"><div class="between"><span class="name">研修中・未修了</span><span id="dashInProgress" class="count">0</span></div></button>
-     <button class="adminMiniTile" type="button" onclick="openDashboardTrainees('completed')"><div class="between"><span class="name">全研修修了</span><span id="dashFullCompletedMini" class="count">0</span></div></button>
-     <button class="adminMiniTile warn" type="button" onclick="openDashboardTrainees('retake')"><div class="between"><span class="name">再受講あり</span><span id="dashRetakeTrainees" class="count">0</span></div></button>
-   </div>
+   <details class="adminDashDetails">
+     <summary>詳細情報を見る</summary>
+     <div class="adminDashDetailsBody">
+       <div class="adminMiniGrid">
+         <button class="adminMiniTile" type="button" onclick="openDashboardReservations('week')"><div class="between"><span class="name">今週の研修</span><span id="dashWeek" class="count">0</span></div></button>
+         <button class="adminMiniTile" type="button" onclick="openDashboardReservations('expired')"><div class="between"><span class="name">希望日時超過</span><span id="dashExpired" class="count">0</span></div></button>
+         <button class="adminMiniTile" type="button" onclick="openDashboardTrainees('all')"><div class="between"><span class="name">登録研修生</span><span id="dashTrainees" class="count">0</span></div></button>
+         <button class="adminMiniTile" type="button" onclick="openDashboardTrainees('inProgress')"><div class="between"><span class="name">研修中・未修了</span><span id="dashInProgress" class="count">0</span></div></button>
+         <button class="adminMiniTile" type="button" onclick="openDashboardTrainees('completed')"><div class="between"><span class="name">全研修修了</span><span id="dashFullCompletedMini" class="count">0</span></div></button>
+         <button class="adminMiniTile" type="button" onclick="openDashboardTrainees('retake')"><div class="between"><span class="name">再受講あり</span><span id="dashRetakeTrainees" class="count">0</span></div></button>
+       </div>
+       <span id="dashNeedsAction" style="display:none">0</span>
+       <span id="dashFullCompleted" style="display:none">0</span>
+     </div>
+   </details>
  </div>
 
  <div class="menuTabs" style="grid-template-columns:repeat(2,1fr)">
@@ -2582,7 +2611,7 @@ const reservationFilterLabels={
   all:'すべての対応中予約',
   today:'今日の研修予定',
   week:'今週の研修予定',
-  needsAction:'対応が必要な予約',
+  needsAction:'対応が必要な予約（承認待ち・再受講）',
   pending:'承認待ち',
   unassigned:'担当教官未決定',
   expired:'希望日時超過',
@@ -4035,7 +4064,7 @@ async function handle(request, env) {
      week_end:weekEndDate,
      today:Number(today?.c||0),
      week:Number(week?.c||0),
-     needs_action:pendingCount+expiredCount+retakeCount,
+     needs_action:pendingCount+retakeCount,
      pending:pendingCount,
      unassigned:Number(unassigned?.c||0),
      expired:expiredCount,
