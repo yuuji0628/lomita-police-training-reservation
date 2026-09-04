@@ -1,4 +1,4 @@
-const APP_VERSION="1.72";
+const APP_VERSION="1.73";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -4487,7 +4487,7 @@ async function handle(request, env) {
  if(path==="/api/admin/pending-approval-announcement/run" && method==="POST"){
    if(!(await isAdmin()))return json({error:"unauthorized"},401);
    const result=await runPendingApprovalAnnouncement(env);
-   return json({ok:true,...result});
+   return json({ok:true,mode:"once_per_clock_hour",...result});
  }
 
  if(path==="/api/admin/discord-reminder-today/run" && method==="POST"){
@@ -5373,7 +5373,11 @@ async function runPendingApprovalAnnouncement(env){
   await ensureReservationPreferredSchedule(env);
   await ensureReservationNotifications(env);
 
-  const cutoff=new Date(Date.now()-1*60*60*1000).toISOString();
+  // 1時間「経過」ではなく、時刻の1時間枠ごとに1回送る。
+  // Cronの数秒〜数十秒のズレで次の時間帯をスキップしないための方式。
+  const hourStart=new Date();
+  hourStart.setUTCMinutes(0,0,0);
+  const currentHourStart=hourStart.toISOString();
 
   const q=await env.DB.prepare(`
     SELECT
@@ -5387,11 +5391,11 @@ async function runPendingApprovalAnnouncement(env){
       AND trim(COALESCE(r.assigned_instructor,''))=''
       AND (
         COALESCE(r.pending_announce_sent_at,'')=''
-        OR r.pending_announce_sent_at<=?
+        OR r.pending_announce_sent_at<?
       )
     ORDER BY r.id ASC
     LIMIT 10
-  `).bind(cutoff).all();
+  `).bind(currentHourStart).all();
 
   const rows=Array.isArray(q?.results)?q.results:[];
   if(!rows.length)return {ok:true,total:0,sent:0};
