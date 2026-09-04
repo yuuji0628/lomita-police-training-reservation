@@ -1,4 +1,4 @@
-const APP_VERSION="1.73";
+const APP_VERSION="1.74";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -1284,6 +1284,9 @@ textarea{min-height:90px}
 /* compact trainee progress dashboard */
 #mySummary.compactSummary{background:transparent!important;border:0!important;box-shadow:none!important;padding:0!important;margin:0!important}
 .compactUserRow{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:0 0 7px;padding:0 2px}
+#playerNameRequiredModal{z-index:120}
+#playerNameRequiredModal .modalCard{max-width:520px}
+.playerNameEditBtn{margin-left:auto;flex:0 0 auto}
 .compactUserName{font-weight:900;font-size:13px;color:#0d223c}
 .compactUserSub{font-size:10px;color:#7a8798;margin-top:1px}
 .dashboardProgressBox{margin-top:0!important;padding-top:0!important;border-top:0!important}
@@ -1817,6 +1820,19 @@ const PUBLIC_BODY = `
     <div id="mySummary"></div>
     <div class="historyLauncher"><button id="openHistoryBtn" class="btn small" type="button">申請・受講履歴を見る</button></div>
 
+<div id="playerNameRequiredModal" class="modal">
+  <div class="modalCard">
+    <span class="badge">FIRST LOGIN</span>
+    <div class="title">プレイヤー名を登録してください</div>
+    <div class="sub" style="margin-top:6px">研修記録に表示するゲーム内のプレイヤー名を入力してください。</div>
+    <div style="margin-top:12px">
+      <input id="playerNameRequiredInput" maxlength="40" placeholder="例：Vip Tonakai">
+    </div>
+    <button class="btn primary" type="button" style="width:100%;margin-top:10px" onclick="saveRequiredPlayerName()">登録して開始</button>
+    <div id="playerNameRequiredMsg" class="sub" style="margin-top:8px"></div>
+  </div>
+</div>
+
 <div id="policyModal" class="modal"><div class="sheet">
   <button id="closePolicyBtn" class="btn small" style="float:right" type="button" onclick="closeTrainingPolicy()">閉じる</button>
   <div class="title">研修ポリシー</div>
@@ -2160,6 +2176,55 @@ async function loadProgress(){
  }
 }
 
+async function updateMyPlayerName(name){
+ const r=await fetch('/api/trainee/profile',{
+   method:'PUT',
+   headers:{'content-type':'application/json'},
+   body:JSON.stringify({player_name:name})
+ });
+ const d=await r.json().catch(()=>({}));
+ if(!r.ok)throw new Error(d.error||'プレイヤー名を変更できませんでした');
+ return d;
+}
+
+function openRequiredPlayerName(){
+ document.getElementById('playerNameRequiredModal')?.classList.add('open');
+ setTimeout(()=>document.getElementById('playerNameRequiredInput')?.focus(),80);
+}
+function closeRequiredPlayerName(){
+ document.getElementById('playerNameRequiredModal')?.classList.remove('open');
+}
+
+async function saveRequiredPlayerName(){
+ const input=document.getElementById('playerNameRequiredInput');
+ const msg=document.getElementById('playerNameRequiredMsg');
+ const name=String(input?.value||'').trim();
+ if(!name){if(msg)msg.textContent='プレイヤー名を入力してください。';return}
+ try{
+   await updateMyPlayerName(name);
+   closeRequiredPlayerName();
+   await loadMyPage();
+ }catch(err){
+   if(msg)msg.textContent=err.message||'プレイヤー名を登録できませんでした。';
+ }
+}
+
+async function editPlayerName(){
+ const current=String(myProfile?.player_name||'');
+ const next=prompt('新しいプレイヤー名を入力してください。',current);
+ if(next===null)return;
+ const name=String(next).trim();
+ if(!name){alert('プレイヤー名を入力してください。');return}
+ try{
+   const d=await updateMyPlayerName(name);
+   myProfile=d.profile||myProfile;
+   show('プレイヤー名を変更しました。','success');
+   await loadMyPage();
+ }catch(err){
+   alert(err.message||'プレイヤー名を変更できませんでした');
+ }
+}
+
 async function loadMyPage(){
  const r=await fetch('/api/trainee/profile');
  const d=await r.json().catch(()=>({}));
@@ -2168,9 +2233,11 @@ async function loadMyPage(){
  myProfile=d.profile;
  const summaryEl=document.getElementById('mySummary');
  summaryEl.classList.add('compactSummary');
+ if(!String(d.profile.player_name||'').trim())openRequiredPlayerName();
  summaryEl.innerHTML=
   '<div class="compactUserRow">'+
-    '<div><div class="compactUserName">'+esc(d.profile.player_name||'研修生')+'</div><div class="compactUserSub">ログイン中</div></div>'+
+    '<div><div class="compactUserName">'+esc(d.profile.player_name||'プレイヤー名未登録')+'</div><div class="compactUserSub">ログイン中</div></div>'+
+    '<button class="btn small playerNameEditBtn" type="button" onclick="editPlayerName()">名前変更</button>'+
   '</div>'+
   '<div class="dashboardProgressBox">'+
     '<div class="dashboardProgressHead"><div class="dashboardProgressTitle">研修進捗表</div></div>'+
@@ -3798,11 +3865,10 @@ async function handle(request, env) {
      await ensureTraineeProfiles(env);
      let p=await env.DB.prepare("SELECT id,player_name,login_name,discord_id,affiliation,rank FROM trainee_profiles WHERE discord_user_id=?").bind(String(du.id)).first();
      if(!p){
-       const display=String(du.global_name||du.username||("Discord "+du.id)).trim();
        const loginName="discord:"+String(du.id);
        const r=await env.DB.prepare("INSERT INTO trainee_profiles(player_name,discord_id,login_name,discord_user_id,affiliation,rank,password_hash,password_salt) VALUES(?,?,?,?,?,?,?,?)")
-         .bind(display,String(du.id),loginName,String(du.id),"","","","").run();
-       p={id:Number(r.meta?.last_row_id||0),player_name:display,login_name:loginName,discord_id:String(du.id),affiliation:"",rank:""};
+         .bind("",String(du.id),loginName,String(du.id),"","","","").run();
+       p={id:Number(r.meta?.last_row_id||0),player_name:"",login_name:loginName,discord_id:String(du.id),affiliation:"",rank:""};
      }
      const traineeCookie=await createTraineeSessionCookie(env,p.id);
      return new Response(null,{status:302,headers:{location:"/trainee","set-cookie":traineeCookie}});
@@ -3925,6 +3991,40 @@ async function handle(request, env) {
      allCompletedAt=String(refreshed.date||"");
    }
    return json({programs,all_completed:allCompleted,all_completed_at:allCompletedAt});
+ }
+
+ if(path==="/api/trainee/profile" && method==="PUT"){
+   await ensureTraineeProfiles(env);
+   const profile=await getTraineeSession(request,env);
+   if(!profile)return json({error:"ログインが必要です"},401);
+
+   const b=await request.json().catch(()=>({}));
+   const playerName=String(b.player_name||"").trim();
+   if(!playerName)return json({error:"プレイヤー名を入力してください"},400);
+   if(playerName.length>40)return json({error:"プレイヤー名は40文字以内で入力してください"},400);
+
+   await env.DB.prepare(`
+     UPDATE trainee_profiles
+     SET player_name=?,updated_at=CURRENT_TIMESTAMP
+     WHERE id=?
+   `).bind(playerName,Number(profile.id)).run();
+
+   const key=String(profile.discord_id||profile.login_name||"").trim();
+   if(key){
+     try{
+       await env.DB.prepare(`
+         UPDATE reservations
+         SET player_name=?
+         WHERE lower(trim(COALESCE(discord_id,'')))=lower(trim(?))
+       `).bind(playerName,key).run();
+     }catch(_){}
+   }
+
+   const updated=await env.DB.prepare(
+     "SELECT id,player_name,discord_id,login_name,discord_user_id,affiliation,rank,created_at,updated_at FROM trainee_profiles WHERE id=?"
+   ).bind(Number(profile.id)).first();
+
+   return json({ok:true,profile:updated});
  }
 
  if(path==="/api/trainee/profile" && method==="GET"){
