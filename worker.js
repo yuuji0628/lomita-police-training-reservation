@@ -1,4 +1,4 @@
-const APP_VERSION="1.77";
+const APP_VERSION="1.78";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -2425,8 +2425,8 @@ const ADMIN_BODY = `
      <button class="adminDashTile compact alert" type="button" onclick="openDashboardReservations('pending')">
        <div class="label">承認待ち</div><div id="dashPending" class="num">0</div><div class="hint">確認が必要</div>
      </button>
-     <button class="adminDashTile compact" type="button" onclick="openDashboardReservations('week')">
-       <div class="label">今週の研修</div><div id="dashWeek" class="num">0</div><div class="hint">今日〜日曜日</div>
+     <button class="adminDashTile compact alert" type="button" onclick="openDashboardReservations('overdue')">
+       <div class="label">処理待ち</div><div id="dashOverdue" class="num">0</div><div class="hint">予定時刻を過ぎた予約</div>
      </button>
      <button class="adminDashTile compact alert" type="button" onclick="openDashboardReservations('retake')">
        <div class="label">再受講</div><div id="dashRetake" class="num">0</div><div class="hint">再受講が必要</div>
@@ -2437,6 +2437,7 @@ const ADMIN_BODY = `
      <summary>詳細情報を見る</summary>
      <div class="adminDashDetailsBody">
        <div class="adminMiniGrid">
+         <button class="adminMiniTile" type="button" onclick="openDashboardReservations('week')"><div class="between"><span class="name">今週の研修</span><span id="dashWeek" class="count">0</span></div></button>
          <button class="adminMiniTile" type="button" onclick="openDashboardReservations('unassigned')"><div class="between"><span class="name">教官未決定</span><span id="dashUnassigned" class="count">0</span></div></button>
          <button class="adminMiniTile" type="button" onclick="openDashboardReservations('expired')"><div class="between"><span class="name">希望日時超過</span><span id="dashExpired" class="count">0</span></div></button>
          <button class="adminMiniTile" type="button" onclick="openDashboardTrainees('all')"><div class="between"><span class="name">登録研修生</span><span id="dashTrainees" class="count">0</span></div></button>
@@ -2758,11 +2759,12 @@ const reservationFilterLabels={
   all:'すべての対応中予約',
   today:'今日の研修予定',
   week:'今週の研修予定',
-  needsAction:'対応が必要な予約（承認待ち・再受講）',
+  needsAction:'対応が必要な予約（承認待ち・再受講・処理待ち）',
   pending:'承認待ち',
   unassigned:'担当教官未決定',
   expired:'希望日時超過',
-  retake:'再受講'
+  retake:'再受講',
+  overdue:'処理待ち（予定時刻超過）'
 };
 const traineeFilterLabels={
   all:'すべての研修生',
@@ -2848,6 +2850,14 @@ function showAdminSection(section){
  if(trainees)loadTrainees();
  if(reservations)loadReservationControl();
 }
+function isPastConfirmedReservation(x){
+ const d=String(x?.confirmed_date||'').trim();
+ const t=String(x?.confirmed_time||'').trim();
+ if(!d||!t)return false;
+ const ms=Date.parse(d+'T'+t.slice(0,5)+':00+09:00');
+ return Number.isFinite(ms) && ms<Date.now();
+}
+
 async function loadReservationControl(){
  const e=document.getElementById('reservationControlList');
  const completedEl=document.getElementById('completedAdminList');
@@ -2883,13 +2893,15 @@ async function loadReservationControl(){
  }else if(adminReservationFilter==='week'){
    displayActive=active.filter(x=>x.status==='reserved' && String(x.confirmed_date||'')>=dashboardToday && String(x.confirmed_date||'')<=dashboardWeekEnd);
  }else if(adminReservationFilter==='needsAction'){
-   displayActive=active.filter(x=>x.status==='pending' || x.status==='retake');
+   displayActive=active.filter(x=>x.status==='pending' || x.status==='retake' || (x.status==='reserved' && isPastConfirmedReservation(x)));
  }else if(adminReservationFilter==='pending'){
    displayActive=active.filter(x=>x.status==='pending');
  }else if(adminReservationFilter==='unassigned'){
    displayActive=active.filter(x=>x.status==='pending' && !String(x.assigned_instructor||'').trim());
  }else if(adminReservationFilter==='retake'){
    displayActive=active.filter(x=>x.status==='retake');
+ }else if(adminReservationFilter==='overdue'){
+   displayActive=active.filter(x=>x.status==='reserved' && isPastConfirmedReservation(x));
  }else if(adminReservationFilter==='expired'){
    displayActive=[];
  }
@@ -2953,6 +2965,7 @@ async function loadReservationControl(){
  }
 
  e.innerHTML=displayActive.map(x=>{
+   const overdue=isPastConfirmedReservation(x);
    const preferredText=[x.preferred_date||'',x.preferred_time||''].filter(Boolean).join(' ');
    const preferredText2=[x.preferred_date2||'',x.preferred_time2||''].filter(Boolean).join(' ');
    const preferredText3=[x.preferred_date3||'',x.preferred_time3||''].filter(Boolean).join(' ');
@@ -3004,6 +3017,7 @@ const isFinalExam=isFinalEmploymentExamName(x.title);
    return '<div class="card" style="border-left:4px solid '+border+'">'+
      '<div class="between" style="gap:12px;align-items:flex-start"><div style="min-width:0">'+
      '<span class="pill '+esc(x.status)+'">'+esc(statusLabel)+'</span>'+
+     (overdue?'<span class="pill absent" style="margin-left:6px">処理待ち</span>':'')+
      '<div class="title" style="margin-top:7px">'+esc(x.title||'研修')+'</div>'+
      '<div class="sub" style="margin-top:5px">研修生：'+esc(x.player_name||'')+'</div>'+
      (x.affiliation?'<div class="sub">所属：'+esc(x.affiliation)+'</div>':'')+
@@ -3012,6 +3026,7 @@ const isFinalExam=isFinalEmploymentExamName(x.title);
      (preferredText3?'<div class="sub" style="font-weight:800">第3希望：'+esc(preferredText3)+'</div>':'')+
      (confirmedText?'<div style="margin-top:8px;padding:7px 9px;border-radius:10px;background:#eef6ff;font-weight:900">✅ 確定日時：'+esc(confirmedText)+'</div>':'')+
      '</div></div>'+
+     (overdue?'<div class="notice error" style="margin-top:10px"><b>予定時刻を過ぎています。</b><br>受講済み・再受講・欠席のいずれかに処理してください。</div>':'')+
      '<div class="field" style="margin-top:12px"><label>承認する日時</label><select id="reservationPreference_'+x.id+'"><option value="">希望日時を選択</option>'+preferenceOptions+'</select></div>'+
      '<div class="field"><label>状態</label>'+renderReservationStatusButtons(x.id,x.status)+'</div>'+
      '<div class="field"><label>担当教官</label><select id="reservationInstructor_'+x.id+'">'+instructorOptions+'</select></div>'+
@@ -3541,6 +3556,7 @@ async function loadAdmin(){
  const values={
    dashToday:st.today,
    dashWeek:st.week,
+   dashOverdue:st.overdue,
    dashNeedsAction:st.needs_action,
    dashFullCompleted:st.full_completed,
    dashPending:st.pending,
@@ -4243,6 +4259,9 @@ async function handle(request, env) {
      return `${y}-${m}-${day}`;
    };
    const todayDate=fmtDate(jstNow);
+   const hh=String(jstNow.getUTCHours()).padStart(2,"0");
+   const mm=String(jstNow.getUTCMinutes()).padStart(2,"0");
+   const nowJstText=todayDate+" "+hh+":"+mm;
    const daysToSunday=(7-jstNow.getUTCDay())%7;
    const weekEndDate=fmtDate(new Date(jstNow.getTime()+daysToSunday*24*60*60*1000));
 
@@ -4252,6 +4271,14 @@ async function handle(request, env) {
    const week=await env.DB.prepare(
      "SELECT COUNT(*) c FROM reservations WHERE status='reserved' AND confirmed_date>=? AND confirmed_date<=?"
    ).bind(todayDate,weekEndDate).first();
+   const overdue=await env.DB.prepare(`
+     SELECT COUNT(*) c
+     FROM reservations
+     WHERE status='reserved'
+       AND trim(COALESCE(confirmed_date,''))<>''
+       AND trim(COALESCE(confirmed_time,''))<>''
+       AND (confirmed_date || ' ' || substr(confirmed_time,1,5)) < ?
+   `).bind(nowJstText).first();
    const pending=await env.DB.prepare("SELECT COUNT(*) c FROM reservations WHERE status='pending'").first();
    const unassigned=await env.DB.prepare(
      "SELECT COUNT(*) c FROM reservations WHERE status='pending' AND trim(COALESCE(assigned_instructor,''))=''"
@@ -4273,6 +4300,7 @@ async function handle(request, env) {
    const pendingCount=Number(pending?.c||0);
    const expiredCount=Number(expired?.c||0);
    const retakeCount=Number(retake?.c||0);
+   const overdueCount=Number(overdue?.c||0);
    const traineeCount=Number(trainees?.c||0);
    const fullCount=Number(fullCompleted?.c||0);
 
@@ -4281,7 +4309,8 @@ async function handle(request, env) {
      week_end:weekEndDate,
      today:Number(today?.c||0),
      week:Number(week?.c||0),
-     needs_action:pendingCount+retakeCount,
+     overdue:overdueCount,
+     needs_action:pendingCount+retakeCount+overdueCount,
      pending:pendingCount,
      unassigned:Number(unassigned?.c||0),
      expired:expiredCount,
