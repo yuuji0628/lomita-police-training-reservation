@@ -1,4 +1,4 @@
-const APP_VERSION="1.90";
+const APP_VERSION="1.91";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -2367,7 +2367,8 @@ async function load(){
    }
 
    // The first unfinished program in the ledger is always the current training.
-   const current=programs.find(p=>String(p.status||'')!=='completed');
+   const currentIndex=programs.findIndex(p=>String(p.status||'')!=='completed');
+   const current=currentIndex>=0?programs[currentIndex]:null;
 
    if(!current){
      el.innerHTML='<div class="empty">すべての研修を受講済みです。</div>';
@@ -2375,9 +2376,22 @@ async function load(){
    }
 
    const history=Array.isArray(profileData.history)?profileData.history:[];
-   const latest=history.find(x=>Number(x.training_id)===Number(current.training_id));
+   const previousProgram=currentIndex>0?programs[currentIndex-1]:null;
+   const unlockReservationId=Number(previousProgram?.completion_reservation_id||0);
+
+   // IMPORTANT:
+   // Ignore stale/premature reservations made before this training became available.
+   // A reservation is valid for the "current training" state only if it was created
+   // after the previous program was completed.
+   const currentHistory=history.filter(x=>
+     Number(x.training_id)===Number(current.training_id) &&
+     Number(x.id||0)>unlockReservationId
+   );
+   const latest=currentHistory[0]||null;
    const state=String(latest?.status||'');
 
+   // If currentHistory is empty, this is a genuine first application even if
+   // old expired/retake rows exist for the same training_id from before unlock.
    const orientation=String(current.title||'').trim()==='オリエンテーション';
    const waiting=state==='pending';
    const reserved=state==='reserved';
@@ -4765,12 +4779,21 @@ async function handle(request, env) {
            AND r.status='completed'
          ORDER BY r.id DESC
          LIMIT 1
-       ),'') AS completed_date
+       ),'') AS completed_date,
+       COALESCE((
+         SELECT r.id
+         FROM reservations r
+         WHERE r.training_id=p.training_id
+           AND lower(trim(COALESCE(r.discord_id,'')))=lower(trim(?))
+           AND r.status='completed'
+         ORDER BY r.id DESC
+         LIMIT 1
+       ),0) AS completion_reservation_id
      FROM training_programs p
      JOIN trainings t ON t.id=p.training_id
      WHERE COALESCE(p.active,1)=1
      ORDER BY COALESCE(p.sort_order,0),p.id
-   `).bind(key,key,key).all();
+   `).bind(key,key,key,key).all();
 
    const programs=Array.isArray(q?.results)?q.results:[];
    const completedCount=programs.filter(x=>x.status==="completed").length;
@@ -4823,7 +4846,7 @@ async function handle(request, env) {
    const profile=await getTraineeSession(request,env);
    if(!profile)return json({error:"ログインが必要です"},401);
    const key=String(profile.discord_id||profile.login_name||profile.player_name||"").trim();
-   const q=await env.DB.prepare("SELECT r.id,r.training_id,r.player_name,r.discord_id,r.affiliation,r.note,r.status,r.assigned_instructor,r.preferred_date,r.preferred_time,r.preferred_date2,r.preferred_time2,r.preferred_date3,r.preferred_time3,r.confirmed_date,r.confirmed_time,r.confirmed_preference,t.title FROM reservations r JOIN trainings t ON t.id=r.training_id WHERE lower(trim(COALESCE(r.discord_id,'')))=lower(trim(?)) ORDER BY r.id DESC").bind(key).all();
+   const q=await env.DB.prepare("SELECT r.id,r.training_id,r.player_name,r.discord_id,r.affiliation,r.note,r.status,r.assigned_instructor,r.preferred_date,r.preferred_time,r.preferred_date2,r.preferred_time2,r.preferred_date3,r.preferred_time3,r.confirmed_date,r.confirmed_time,r.confirmed_preference,r.created_at,t.title FROM reservations r JOIN trainings t ON t.id=r.training_id WHERE lower(trim(COALESCE(r.discord_id,'')))=lower(trim(?)) ORDER BY r.id DESC").bind(key).all();
    const results=Array.isArray(q?.results)?q.results:[];
    const stats={pending:0,reserved:0,completed:0,retake:0,absent:0,cancelled:0};
    for(const x of results)if(stats[x.status]!==undefined)stats[x.status]++;
