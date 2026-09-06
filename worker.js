@@ -1,4 +1,4 @@
-const APP_VERSION="1.78";
+const APP_VERSION="1.79";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -2867,6 +2867,7 @@ async function loadReservationControl(){
  const rankingEl=document.getElementById('instructorRankingList');
  if(!e)return;
  e.innerHTML='<div class="empty">予約一覧を読み込んでいます...</div>';
+ try{
 
  if(!instructorRows.length){
    try{
@@ -2914,7 +2915,7 @@ async function loadReservationControl(){
    completedEl.innerHTML=completed.length?completed.map(x=>{
      const confirmed=[x.confirmed_date||'',x.confirmed_time||''].filter(Boolean).join(' ');
      const isRecognition=String(x.note||'')==='途中参加による既修了認定' || String(x.assigned_instructor||'')==='既修了認定';
-     const isOrientation=isOrientationTitle(x.title||'');
+     const isOrientation=isOrientationHistoryName(x.title||'');
      const undoLabel=isRecognition?'既修了認定を取り消す':isOrientation?'オリエンテーションを未に戻す':'受講済みを取り消す';
      const undoKind=isRecognition?'recognition':isOrientation?'orientation':'completed';
      return '<div class="completedHistoryRow"><div class="name">'+esc(x.title||'研修')+'</div>'+
@@ -3035,6 +3036,16 @@ const isFinalExam=isFinalEmploymentExamName(x.title);
      (x.note?'<div class="sub" style="margin-top:8px">備考：'+esc(x.note)+'</div>':'')+
    '</div>';
  }).join('');
+ }catch(err){
+   console.error('loadReservationControl failed',err);
+   e.innerHTML='<div class="notice error">予約一覧の表示中にエラーが発生しました。更新ボタンを押して再読み込みしてください。</div>';
+   if(completedEl && !completedEl.innerHTML.trim()){
+     completedEl.innerHTML='<div class="notice error">受講済み履歴を表示できませんでした。</div>';
+   }
+   if(expiredEl && !expiredEl.innerHTML.trim()){
+     expiredEl.innerHTML='<div class="notice error">希望日時超過履歴を表示できませんでした。</div>';
+   }
+ }
 }
 
 function chooseReservationStatus(id,status){
@@ -3217,6 +3228,7 @@ async function deleteInstructor(id){
 function isFinalEmploymentExamName(v){const s=String(v||'').trim();return s.includes('本採用')&&s.includes('試験')}
 function isViolationTestName(v){const s=String(v||'').trim();return s==='違反テスト'||(s.includes('違反')&&s.includes('テスト'))}
 function isOrientationProgramName(v){return String(v||'').trim()==='オリエンテーション'}
+function isOrientationHistoryName(v){return String(v||'').trim()==='オリエンテーション'}
 let programRows=[];
 async function loadPrograms(){
  const r=await fetch('/api/admin/programs',{headers:auth()});
