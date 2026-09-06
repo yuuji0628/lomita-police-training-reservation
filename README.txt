@@ -1,20 +1,17 @@
-LOMITA POLICE Training Reservation - Version 1.91
+LOMITA POLICE Training Reservation - Version 1.92
 
-現在の研修「未申請なのに再申請表示」修正
+アンケート回答不能のランタイム不具合を修正
 
 原因
-- 同じtraining_idに古い expired / retake などの履歴が残っていると、
-  その研修が現在の研修になる前の古い履歴まで状態判定に使っていた。
+- アンケートAPIが存在しない requireTrainee() を呼んでいた
+- Worker内で実際に使っているログイン判定は getTraineeSession(request, env)
+- そのためアンケートの取得・送信だけサーバーエラーになっていた
 
 修正
-- 進捗APIに completion_reservation_id を追加
-- 現在研修の直前プログラムが完了した予約IDを「解禁ライン」として使用
-- 現在研修の状態は、その解禁ラインより後に作成された本人の申請だけで判定
-- 解禁前の古い/先行/誤データは現在研修の状態判定から除外
+- GET /api/trainee/surveys/pending を getTraineeSession(request, env) に統一
+- POST /api/trainee/surveys を getTraineeSession(request, env) に統一
+- API読み込み失敗時に「0件」と誤表示せずエラー表示
+- 保存失敗時に原因を確認できるdetailを返す
+- 1研修1回答、既修了認定除外、管理画面アンケート結果は維持
 
-表示
-- 本当に未申請 → 「次に受講する研修です。希望日時を選んで申請してください。」/「申請する」
-- 解禁後に申請して期限超過 → 「希望日時を再申請」
-- 承認待ち / 予約確定 / 再受講は従来通り
-
-Version 1.90までのスマート・コンパクトUI、アンケート、Discord通知などは維持
+Version 1.91までの現在研修判定修正・コンパクトUI・Discord通知なども維持
