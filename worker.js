@@ -1,4 +1,4 @@
-const APP_VERSION="1.85";
+const APP_VERSION="1.87";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -619,6 +619,26 @@ async function getOrientationTraining(env){
   `).first();
 }
 
+async function ensureTrainingSurveys(env) {
+  await env.DB.prepare(`
+    CREATE TABLE IF NOT EXISTS training_surveys (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      reservation_id INTEGER NOT NULL UNIQUE,
+      discord_id TEXT NOT NULL DEFAULT '',
+      player_name TEXT NOT NULL DEFAULT '',
+      training_id INTEGER NOT NULL DEFAULT 0,
+      training_title TEXT NOT NULL DEFAULT '',
+      assigned_instructor TEXT NOT NULL DEFAULT '',
+      instructor_rating INTEGER NOT NULL DEFAULT 0,
+      content_rating INTEGER NOT NULL DEFAULT 0,
+      difficulty_rating INTEGER NOT NULL DEFAULT 0,
+      satisfaction_rating INTEGER NOT NULL DEFAULT 0,
+      comment TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL DEFAULT ''
+    )
+  `).run();
+}
+
 async function ensureTrainingPrograms(env) {
   await env.DB.prepare(`
     CREATE TABLE IF NOT EXISTS training_programs (
@@ -791,86 +811,46 @@ const html = (title, body, script = "") => new Response(`<!doctype html>
   #historyModal .modalCard{max-height:88vh}
 }
 
-.miniDateTime{
-  display:grid;
-  grid-template-columns:minmax(0,1fr) 150px;
-  gap:9px;
-  margin:10px 0 14px;
-}
-.miniCalendarCard,.miniClockCard{
-  border:1px solid #cdd8e5;
-  border-radius:13px;
-  background:#fff;
-  box-shadow:0 2px 8px rgba(12,39,72,.04);
-}
-.miniCalendarCard{overflow:hidden}
-.miniCalendarMonth{
-  background:#0c2748;
-  color:#fff;
-  text-align:center;
-  font-size:11px;
-  font-weight:1000;
-  padding:7px 6px;
-  letter-spacing:.08em;
-}
-.miniCalendarWeekHeader,
-.miniCalendarGrid{
-  display:grid;
-  grid-template-columns:repeat(7,minmax(0,1fr));
-}
-.miniCalendarWeekHeader{
-  border-bottom:1px solid #e5eaf0;
-  background:#f7f9fc;
-}
-.miniCalendarWeekHeader span{
-  text-align:center;
-  font-size:9px;
-  font-weight:1000;
-  padding:5px 0;
-  color:#6e7b8d;
-}
-.miniCalendarWeekHeader span:first-child{color:#b14a4a}
-.miniCalendarWeekHeader span:last-child{color:#4269a8}
-.miniCalendarCell{
-  min-height:29px;
+.surveyCard{border:1px solid #d7ad45;border-radius:14px;background:#fffdf7;padding:12px;margin-top:10px}
+.surveyStars{display:flex;gap:5px;flex-wrap:wrap;margin-top:5px}
+.surveyStars button{border:1px solid #cbd4df;background:#fff;border-radius:8px;min-width:34px;height:34px;font-weight:900}
+.surveyStars button.active{background:#0c2748;color:#fff;border-color:#0c2748}
+.surveyField{margin-top:10px}
+.surveyField label{display:block;font-size:11px;font-weight:900;margin-bottom:4px}
+.surveyField textarea{width:100%;min-height:80px}
+
+.currentTimeBar{
   display:flex;
   align-items:center;
-  justify-content:center;
-  font-size:10px;
-  font-weight:900;
-  color:#26364a;
-  border-right:1px solid #eef1f5;
-  border-bottom:1px solid #eef1f5;
-  position:relative;
+  justify-content:space-between;
+  gap:10px;
+  margin:9px 0 12px;
+  padding:8px 11px;
+  border:1px solid #d8e0ea;
+  border-radius:11px;
+  background:#fff;
+  box-shadow:0 2px 7px rgba(12,39,72,.04);
 }
-.miniCalendarCell:nth-child(7n){border-right:0}
-.miniCalendarCell.muted{color:#c4cbd4;background:#fafbfc}
-.miniCalendarCell.today{
-  background:#0c2748;
-  color:#fff;
-  border-radius:50%;
-  width:25px;
-  height:25px;
-  min-height:25px;
-  margin:auto;
-  align-self:center;
-  justify-self:center;
-  box-shadow:0 2px 5px rgba(12,39,72,.18);
+.currentTimeLabel{
+  font-size:9px;
+  font-weight:1000;
+  letter-spacing:.08em;
+  color:#7b8797;
 }
-.miniClockCard{
-  display:flex;
-  flex-direction:column;
-  justify-content:center;
-  padding:10px 12px;
+.currentTimeClock{
+  font-size:19px;
+  line-height:1;
+  font-weight:1000;
+  color:#0c2748;
+  font-variant-numeric:tabular-nums;
+  white-space:nowrap;
 }
-.miniClockLabel{font-size:9px;font-weight:1000;color:#8692a3;letter-spacing:.09em}
-.miniClockTime{font-size:25px;font-weight:1000;color:#0c2748;line-height:1.05;margin-top:3px;font-variant-numeric:tabular-nums}
-.miniClockDate{font-size:10px;font-weight:850;color:#69778a;margin-top:4px}
-@media(max-width:560px){
-  .miniDateTime{grid-template-columns:1fr}
-  .miniClockCard{padding:9px 11px}
-  .miniClockTime{font-size:22px}
-  .miniCalendarCell{min-height:27px;font-size:9px}
+.currentTimeDate{
+  font-size:9px;
+  font-weight:850;
+  color:#7b8797;
+  margin-top:3px;
+  text-align:right;
 }
 body{
   margin:0;
@@ -1982,22 +1962,15 @@ const PUBLIC_BODY = `
     </div>
   </div>
 
-  <div class="miniDateTime">
-    <div class="miniCalendarCard">
-      <div id="traineeMiniMonth" class="miniCalendarMonth">----</div>
-      <div class="miniCalendarWeekHeader">
-        <span>日</span><span>月</span><span>火</span><span>水</span><span>木</span><span>金</span><span>土</span>
-      </div>
-      <div id="traineeMiniCalendarGrid" class="miniCalendarGrid"></div>
-    </div>
-    <div class="miniClockCard">
-      <div class="miniClockLabel">CURRENT TIME / JST</div>
-      <div id="traineeMiniTime" class="miniClockTime">--:--:--</div>
-      <div id="traineeMiniDate" class="miniClockDate">----/--/--</div>
-    </div>
+  <div class="currentTimeBar">
+  <div class="currentTimeLabel">JAPAN STANDARD TIME</div>
+  <div>
+    <div id="traineeCurrentTime" class="currentTimeClock">--:--:--</div>
+    <div id="traineeCurrentDate" class="currentTimeDate">----/--/--</div>
   </div>
+</div>
 
-  <div id="authView">
+<div id="authView">
     <div class="card">
       <div class="title">研修生ログイン</div>
       <div class="sub" style="margin:6px 0 14px">Discordアカウントでログインしてください。</div>
@@ -2042,6 +2015,11 @@ const PUBLIC_BODY = `
     <div id="completionCertificateBody" style="margin-top:12px"></div>
   </div>
 </div>
+<section id="surveySection" class="card" style="display:none;margin-top:12px">
+  <div class="title">研修アンケート</div>
+  <div class="sub" style="margin-top:4px">受講済み研修への評価をお願いします。</div>
+  <div id="surveyList"></div>
+</section>
 <div id="historyModal" class="modal">
   <div class="modalCard">
     <div class="between">
@@ -2112,57 +2090,25 @@ function enableHistoryModalScroll(){
  scroller.style.touchAction='pan-y';
 }
 
-function updateMiniJstClock(prefix){
- const now=new Date();
+
+
+
+function updateJstCurrentTime(prefix){
  const parts=new Intl.DateTimeFormat('ja-JP',{
    timeZone:'Asia/Tokyo',
    year:'numeric',month:'2-digit',day:'2-digit',
-   weekday:'short',hour:'2-digit',minute:'2-digit',second:'2-digit',
+   weekday:'short',
+   hour:'2-digit',minute:'2-digit',second:'2-digit',
    hour12:false
- }).formatToParts(now);
+ }).formatToParts(new Date());
+
  const get=t=>parts.find(x=>x.type===t)?.value||'';
- const y=Number(get('year')),m=Number(get('month')),d=Number(get('day'));
- const hh=get('hour'),mm=get('minute'),ss=get('second');
+ const timeEl=document.getElementById(prefix+'CurrentTime');
+ const dateEl=document.getElementById(prefix+'CurrentDate');
 
- const monthEl=document.getElementById(prefix+'MiniMonth');
- const gridEl=document.getElementById(prefix+'MiniCalendarGrid');
- const timeEl=document.getElementById(prefix+'MiniTime');
- const dateEl=document.getElementById(prefix+'MiniDate');
-
- if(monthEl)monthEl.textContent=y+'年 '+m+'月';
- if(timeEl)timeEl.textContent=hh+':'+mm+':'+ss;
- if(dateEl)dateEl.textContent=y+'/'+String(m).padStart(2,'0')+'/'+String(d).padStart(2,'0')+'  日本時間';
-
- if(gridEl){
-   const key=y+'-'+m+'-'+d;
-   if(gridEl.dataset.renderedKey!==key){
-     const first=new Date(Date.UTC(y,m-1,1));
-     const firstWeekday=first.getUTCDay();
-     const daysInMonth=new Date(Date.UTC(y,m,0)).getUTCDate();
-     const prevDays=new Date(Date.UTC(y,m-1,0)).getUTCDate();
-
-     let cells='';
-     for(let i=0;i<42;i++){
-       const offset=i-firstWeekday+1;
-       let cellDay,cellMonthDelta=0,muted=false;
-       if(offset<1){
-         cellDay=prevDays+offset;
-         cellMonthDelta=-1;
-         muted=true;
-       }else if(offset>daysInMonth){
-         cellDay=offset-daysInMonth;
-         cellMonthDelta=1;
-         muted=true;
-       }else{
-         cellDay=offset;
-       }
-       const isToday=!muted && cellDay===d;
-       cells+='<div class="miniCalendarCell'+(muted?' muted':'')+(isToday?' today':'')+'">'+cellDay+'</div>';
-     }
-     gridEl.innerHTML=cells;
-     gridEl.dataset.renderedKey=key;
-   }
- }
+ if(timeEl)timeEl.textContent=get('hour')+':'+get('minute')+':'+get('second');
+ if(dateEl)dateEl.textContent=
+   get('year')+'/'+get('month')+'/'+get('day')+'（'+get('weekday')+'）';
 }
 
 function esc(s){return String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
@@ -2483,6 +2429,51 @@ async function editPlayerName(){
  }
 }
 
+
+const surveyState={};
+function surveyStars(id,key,label){
+ return '<div class="surveyField"><label>'+esc(label)+'</label><div class="surveyStars">'+
+ [1,2,3,4,5].map(v=>'<button type="button" onclick="setSurveyRating('+id+',\''+key+'\','+v+',this)">'+v+'</button>').join('')+
+ '</div></div>';
+}
+function setSurveyRating(id,key,v,btn){
+ surveyState[id]=surveyState[id]||{}; surveyState[id][key]=v;
+ btn.parentElement.querySelectorAll('button').forEach((b,i)=>b.classList.toggle('active',i<v));
+}
+async function loadPendingSurveys(){
+ const sec=document.getElementById('surveySection'), el=document.getElementById('surveyList');
+ if(!sec||!el)return;
+ const r=await fetch('/api/trainee/surveys/pending',{cache:'no-store'});
+ const d=await r.json().catch(()=>({rows:[]}));
+ const rows=Array.isArray(d.rows)?d.rows:[];
+ sec.style.display=rows.length?'':'none';
+ el.innerHTML=rows.map(x=>{
+   const id=Number(x.reservation_id);
+   return '<div class="surveyCard"><div class="title">'+esc(x.training_title||'研修')+'</div>'+
+    '<div class="sub">担当教官：'+esc(x.assigned_instructor||'未設定')+'</div>'+
+    surveyStars(id,'instructor_rating','担当教官の評価')+
+    surveyStars(id,'content_rating','研修内容の評価')+
+    surveyStars(id,'difficulty_rating','難易度（1=やさしい / 5=難しい）')+
+    surveyStars(id,'satisfaction_rating','総合満足度')+
+    '<div class="surveyField"><label>自由コメント（任意）</label><textarea id="surveyComment_'+id+'" placeholder="良かった点・改善点など"></textarea></div>'+
+    '<button class="btn primary" style="width:100%;margin-top:10px" type="button" onclick="submitTrainingSurvey('+id+')">アンケートを送信</button></div>';
+ }).join('');
+}
+async function submitTrainingSurvey(id){
+ const s=surveyState[id]||{};
+ if(['instructor_rating','content_rating','difficulty_rating','satisfaction_rating'].some(k=>!s[k])){
+   alert('4項目すべて1〜5で回答してください。');return;
+ }
+ const comment=String(document.getElementById('surveyComment_'+id)?.value||'').trim();
+ if(!confirm('この内容でアンケートを送信しますか？'))return;
+ const r=await fetch('/api/trainee/surveys',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({reservation_id:id,...s,comment})});
+ const d=await r.json().catch(()=>({}));
+ if(!r.ok){alert(d.error||'送信できませんでした');return;}
+ alert('アンケートを送信しました。ありがとうございます。');
+ delete surveyState[id]; await loadPendingSurveys();
+}
+
+
 async function loadMyPage(){
  const r=await fetch('/api/trainee/profile');
  const d=await r.json().catch(()=>({}));
@@ -2502,6 +2493,7 @@ async function loadMyPage(){
     '<div id="trainingProgressList" class="trainingProgressGrid"><div class="empty">進捗を読み込み中...</div></div>'+
   '</div>';
  loadProgress();
+ loadPendingSurveys();
  const h=document.getElementById('myHistory');
  h.innerHTML=d.history.length?d.history.map(x=>'<div class="card">'+(x.status==='completed'?'<div class="completedHistory"><div class="completedHistoryMain">':'')+'<div class="between"><div><span class="pill '+esc(x.status)+'">'+esc(statusLabels[x.status]||x.status)+'</span><div class="title" style="margin-top:7px">'+esc(x.title)+'</div></div>'+(x.status==='pending'||x.status==='reserved'?'<button class="btn danger small traineeCancelBtn" data-id="'+x.id+'">申請キャンセル</button>':'')+'</div>'+(x.preferred_date||x.preferred_time?'<div class="sub" style="margin-top:7px">第1希望：'+esc([x.preferred_date||'',x.preferred_time||''].filter(Boolean).join(' '))+'</div>':'')+
 (x.preferred_date2||x.preferred_time2?'<div class="sub"><b>第2希望：</b>'+esc([x.preferred_date2||'',x.preferred_time2||''].filter(Boolean).join(' '))+'</div>':'')+
@@ -2576,7 +2568,9 @@ document.getElementById('closeHistoryBtn')?.addEventListener('click',()=>documen
 document.getElementById('historyModal')?.addEventListener('click',e=>{if(e.target.id==='historyModal')e.currentTarget.classList.remove('open')});
 
 loadDiscordLoginConfig();restoreTrainee();
-updateMiniJstClock('trainee');setInterval(()=>updateMiniJstClock('trainee'),1000);
+
+
+updateJstCurrentTime('trainee');setInterval(()=>updateJstCurrentTime('trainee'),1000);
 `;
 
 const ADMIN_BODY = `
@@ -2599,21 +2593,15 @@ const ADMIN_BODY = `
 <div id="adminView" style="display:none"><div class="wrap">
  <div class="header"><div class="between"><div><span class="badge">LOMITA POLICE</span><div class="brand">研修管理本部</div><div class="sub">研修・参加申請・受講状況を一括管理</div><div class="sub" style="margin-top:6px;opacity:.78">Version ${APP_VERSION}</div><div id="adminRoleLabel" class="sub" style="margin-top:4px"></div></div><div class="row"><button class="btn small" onclick="logout()">ログアウト</button><button class="btn small" onclick="openManageMenu()">⚠️ここは触らない⚠️</button> </div></div></div>
  <div id="msg"></div>
- <div class="miniDateTime">
-   <div class="miniCalendarCard">
-     <div id="adminMiniMonth" class="miniCalendarMonth">----</div>
-     <div class="miniCalendarWeekHeader">
-       <span>日</span><span>月</span><span>火</span><span>水</span><span>木</span><span>金</span><span>土</span>
-     </div>
-     <div id="adminMiniCalendarGrid" class="miniCalendarGrid"></div>
-   </div>
-   <div class="miniClockCard">
-     <div class="miniClockLabel">CURRENT TIME / JST</div>
-     <div id="adminMiniTime" class="miniClockTime">--:--:--</div>
-     <div id="adminMiniDate" class="miniClockDate">----/--/--</div>
-   </div>
- </div>
- <div class="adminCommand">
+ <div class="currentTimeBar">
+  <div class="currentTimeLabel">JAPAN STANDARD TIME</div>
+  <div>
+    <div id="adminCurrentTime" class="currentTimeClock">--:--:--</div>
+    <div id="adminCurrentDate" class="currentTimeDate">----/--/--</div>
+  </div>
+</div>
+
+<div class="adminCommand">
    <div class="adminCommandHead">
      <div><div class="adminCommandTitle">管理ダッシュボード</div><div class="adminCommandSub">今対応する内容をここで確認できます</div></div>
      <button class="btn small" type="button" onclick="refreshAdminNow()">更新</button>
@@ -2712,6 +2700,11 @@ const ADMIN_BODY = `
      <div class="completedAdminHead"><div class="completedAdminTitle">教官 講師回数ランキング</div></div>
      <div class="sub">受講済みになった研修を担当教官ごとに自動集計</div>
      <div id="instructorRankingList" class="instructorRanking"><div class="empty">まだ実績はありません。</div></div>
+   </div>
+   <div class="completedAdminBox">
+     <div class="completedAdminHead"><div class="completedAdminTitle">研修アンケート</div></div>
+     <div id="surveySummary"><div class="empty">回答はまだありません。</div></div>
+     <details style="margin-top:10px"><summary style="font-weight:900">回答一覧を見る</summary><div id="surveyAdminList"></div></details>
    </div>
  </div>
 
@@ -2826,57 +2819,25 @@ const ADMIN_SCRIPT = String.raw`
 let adminPassword='', trainings=[], activeTrainingId=null, buildTimer=null, currentAdminRole='owner';
 const labels={pending:'承認待ち',reserved:'予約確定',completed:'受講済み',retake:'再受講',absent:'欠席',cancelled:'キャンセル',expired:'希望日時超過'};
 
-function updateMiniJstClock(prefix){
- const now=new Date();
+
+
+
+function updateJstCurrentTime(prefix){
  const parts=new Intl.DateTimeFormat('ja-JP',{
    timeZone:'Asia/Tokyo',
    year:'numeric',month:'2-digit',day:'2-digit',
-   weekday:'short',hour:'2-digit',minute:'2-digit',second:'2-digit',
+   weekday:'short',
+   hour:'2-digit',minute:'2-digit',second:'2-digit',
    hour12:false
- }).formatToParts(now);
+ }).formatToParts(new Date());
+
  const get=t=>parts.find(x=>x.type===t)?.value||'';
- const y=Number(get('year')),m=Number(get('month')),d=Number(get('day'));
- const hh=get('hour'),mm=get('minute'),ss=get('second');
+ const timeEl=document.getElementById(prefix+'CurrentTime');
+ const dateEl=document.getElementById(prefix+'CurrentDate');
 
- const monthEl=document.getElementById(prefix+'MiniMonth');
- const gridEl=document.getElementById(prefix+'MiniCalendarGrid');
- const timeEl=document.getElementById(prefix+'MiniTime');
- const dateEl=document.getElementById(prefix+'MiniDate');
-
- if(monthEl)monthEl.textContent=y+'年 '+m+'月';
- if(timeEl)timeEl.textContent=hh+':'+mm+':'+ss;
- if(dateEl)dateEl.textContent=y+'/'+String(m).padStart(2,'0')+'/'+String(d).padStart(2,'0')+'  日本時間';
-
- if(gridEl){
-   const key=y+'-'+m+'-'+d;
-   if(gridEl.dataset.renderedKey!==key){
-     const first=new Date(Date.UTC(y,m-1,1));
-     const firstWeekday=first.getUTCDay();
-     const daysInMonth=new Date(Date.UTC(y,m,0)).getUTCDate();
-     const prevDays=new Date(Date.UTC(y,m-1,0)).getUTCDate();
-
-     let cells='';
-     for(let i=0;i<42;i++){
-       const offset=i-firstWeekday+1;
-       let cellDay,cellMonthDelta=0,muted=false;
-       if(offset<1){
-         cellDay=prevDays+offset;
-         cellMonthDelta=-1;
-         muted=true;
-       }else if(offset>daysInMonth){
-         cellDay=offset-daysInMonth;
-         cellMonthDelta=1;
-         muted=true;
-       }else{
-         cellDay=offset;
-       }
-       const isToday=!muted && cellDay===d;
-       cells+='<div class="miniCalendarCell'+(muted?' muted':'')+(isToday?' today':'')+'">'+cellDay+'</div>';
-     }
-     gridEl.innerHTML=cells;
-     gridEl.dataset.renderedKey=key;
-   }
- }
+ if(timeEl)timeEl.textContent=get('hour')+':'+get('minute')+':'+get('second');
+ if(dateEl)dateEl.textContent=
+   get('year')+'/'+get('month')+'/'+get('day')+'（'+get('weekday')+'）';
 }
 
 function esc(s){return String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
@@ -2894,7 +2855,8 @@ async function login(){
      document.getElementById('loginMsg').innerHTML='<div class="notice error">'+(r.status===401?'パスワードが違います':'ログイン処理に失敗しました（HTTP '+r.status+'）')+'</div>';
      return;
    }
-   adminPassword='';showAdmin();await loadCurrentAdminRole();await loadAdmin();await loadReservationControl();scheduleAdminInitialRefresh();
+   adminPassword='';showAdmin();await loadCurrentAdminRole();await loadAdmin();await loadReservationControl();
+ await loadAdminSurveys();scheduleAdminInitialRefresh();
  }finally{btn.disabled=false;btn.textContent='管理画面を開く'}
 }
 async function logout(){
@@ -3916,6 +3878,26 @@ async function openTraineeDetail(discord){
 }
 function closeTraineeDetail(){document.getElementById('traineeModal').classList.remove('open')}
 function fmt(d){return new Date(d+'T00:00:00').toLocaleDateString('ja-JP',{month:'numeric',day:'numeric',weekday:'short'})}
+
+async function loadAdminSurveys(){
+ const s=document.getElementById('surveySummary'), l=document.getElementById('surveyAdminList');
+ if(!s||!l)return;
+ const r=await fetch('/api/admin/surveys',{headers:auth()});
+ const d=await r.json().catch(()=>({}));
+ if(!r.ok)return;
+ const summary=Array.isArray(d.summary)?d.summary:[];
+ s.innerHTML=summary.length?summary.map(x=>
+   '<div class="card" style="margin-top:7px"><div class="between"><b>'+esc(x.assigned_instructor)+'</b><span class="pill">'+Number(x.responses||0)+'件</span></div>'+
+   '<div class="sub">教官 ★'+Number(x.avg_instructor_rating||0).toFixed(2)+' ｜ 内容 ★'+Number(x.avg_content_rating||0).toFixed(2)+' ｜ 満足度 ★'+Number(x.avg_satisfaction_rating||0).toFixed(2)+'</div></div>'
+ ).join(''):'<div class="empty">回答はまだありません。</div>';
+ const rows=Array.isArray(d.rows)?d.rows:[];
+ l.innerHTML=rows.length?rows.map(x=>
+   '<div class="card" style="margin-top:7px"><b>'+esc(x.training_title||'研修')+'</b><div class="sub">'+esc(x.player_name||'')+' / '+esc(x.assigned_instructor||'')+'</div>'+
+   '<div class="sub">教官 '+x.instructor_rating+'/5 ｜ 内容 '+x.content_rating+'/5 ｜ 難易度 '+x.difficulty_rating+'/5 ｜ 満足度 '+x.satisfaction_rating+'/5</div>'+
+   (x.comment?'<div class="notice" style="margin-top:6px">'+esc(x.comment)+'</div>':'')+'</div>'
+ ).join(''):'<div class="empty">回答はありません。</div>';
+}
+
 async function loadAdmin(){
  if(!instructorRows.length){
    const ir=await fetch('/api/admin/instructors',{headers:auth(),cache:'no-store'});
@@ -4315,7 +4297,9 @@ document.getElementById('adminLoginBtn')?.addEventListener('click',login);
 document.getElementById('password')?.addEventListener('keydown',e=>{if(e.key==='Enter')login()});
 restoreAdmin();
 
-updateMiniJstClock('admin');setInterval(()=>updateMiniJstClock('admin'),1000);
+
+
+updateJstCurrentTime('admin');setInterval(()=>updateJstCurrentTime('admin'),1000);
 `;
 
 async function handle(request, env) {
@@ -4430,6 +4414,66 @@ async function handle(request, env) {
 
  if(path==="/api/trainee/logout" && method==="POST"){
    return new Response(JSON.stringify({ok:true}),{headers:{"content-type":"application/json; charset=utf-8","set-cookie":"lomita_trainee=; Max-Age=0; HttpOnly; Secure; SameSite=Strict; Path=/"}});
+ }
+
+ if(path==="/api/trainee/surveys/pending" && method==="GET"){
+   const trainee=await requireTrainee();
+   if(!trainee)return json({error:"unauthorized"},401);
+   await ensureTrainingSurveys(env);
+   const did=String(trainee.discord_user_id||trainee.login_name||"").trim();
+   const q=await env.DB.prepare(`
+     SELECT r.id reservation_id,r.training_id,COALESCE(t.title,'研修') training_title,
+            COALESCE(r.assigned_instructor,'') assigned_instructor
+     FROM reservations r
+     LEFT JOIN trainings t ON t.id=r.training_id
+     LEFT JOIN training_surveys s ON s.reservation_id=r.id
+     WHERE r.status='completed'
+       AND lower(trim(COALESCE(r.discord_id,'')))=lower(trim(?))
+       AND s.id IS NULL
+       AND COALESCE(r.note,'')<>'途中参加による既修了認定'
+     ORDER BY r.id DESC
+   `).bind(did).all();
+   return json({ok:true,rows:q?.results||[]});
+ }
+
+ if(path==="/api/trainee/surveys" && method==="POST"){
+   const trainee=await requireTrainee();
+   if(!trainee)return json({error:"unauthorized"},401);
+   await ensureTrainingSurveys(env);
+   const b=await request.json().catch(()=>({}));
+   const rid=Number(b.reservation_id||0);
+   const ir=Number(b.instructor_rating||0), cr=Number(b.content_rating||0),
+         dr=Number(b.difficulty_rating||0), sr=Number(b.satisfaction_rating||0);
+   const comment=String(b.comment||"").trim().slice(0,1000);
+   if(!rid)return json({error:"対象研修が不正です"},400);
+   if([ir,cr,dr,sr].some(v=>!Number.isInteger(v)||v<1||v>5))
+     return json({error:"評価はすべて1〜5で回答してください"},400);
+
+   const did=String(trainee.discord_user_id||trainee.login_name||"").trim();
+   const row=await env.DB.prepare(`
+     SELECT r.id,r.training_id,r.player_name,r.assigned_instructor,COALESCE(t.title,'研修') training_title
+     FROM reservations r LEFT JOIN trainings t ON t.id=r.training_id
+     WHERE r.id=? AND r.status='completed'
+       AND lower(trim(COALESCE(r.discord_id,'')))=lower(trim(?))
+       AND COALESCE(r.note,'')<>'途中参加による既修了認定'
+     LIMIT 1
+   `).bind(rid,did).first();
+   if(!row)return json({error:"回答対象が見つかりません"},404);
+
+   try{
+     await env.DB.prepare(`
+       INSERT INTO training_surveys(
+         reservation_id,discord_id,player_name,training_id,training_title,assigned_instructor,
+         instructor_rating,content_rating,difficulty_rating,satisfaction_rating,comment,created_at
+       ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+     `).bind(rid,did,String(row.player_name||""),Number(row.training_id||0),
+       String(row.training_title||"研修"),String(row.assigned_instructor||""),
+       ir,cr,dr,sr,comment,new Date().toISOString()).run();
+   }catch(err){
+     if(String(err).includes("UNIQUE"))return json({error:"この研修は回答済みです"},409);
+     throw err;
+   }
+   return json({ok:true});
  }
 
  if(path==="/api/trainee/progress" && method==="GET"){
@@ -4958,6 +5002,27 @@ async function handle(request, env) {
    await env.DB.prepare("DELETE FROM reservations WHERE lower(trim(COALESCE(discord_id,'')))=lower(trim(?))").bind(key).run();
    await env.DB.prepare("DELETE FROM trainee_profiles WHERE id=?").bind(Number(traineeDeleteMatch[1])).run();
    return json({ok:true});
+ }
+
+ if(path==="/api/admin/surveys" && method==="GET"){
+   if(!(await isAdmin()))return json({error:"unauthorized"},401);
+   await ensureTrainingSurveys(env);
+   const rows=await env.DB.prepare(`
+     SELECT id,player_name,training_title,assigned_instructor,
+            instructor_rating,content_rating,difficulty_rating,satisfaction_rating,comment,created_at
+     FROM training_surveys ORDER BY id DESC LIMIT 200
+   `).all();
+   const summary=await env.DB.prepare(`
+     SELECT assigned_instructor,COUNT(*) responses,
+            ROUND(AVG(instructor_rating),2) avg_instructor_rating,
+            ROUND(AVG(content_rating),2) avg_content_rating,
+            ROUND(AVG(satisfaction_rating),2) avg_satisfaction_rating
+     FROM training_surveys
+     WHERE trim(COALESCE(assigned_instructor,''))<>''
+     GROUP BY assigned_instructor
+     ORDER BY avg_instructor_rating DESC,responses DESC
+   `).all();
+   return json({ok:true,rows:rows?.results||[],summary:summary?.results||[]});
  }
 
  if(path==="/api/admin/trainee-progress" && method==="GET"){
