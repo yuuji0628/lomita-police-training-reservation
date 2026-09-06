@@ -1,4 +1,4 @@
-const APP_VERSION="1.91";
+const APP_VERSION="1.92";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -2655,7 +2655,13 @@ async function loadPendingSurveys(){
  const btn=document.getElementById('openSurveyBtn');
  if(!el)return;
  const r=await fetch('/api/trainee/surveys/pending',{cache:'no-store'});
- const d=await r.json().catch(()=>({rows:[]}));
+ const d=await r.json().catch(()=>({}));
+ if(!r.ok){
+   if(badge)badge.textContent='!';
+   if(btn)btn.classList.add('primary');
+   el.innerHTML='<div class="notice error">'+esc(d.error||'アンケートを読み込めませんでした。')+'</div>';
+   return;
+ }
  const rows=Array.isArray(d.rows)?d.rows:[];
  if(badge)badge.textContent=String(rows.length);
  if(btn)btn.classList.toggle('primary',rows.length>0);
@@ -2693,7 +2699,10 @@ async function submitTrainingSurvey(id){
  if(!confirm('この内容でアンケートを送信しますか？'))return;
  const r=await fetch('/api/trainee/surveys',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({reservation_id:id,...s,comment})});
  const d=await r.json().catch(()=>({}));
- if(!r.ok){alert(d.error||'送信できませんでした');return;}
+ if(!r.ok){
+   alert((d.error||'アンケートを送信できませんでした')+(d.detail?'\n'+d.detail:''));
+   return;
+ }
  alert('アンケートを送信しました。ありがとうございます。');
  delete surveyState[id]; await loadPendingSurveys();
 }
@@ -4678,8 +4687,8 @@ async function handle(request, env) {
  }
 
  if(path==="/api/trainee/surveys/pending" && method==="GET"){
-   const trainee=await requireTrainee();
-   if(!trainee)return json({error:"unauthorized"},401);
+   const trainee=await getTraineeSession(request,env);
+   if(!trainee)return json({error:"ログインが必要です"},401);
    await ensureTrainingSurveys(env);
    const did=String(trainee.discord_id||trainee.login_name||"").trim();
    const q=await env.DB.prepare(`
@@ -4698,8 +4707,8 @@ async function handle(request, env) {
  }
 
  if(path==="/api/trainee/surveys" && method==="POST"){
-   const trainee=await requireTrainee();
-   if(!trainee)return json({error:"unauthorized"},401);
+   const trainee=await getTraineeSession(request,env);
+   if(!trainee)return json({error:"ログインが必要です"},401);
    await ensureTrainingSurveys(env);
    const b=await request.json().catch(()=>({}));
    const rid=Number(b.reservation_id||0);
@@ -4732,7 +4741,7 @@ async function handle(request, env) {
        ir,cr,dr,sr,comment,new Date().toISOString()).run();
    }catch(err){
      if(String(err).includes("UNIQUE"))return json({error:"この研修は回答済みです"},409);
-     throw err;
+     return json({error:"アンケートを保存できませんでした",detail:String(err?.message||err)},500);
    }
    return json({ok:true});
  }
