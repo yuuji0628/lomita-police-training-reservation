@@ -1,4 +1,4 @@
-const APP_VERSION="1.94";
+const APP_VERSION="1.95";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -986,6 +986,137 @@ const html = (title, body, script = "") => new Response(`<!doctype html>
   }
   .adminDashTile .num{
     font-size:19px !important;
+  }
+}
+
+
+/* v1.95 micro dashboard */
+.adminCommand{
+  padding:6px 7px !important;
+  margin:5px 0 7px !important;
+  border-radius:12px !important;
+}
+.adminCommandHead{
+  display:grid !important;
+  grid-template-columns:1fr auto !important;
+  align-items:center !important;
+  gap:5px !important;
+  margin-bottom:4px !important;
+}
+.adminCommandTitle{
+  font-size:13px !important;
+  line-height:1 !important;
+  margin:0 !important;
+}
+.adminCommandSub{
+  display:none !important;
+}
+.adminCommandHead .btn{
+  min-height:26px !important;
+  height:26px !important;
+  padding:3px 7px !important;
+  font-size:8px !important;
+  border-radius:8px !important;
+}
+.adminDashGrid{
+  display:grid !important;
+  grid-template-columns:repeat(4,minmax(0,1fr)) !important;
+  gap:3px !important;
+  margin-top:3px !important;
+}
+.adminDashTile{
+  min-width:0 !important;
+  min-height:43px !important;
+  height:43px !important;
+  padding:4px 3px !important;
+  border-radius:8px !important;
+  text-align:center !important;
+  display:flex !important;
+  flex-direction:column !important;
+  align-items:center !important;
+  justify-content:center !important;
+}
+.adminDashTile .label{
+  font-size:7px !important;
+  line-height:1.05 !important;
+  white-space:nowrap !important;
+  overflow:hidden !important;
+  text-overflow:ellipsis !important;
+  width:100% !important;
+}
+.adminDashTile .num{
+  font-size:18px !important;
+  line-height:.9 !important;
+  margin-top:2px !important;
+}
+.adminDashTile .hint{
+  display:none !important;
+}
+.adminCommand details{
+  margin-top:4px !important;
+}
+.adminCommand details summary{
+  min-height:26px !important;
+  height:26px !important;
+  padding:4px 7px !important;
+  font-size:8px !important;
+  border-radius:8px !important;
+  display:flex !important;
+  align-items:center !important;
+  justify-content:space-between !important;
+}
+.adminCommand details[open] summary{
+  margin-bottom:4px !important;
+}
+.adminCommand .adminMiniGrid{
+  grid-template-columns:repeat(2,minmax(0,1fr)) !important;
+  gap:3px !important;
+  margin-top:3px !important;
+}
+.adminCommand .adminMiniTile{
+  min-height:27px !important;
+  padding:4px 6px !important;
+  border-radius:7px !important;
+}
+.adminCommand .adminMiniTile .name{
+  font-size:7px !important;
+}
+.adminCommand .adminMiniTile .count{
+  font-size:10px !important;
+}
+.adminTabs{
+  gap:4px !important;
+  margin:5px 0 7px !important;
+}
+.adminTabs .btn{
+  min-height:36px !important;
+  height:36px !important;
+  padding:5px 5px !important;
+  font-size:9px !important;
+  border-radius:9px !important;
+}
+@media(max-width:560px){
+  .adminCommand{
+    padding:5px 6px !important;
+  }
+  .adminDashGrid{
+    grid-template-columns:repeat(4,minmax(0,1fr)) !important;
+  }
+  .adminDashTile{
+    min-height:40px !important;
+    height:40px !important;
+    padding:3px 2px !important;
+  }
+  .adminDashTile .label{
+    font-size:6.5px !important;
+  }
+  .adminDashTile .num{
+    font-size:17px !important;
+  }
+  .adminTabs .btn{
+    min-height:34px !important;
+    height:34px !important;
+    font-size:8.5px !important;
   }
 }
 
@@ -2994,7 +3125,7 @@ const ADMIN_BODY = `
 
 <div class="adminCommand">
    <div class="adminCommandHead">
-     <div><div class="adminCommandTitle">管理ダッシュボード</div><div class="adminCommandSub">今対応する内容をここで確認できます</div></div>
+     <div><div class="adminCommandTitle">管理状況</div><div class="adminCommandSub">今対応する内容をここで確認できます</div></div>
      <button class="btn small" type="button" onclick="refreshAdminNow()">更新</button>
    </div>
 
@@ -3014,7 +3145,7 @@ const ADMIN_BODY = `
    </div>
 
    <details class="adminDashDetails">
-     <summary>詳細情報を見る</summary>
+     <summary>詳細</summary>
      <div class="adminDashDetailsBody">
        <div class="adminMiniGrid">
          <button class="adminMiniTile" type="button" onclick="openDashboardReservations('week')"><div class="between"><span class="name">今週の研修</span><span id="dashWeek" class="count">0</span></div></button>
