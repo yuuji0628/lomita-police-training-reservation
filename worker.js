@@ -1,4 +1,4 @@
-const APP_VERSION="1.83";
+const APP_VERSION="1.85";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -793,7 +793,7 @@ const html = (title, body, script = "") => new Response(`<!doctype html>
 
 .miniDateTime{
   display:grid;
-  grid-template-columns:116px 1fr;
+  grid-template-columns:minmax(0,1fr) 150px;
   gap:9px;
   margin:10px 0 14px;
 }
@@ -808,25 +808,54 @@ const html = (title, body, script = "") => new Response(`<!doctype html>
   background:#0c2748;
   color:#fff;
   text-align:center;
-  font-size:10px;
+  font-size:11px;
   font-weight:1000;
-  padding:5px 4px;
+  padding:7px 6px;
   letter-spacing:.08em;
 }
-.miniCalendarDay{
-  text-align:center;
-  font-size:32px;
-  font-weight:1000;
-  color:#0c2748;
-  line-height:1;
-  padding-top:8px;
+.miniCalendarWeekHeader,
+.miniCalendarGrid{
+  display:grid;
+  grid-template-columns:repeat(7,minmax(0,1fr));
 }
-.miniCalendarWeekday{
+.miniCalendarWeekHeader{
+  border-bottom:1px solid #e5eaf0;
+  background:#f7f9fc;
+}
+.miniCalendarWeekHeader span{
   text-align:center;
+  font-size:9px;
+  font-weight:1000;
+  padding:5px 0;
+  color:#6e7b8d;
+}
+.miniCalendarWeekHeader span:first-child{color:#b14a4a}
+.miniCalendarWeekHeader span:last-child{color:#4269a8}
+.miniCalendarCell{
+  min-height:29px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
   font-size:10px;
   font-weight:900;
-  color:#748195;
-  padding:4px 4px 8px;
+  color:#26364a;
+  border-right:1px solid #eef1f5;
+  border-bottom:1px solid #eef1f5;
+  position:relative;
+}
+.miniCalendarCell:nth-child(7n){border-right:0}
+.miniCalendarCell.muted{color:#c4cbd4;background:#fafbfc}
+.miniCalendarCell.today{
+  background:#0c2748;
+  color:#fff;
+  border-radius:50%;
+  width:25px;
+  height:25px;
+  min-height:25px;
+  margin:auto;
+  align-self:center;
+  justify-self:center;
+  box-shadow:0 2px 5px rgba(12,39,72,.18);
 }
 .miniClockCard{
   display:flex;
@@ -837,9 +866,11 @@ const html = (title, body, script = "") => new Response(`<!doctype html>
 .miniClockLabel{font-size:9px;font-weight:1000;color:#8692a3;letter-spacing:.09em}
 .miniClockTime{font-size:25px;font-weight:1000;color:#0c2748;line-height:1.05;margin-top:3px;font-variant-numeric:tabular-nums}
 .miniClockDate{font-size:10px;font-weight:850;color:#69778a;margin-top:4px}
-@media(max-width:380px){
-  .miniDateTime{grid-template-columns:104px 1fr}
+@media(max-width:560px){
+  .miniDateTime{grid-template-columns:1fr}
+  .miniClockCard{padding:9px 11px}
   .miniClockTime{font-size:22px}
+  .miniCalendarCell{min-height:27px;font-size:9px}
 }
 body{
   margin:0;
@@ -1953,9 +1984,11 @@ const PUBLIC_BODY = `
 
   <div class="miniDateTime">
     <div class="miniCalendarCard">
-      <div id="traineeMiniMonth" class="miniCalendarMonth">JST</div>
-      <div id="traineeMiniDay" class="miniCalendarDay">--</div>
-      <div id="traineeMiniWeekday" class="miniCalendarWeekday">---</div>
+      <div id="traineeMiniMonth" class="miniCalendarMonth">----</div>
+      <div class="miniCalendarWeekHeader">
+        <span>日</span><span>月</span><span>火</span><span>水</span><span>木</span><span>金</span><span>土</span>
+      </div>
+      <div id="traineeMiniCalendarGrid" class="miniCalendarGrid"></div>
     </div>
     <div class="miniClockCard">
       <div class="miniClockLabel">CURRENT TIME / JST</div>
@@ -2088,18 +2121,48 @@ function updateMiniJstClock(prefix){
    hour12:false
  }).formatToParts(now);
  const get=t=>parts.find(x=>x.type===t)?.value||'';
- const y=get('year'),m=get('month'),d=get('day'),wd=get('weekday');
+ const y=Number(get('year')),m=Number(get('month')),d=Number(get('day'));
  const hh=get('hour'),mm=get('minute'),ss=get('second');
+
  const monthEl=document.getElementById(prefix+'MiniMonth');
- const dayEl=document.getElementById(prefix+'MiniDay');
- const weekdayEl=document.getElementById(prefix+'MiniWeekday');
+ const gridEl=document.getElementById(prefix+'MiniCalendarGrid');
  const timeEl=document.getElementById(prefix+'MiniTime');
  const dateEl=document.getElementById(prefix+'MiniDate');
- if(monthEl)monthEl.textContent=y+' / '+m;
- if(dayEl)dayEl.textContent=d;
- if(weekdayEl)weekdayEl.textContent=wd;
+
+ if(monthEl)monthEl.textContent=y+'年 '+m+'月';
  if(timeEl)timeEl.textContent=hh+':'+mm+':'+ss;
- if(dateEl)dateEl.textContent=y+'/'+m+'/'+d+'  日本時間';
+ if(dateEl)dateEl.textContent=y+'/'+String(m).padStart(2,'0')+'/'+String(d).padStart(2,'0')+'  日本時間';
+
+ if(gridEl){
+   const key=y+'-'+m+'-'+d;
+   if(gridEl.dataset.renderedKey!==key){
+     const first=new Date(Date.UTC(y,m-1,1));
+     const firstWeekday=first.getUTCDay();
+     const daysInMonth=new Date(Date.UTC(y,m,0)).getUTCDate();
+     const prevDays=new Date(Date.UTC(y,m-1,0)).getUTCDate();
+
+     let cells='';
+     for(let i=0;i<42;i++){
+       const offset=i-firstWeekday+1;
+       let cellDay,cellMonthDelta=0,muted=false;
+       if(offset<1){
+         cellDay=prevDays+offset;
+         cellMonthDelta=-1;
+         muted=true;
+       }else if(offset>daysInMonth){
+         cellDay=offset-daysInMonth;
+         cellMonthDelta=1;
+         muted=true;
+       }else{
+         cellDay=offset;
+       }
+       const isToday=!muted && cellDay===d;
+       cells+='<div class="miniCalendarCell'+(muted?' muted':'')+(isToday?' today':'')+'">'+cellDay+'</div>';
+     }
+     gridEl.innerHTML=cells;
+     gridEl.dataset.renderedKey=key;
+   }
+ }
 }
 
 function esc(s){return String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
@@ -2538,9 +2601,11 @@ const ADMIN_BODY = `
  <div id="msg"></div>
  <div class="miniDateTime">
    <div class="miniCalendarCard">
-     <div id="adminMiniMonth" class="miniCalendarMonth">JST</div>
-     <div id="adminMiniDay" class="miniCalendarDay">--</div>
-     <div id="adminMiniWeekday" class="miniCalendarWeekday">---</div>
+     <div id="adminMiniMonth" class="miniCalendarMonth">----</div>
+     <div class="miniCalendarWeekHeader">
+       <span>日</span><span>月</span><span>火</span><span>水</span><span>木</span><span>金</span><span>土</span>
+     </div>
+     <div id="adminMiniCalendarGrid" class="miniCalendarGrid"></div>
    </div>
    <div class="miniClockCard">
      <div class="miniClockLabel">CURRENT TIME / JST</div>
@@ -2770,18 +2835,48 @@ function updateMiniJstClock(prefix){
    hour12:false
  }).formatToParts(now);
  const get=t=>parts.find(x=>x.type===t)?.value||'';
- const y=get('year'),m=get('month'),d=get('day'),wd=get('weekday');
+ const y=Number(get('year')),m=Number(get('month')),d=Number(get('day'));
  const hh=get('hour'),mm=get('minute'),ss=get('second');
+
  const monthEl=document.getElementById(prefix+'MiniMonth');
- const dayEl=document.getElementById(prefix+'MiniDay');
- const weekdayEl=document.getElementById(prefix+'MiniWeekday');
+ const gridEl=document.getElementById(prefix+'MiniCalendarGrid');
  const timeEl=document.getElementById(prefix+'MiniTime');
  const dateEl=document.getElementById(prefix+'MiniDate');
- if(monthEl)monthEl.textContent=y+' / '+m;
- if(dayEl)dayEl.textContent=d;
- if(weekdayEl)weekdayEl.textContent=wd;
+
+ if(monthEl)monthEl.textContent=y+'年 '+m+'月';
  if(timeEl)timeEl.textContent=hh+':'+mm+':'+ss;
- if(dateEl)dateEl.textContent=y+'/'+m+'/'+d+'  日本時間';
+ if(dateEl)dateEl.textContent=y+'/'+String(m).padStart(2,'0')+'/'+String(d).padStart(2,'0')+'  日本時間';
+
+ if(gridEl){
+   const key=y+'-'+m+'-'+d;
+   if(gridEl.dataset.renderedKey!==key){
+     const first=new Date(Date.UTC(y,m-1,1));
+     const firstWeekday=first.getUTCDay();
+     const daysInMonth=new Date(Date.UTC(y,m,0)).getUTCDate();
+     const prevDays=new Date(Date.UTC(y,m-1,0)).getUTCDate();
+
+     let cells='';
+     for(let i=0;i<42;i++){
+       const offset=i-firstWeekday+1;
+       let cellDay,cellMonthDelta=0,muted=false;
+       if(offset<1){
+         cellDay=prevDays+offset;
+         cellMonthDelta=-1;
+         muted=true;
+       }else if(offset>daysInMonth){
+         cellDay=offset-daysInMonth;
+         cellMonthDelta=1;
+         muted=true;
+       }else{
+         cellDay=offset;
+       }
+       const isToday=!muted && cellDay===d;
+       cells+='<div class="miniCalendarCell'+(muted?' muted':'')+(isToday?' today':'')+'">'+cellDay+'</div>';
+     }
+     gridEl.innerHTML=cells;
+     gridEl.dataset.renderedKey=key;
+   }
+ }
 }
 
 function esc(s){return String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
@@ -3040,6 +3135,25 @@ function isPastConfirmedReservation(x){
  return Number.isFinite(ms) && ms<Date.now();
 }
 
+function renderCompactHistory(items,renderItem,emptyText,idPrefix){
+ const rows=Array.isArray(items)?items:[];
+ if(!rows.length)return '<div class="empty">'+esc(emptyText)+'</div>';
+ const first=rows.slice(0,2).map(renderItem).join('');
+ const rest=rows.slice(2).map(renderItem).join('');
+ if(!rest)return first;
+ const moreId=idPrefix+'_more';
+ return first+
+   '<div id="'+moreId+'" style="display:none">'+rest+'</div>'+
+   '<button class="btn small" style="width:100%;margin-top:8px" type="button" onclick="toggleCompactHistory(\''+moreId+'\',this)">もっと見る（残り'+(rows.length-2)+'件）</button>';
+}
+function toggleCompactHistory(id,btn){
+ const el=document.getElementById(id);
+ if(!el)return;
+ const open=el.style.display!=='none';
+ el.style.display=open?'none':'';
+ if(btn)btn.textContent=open?'もっと見る':'閉じる';
+}
+
 async function loadReservationControl(){
  const e=document.getElementById('reservationControlList');
  const completedEl=document.getElementById('completedAdminList');
@@ -3094,7 +3208,7 @@ async function loadReservationControl(){
  if(expiredCount)expiredCount.textContent=String(expiredHistory.length);
 
  if(completedEl){
-   completedEl.innerHTML=completed.length?completed.map(x=>{
+   completedEl.innerHTML=renderCompactHistory(completed,(x)=>{
      const confirmed=[x.confirmed_date||'',x.confirmed_time||''].filter(Boolean).join(' ');
      const isRecognition=String(x.note||'')==='途中参加による既修了認定' || String(x.assigned_instructor||'')==='既修了認定';
      const isOrientation=isOrientationHistoryName(x.title||'');
@@ -3109,11 +3223,11 @@ async function loadReservationControl(){
        '</div>'+
        '<button type="button" class="btn small danger undoCompletedBtn" data-id="'+x.id+'" data-kind="'+undoKind+'" style="margin-top:9px">'+undoLabel+'</button>'+
        '</div>';
-   }).join(''):'<div class="empty">受講済み履歴はありません。</div>';
+   },'<div class="empty">受講済み履歴はありません。</div>','completedHistory');
  }
 
  if(expiredEl){
-   expiredEl.innerHTML=expiredHistory.length?expiredHistory.map(x=>{
+   expiredEl.innerHTML=renderCompactHistory(expiredHistory,(x)=>{
      return '<div class="completedHistoryRow">'+
        '<div class="name">'+esc(x.title||'研修')+'</div>'+
        '<div class="meta">研修生：'+esc(x.player_name||'')+
@@ -3123,7 +3237,7 @@ async function loadReservationControl(){
        '</div>'+
        '<div class="sub" style="margin-top:5px">期限切れ・過去申請</div>'+
        '</div>';
-   }).join(''):'<div class="empty">希望日時超過の履歴はありません。</div>';
+   },'<div class="empty">希望日時超過の履歴はありません。</div>','expiredHistory');
  }
 
  if(rankingEl){
