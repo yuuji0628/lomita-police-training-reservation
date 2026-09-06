@@ -1,4 +1,4 @@
-const APP_VERSION="1.80";
+const APP_VERSION="1.81";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -3407,7 +3407,10 @@ function renderTrainees(){
  e.innerHTML=rows.map(x=>{
    const done=Number(x.progress_completed||0),total=Number(x.progress_total||0),pct=Number(x.progress_percent||0);
    return '<div class="card traineeCard"><div class="between"><div class="profileHead"><div class="avatar">'+esc((x.player_name||'?').slice(0,1))+'</div><div><div class="title">'+esc(x.player_name||'名前未登録')+'</div>'+(x.login_name?'<div class="sub">：'+esc(x.login_name)+'</div>':'')+'</div></div></div>'+
-   '<div style="margin-top:12px;padding:10px;border:1px solid #d7ad45;border-radius:12px;background:#fffdf7"><div class="between"><div><b>オリエンテーション</b><div class="sub">'+(x.orientation_completed?'受講済み':'未受講')+'</div></div><div class="row"><button class="btn small '+(x.orientation_completed?'dark':'')+' orientationToggleBtn" data-id="'+x.id+'" data-completed="1">済</button><button class="btn small '+(!x.orientation_completed?'dark':'')+' orientationToggleBtn" data-id="'+x.id+'" data-completed="0">未</button></div></div></div>'+
+   '<div style="margin-top:12px;padding:10px;border:1px solid #d7ad45;border-radius:12px;background:#fffdf7">'+
+     '<div class="between"><div><b>オリエンテーション</b><div class="sub">'+(x.orientation_completed?'受講済み':'未受講')+'</div></div><div class="row"><button class="btn small '+(x.orientation_completed?'dark':'')+' orientationToggleBtn" data-id="'+x.id+'" data-completed="1">済</button><button class="btn small '+(!x.orientation_completed?'dark':'')+' orientationToggleBtn" data-id="'+x.id+'" data-completed="0">未</button></div></div>'+
+     '<select class="orientationInstructorSelect" data-id="'+x.id+'" style="margin-top:8px"><option value="">担当教官を選択...</option>'+instructorRows.map(i=>'<option value="'+esc(i.name)+'">'+esc(i.name)+'</option>').join('')+'</select>'+
+   '</div>'+
    (x.all_completed?'<div style="margin-top:12px;padding:12px;border:2px solid #d7ad45;border-radius:14px;background:#fff9df"><div style="font-weight:1000;font-size:17px">🏅 全研修修了</div><div class="sub" style="margin-top:4px">修了日：'+esc(String(x.all_completed_at||'').replaceAll('-','/'))+'</div></div>':'')+
    '<div class="traineeProgressCompact"><div class="between"><b>研修進捗</b><b>'+done+'/'+total+' 完了</b></div><div class="bar"><div class="fill" style="width:'+pct+'%"></div></div><div class="sub" style="margin-top:5px">'+(x.current_training?'次：'+esc(x.current_training):'全研修修了')+'</div></div>'+
    '<div class="meta"><span>承認 '+x.pending+'</span><span>予約 '+x.reserved+'</span><span>再受講 '+x.retake+'</span><span>欠席 '+x.absent+'</span></div>'+
@@ -3424,8 +3427,11 @@ function renderTrainees(){
        '</select>'+
        '<input class="traineeRecognitionDate" data-id="'+x.id+'" type="date" aria-label="既修了認定日">'+
      '</div>'+
+     '<div style="margin-top:8px"><div class="sub" style="font-weight:900;margin-bottom:5px">認定担当教官</div>'+
+       '<select class="traineeRecognitionInstructor" data-id="'+x.id+'"><option value="">担当教官を選択...</option>'+instructorRows.map(i=>'<option value="'+esc(i.name)+'">'+esc(i.name)+'</option>').join('')+'</select>'+
+     '</div>'+
      '<button class="btn small primary transferStartBtn setTraineeStartBtn" data-id="'+x.id+'">この研修から開始に設定</button>'+
-     '<div class="sub" style="margin-top:5px">認定日は任意です。未入力でも設定できます。</div>'+
+     '<div class="sub" style="margin-top:5px">認定日は任意です。担当教官は必ず選択してください。</div>'+
    '</div>'+
    '<div style="margin-top:12px"><div class="sub" style="font-weight:900">管理メモ（管理者のみ）</div><textarea class="traineeAdminMemo" data-id="'+x.id+'" rows="3" maxlength="5000" placeholder="注意点・指導内容・今後の対応など" style="width:100%;margin-top:6px">'+esc(x.admin_memo||'')+'</textarea><button class="btn small saveTraineeMemoBtn" data-id="'+x.id+'" style="margin-top:6px">管理メモを保存</button></div>'+
    '<div class="traineeAdminActions">'+
@@ -3446,34 +3452,32 @@ function renderTrainees(){
 async function setTraineeStartTraining(id){
  const select=document.querySelector('.traineeStartSelect[data-id="'+id+'"]');
  const dateEl=document.querySelector('.traineeRecognitionDate[data-id="'+id+'"]');
+ const instructorEl=document.querySelector('.traineeRecognitionInstructor[data-id="'+id+'"]');
  const start_training_id=Number(select?.value||0);
  const recognition_date=String(dateEl?.value||'');
+ const recognition_instructor=String(instructorEl?.value||'').trim();
 
- if(!start_training_id){
-   alert('開始する研修を選択してください。');
-   return;
- }
+ if(!start_training_id){alert('開始する研修を選択してください。');return}
+ if(!recognition_instructor){alert('認定担当教官を選択してください。');return}
 
  const title=select?.options?.[select.selectedIndex]?.textContent||'選択した研修';
  if(!confirm(
-   '「'+title+'」から開始に設定しますか？\\n\\n'+
-   'この研修より前の未修了項目を「既修了認定」にします。\\n'+
-   '通常の受講履歴は削除しません。\\n'+
+   '「'+title+'」から開始に設定しますか？\n\n'+
+   'この研修より前の未修了項目を「既修了認定」にします。\n'+
+   '認定担当教官：'+recognition_instructor+'\n'+
+   '通常の受講履歴は削除しません。\n'+
    '本人へのDiscord DMは送信しません。'
  ))return;
 
  const r=await fetch('/api/admin/trainees/'+id+'/start-training',{
    method:'POST',
    headers:auth(),
-   body:JSON.stringify({start_training_id,recognition_date})
+   body:JSON.stringify({start_training_id,recognition_date,recognition_instructor})
  });
  const d=await r.json().catch(()=>({}));
- if(!r.ok){
-   alert(d.error||'開始研修を設定できませんでした');
-   return;
- }
+ if(!r.ok){alert(d.error||'開始研修を設定できませんでした');return}
 
- alert('開始研修を設定しました。\\n既修了認定：'+Number(d.recognized||0)+'件');
+ alert('開始研修を設定しました。\n認定担当教官：'+recognition_instructor+'\n既修了認定：'+Number(d.recognized||0)+'件');
  await loadTrainees();
  await loadAdmin();
 }
@@ -3488,9 +3492,15 @@ async function saveTraineeMemo(id){
 }
 
 async function setOrientationStatus(id,completed){
- if(!confirm('オリエンテーションを「'+(completed?'済':'未')+'」に変更しますか？'))return;
+ const instructorEl=document.querySelector('.orientationInstructorSelect[data-id="'+id+'"]');
+ const assigned_instructor=String(instructorEl?.value||'').trim();
+ if(completed && !assigned_instructor){
+   alert('オリエンテーションの担当教官を選択してください。');
+   return;
+ }
+ if(!confirm('オリエンテーションを「'+(completed?'済':'未')+'」に変更しますか？'+(completed?'\n担当教官：'+assigned_instructor:'')))return;
  const r=await fetch('/api/admin/trainees/'+id+'/orientation',{
-   method:'POST',headers:auth(),body:JSON.stringify({completed})
+   method:'POST',headers:auth(),body:JSON.stringify({completed,assigned_instructor})
  });
  const d=await r.json().catch(()=>({}));
  if(!r.ok){alert(d.error||'オリエンテーション状態を変更できませんでした');return}
@@ -3513,7 +3523,7 @@ function adminProgressStamp(x){
  }
  const date=String(x.completed_at||x.confirmed_date||'').replaceAll('-','/');
  const instructor=String(x.assigned_instructor||'担当教官');
- const recognized=instructor==='既修了認定';
+ const recognized=String(x.note||'')==='途中参加による既修了認定' || instructor==='既修了認定';
  return '<div class="adminProgressStamp"><b>'+(recognized?'既修了':'修了印')+'</b><span>'+esc((recognized?'認定':instructor).slice(0,12))+'</span><span>承認</span></div>'+
         '<div class="adminProgressDate">'+esc(date||(recognized?'認定日未入力':'日付未記録'))+'</div>'+
         '<div class="adminProgressInstructor">'+esc(instructor)+'</div>';
@@ -4497,8 +4507,14 @@ async function handle(request, env) {
    const b=await request.json().catch(()=>({}));
    const startTrainingId=Number(b.start_training_id||0);
    const recognitionDate=String(b.recognition_date||"").trim();
+   const recognitionInstructor=String(b.recognition_instructor||"").trim();
 
    if(!startTrainingId)return json({error:"開始する研修を選択してください"},400);
+   if(!recognitionInstructor)return json({error:"認定担当教官を選択してください"},400);
+   const validRecognitionInstructor=await env.DB.prepare(
+     "SELECT id FROM instructors WHERE lower(trim(name))=lower(trim(?)) LIMIT 1"
+   ).bind(recognitionInstructor).first();
+   if(!validRecognitionInstructor)return json({error:"選択した担当教官が登録されていません"},400);
    if(recognitionDate && !/^\d{4}-\d{2}-\d{2}$/.test(recognitionDate)){
      return json({error:"認定日の形式が正しくありません"},400);
    }
@@ -4546,13 +4562,14 @@ async function handle(request, env) {
          assigned_instructor,confirmed_date,confirmed_time,confirmed_preference,completed_at,
          exam_result,exam_score
        )
-       VALUES(?,?,?,?,?,'completed','','','','','','','既修了認定','','',0,?,'',NULL)
+       VALUES(?,?,?,?,?,'completed','','','','','','',?,'','',0,?,'',NULL)
      `).bind(
        Number(pr.training_id),
        String(profile.player_name||"研修生"),
        key,
        String(profile.affiliation||""),
        marker,
+       recognitionInstructor,
        recognitionDate
      ).run();
      recognized++;
@@ -4566,6 +4583,7 @@ async function handle(request, env) {
      start_training_title:String(programs[startIndex]?.title||""),
      recognized,
      recognition_date:recognitionDate,
+     recognition_instructor:recognitionInstructor,
      dm_sent:false
    });
  }
@@ -4597,6 +4615,14 @@ async function handle(request, env) {
 
    const b=await request.json().catch(()=>({}));
    const completed=b.completed===true;
+   const assignedInstructor=String(b.assigned_instructor||"").trim();
+   if(completed && !assignedInstructor)return json({error:"担当教官を選択してください"},400);
+   if(completed){
+     const validInstructor=await env.DB.prepare(
+       "SELECT id FROM instructors WHERE lower(trim(name))=lower(trim(?)) LIMIT 1"
+     ).bind(assignedInstructor).first();
+     if(!validInstructor)return json({error:"選択した担当教官が登録されていません"},400);
+   }
    const key=String(profile.discord_id||profile.login_name||profile.player_name||"").trim();
    const tid=Number(orientation.training_id);
 
@@ -4618,19 +4644,20 @@ async function handle(request, env) {
          preferred_date,preferred_time,preferred_date2,preferred_time2,preferred_date3,preferred_time3,
          assigned_instructor,confirmed_date,confirmed_time,confirmed_preference,completed_at
        )
-       VALUES(?,?,?,?,?,'completed','','','','','','','','','',0,?)
+       VALUES(?,?,?,?,?,'completed','','','','','','',?,'','',0,?)
      `).bind(
        tid,
        String(profile.player_name||"研修生"),
        key,
        "",
        "管理者によるオリエンテーション修了登録",
+       assignedInstructor,
        completedDate
      ).run();
    }
 
    await refreshTraineeFullCompletion(env,Number(orientationMatch[1]));
-   return json({ok:true,completed});
+   return json({ok:true,completed,assigned_instructor:completed?assignedInstructor:""});
  }
 
  let traineeDeleteMatch=path.match(/^\/api\/admin\/trainees\/(\d+)$/);
@@ -4677,6 +4704,7 @@ async function handle(request, env) {
          COALESCE(r.confirmed_date,'') AS confirmed_date,
          COALESCE(r.confirmed_time,'') AS confirmed_time,
          COALESCE(r.assigned_instructor,'') AS assigned_instructor,
+         COALESCE(r.note,'') AS note,
          COALESCE(r.exam_result,'') AS exam_result,
          r.exam_score
        FROM training_programs p
