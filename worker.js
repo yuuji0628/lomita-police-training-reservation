@@ -1,4 +1,4 @@
-const APP_VERSION="1.87";
+const APP_VERSION="1.89";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -807,6 +807,21 @@ const html = (title, body, script = "") => new Response(`<!doctype html>
   padding-bottom:calc(24px + env(safe-area-inset-bottom));
 }
 #historyModal #myHistory{overflow:visible}
+#surveyModal{
+  align-items:flex-end;
+  overflow:hidden;
+}
+#surveyModal .modalCard{
+  width:100%;
+  max-height:88dvh;
+  overflow-y:auto !important;
+  overflow-x:hidden;
+  -webkit-overflow-scrolling:touch;
+  overscroll-behavior:contain;
+  touch-action:pan-y;
+  padding-bottom:calc(24px + env(safe-area-inset-bottom));
+}
+
 @supports not (height:1dvh){
   #historyModal .modalCard{max-height:88vh}
 }
@@ -1986,7 +2001,12 @@ const PUBLIC_BODY = `
       <button id="traineeLogoutBtn" class="btn small" type="button">ログアウト</button>
     </div>
     <div id="mySummary"></div>
-    <div class="historyLauncher"><button id="openHistoryBtn" class="btn small" type="button">申請・受講履歴を見る</button></div>
+    <div class="historyLauncher" style="display:flex;gap:8px;flex-wrap:wrap">
+  <button id="openHistoryBtn" class="btn small" type="button">申請・受講履歴を見る</button>
+  <button id="openSurveyBtn" class="btn small primary" type="button" onclick="openSurveyModal()">
+    アンケート回答 <span id="surveyPendingBadge" class="pill" style="margin-left:4px">0</span>
+  </button>
+</div>
 
 <div id="playerNameRequiredModal" class="modal">
   <div class="modalCard">
@@ -2015,11 +2035,18 @@ const PUBLIC_BODY = `
     <div id="completionCertificateBody" style="margin-top:12px"></div>
   </div>
 </div>
-<section id="surveySection" class="card" style="display:none;margin-top:12px">
-  <div class="title">研修アンケート</div>
-  <div class="sub" style="margin-top:4px">受講済み研修への評価をお願いします。</div>
-  <div id="surveyList"></div>
-</section>
+<div id="surveyModal" class="modal">
+  <div class="modalCard">
+    <div class="between">
+      <div>
+        <div class="title">アンケート回答</div>
+        <div class="sub">受講済み研修への評価をお願いします。</div>
+      </div>
+      <button class="btn small" type="button" onclick="closeSurveyModal()">閉じる</button>
+    </div>
+    <div id="surveyList" style="margin-top:12px"></div>
+  </div>
+</div>
 <div id="historyModal" class="modal">
   <div class="modalCard">
     <div class="between">
@@ -2441,13 +2468,16 @@ function setSurveyRating(id,key,v,btn){
  btn.parentElement.querySelectorAll('button').forEach((b,i)=>b.classList.toggle('active',i<v));
 }
 async function loadPendingSurveys(){
- const sec=document.getElementById('surveySection'), el=document.getElementById('surveyList');
- if(!sec||!el)return;
+ const el=document.getElementById('surveyList');
+ const badge=document.getElementById('surveyPendingBadge');
+ const btn=document.getElementById('openSurveyBtn');
+ if(!el)return;
  const r=await fetch('/api/trainee/surveys/pending',{cache:'no-store'});
  const d=await r.json().catch(()=>({rows:[]}));
  const rows=Array.isArray(d.rows)?d.rows:[];
- sec.style.display=rows.length?'':'none';
- el.innerHTML=rows.map(x=>{
+ if(badge)badge.textContent=String(rows.length);
+ if(btn)btn.classList.toggle('primary',rows.length>0);
+ el.innerHTML=rows.length?rows.map(x=>{
    const id=Number(x.reservation_id);
    return '<div class="surveyCard"><div class="title">'+esc(x.training_title||'研修')+'</div>'+
     '<div class="sub">担当教官：'+esc(x.assigned_instructor||'未設定')+'</div>'+
@@ -2457,7 +2487,20 @@ async function loadPendingSurveys(){
     surveyStars(id,'satisfaction_rating','総合満足度')+
     '<div class="surveyField"><label>自由コメント（任意）</label><textarea id="surveyComment_'+id+'" placeholder="良かった点・改善点など"></textarea></div>'+
     '<button class="btn primary" style="width:100%;margin-top:10px" type="button" onclick="submitTrainingSurvey('+id+')">アンケートを送信</button></div>';
- }).join('');
+ }).join(''):'<div class="empty">現在、未回答のアンケートはありません。</div>';
+}
+
+function openSurveyModal(){
+ const m=document.getElementById('surveyModal');
+ if(!m)return;
+ loadPendingSurveys();
+ m.style.display='flex';
+ document.body.style.overflow='hidden';
+}
+function closeSurveyModal(){
+ const m=document.getElementById('surveyModal');
+ if(m)m.style.display='none';
+ document.body.style.overflow='';
 }
 async function submitTrainingSurvey(id){
  const s=surveyState[id]||{};
@@ -2646,6 +2689,7 @@ const ADMIN_BODY = `
    <button id="tabInstructors" class="btn" type="button" onclick="showAdminSection('instructors')">教官管理</button>
    <button id="tabTrainees" class="btn" type="button" onclick="showAdminSection('trainees')">研修生管理</button>
    <button id="tabReservations" class="btn dark" type="button" onclick="showAdminSection('reservations')">予約一覧</button>
+   <button id="tabSurveys" class="btn" type="button" onclick="showAdminSection('surveys')">アンケート結果</button>
    <button class="btn" type="button" onclick="openManageMenu()">⚠️ここは触らない⚠️</button>
  </div>
 
@@ -2701,10 +2745,32 @@ const ADMIN_BODY = `
      <div class="sub">受講済みになった研修を担当教官ごとに自動集計</div>
      <div id="instructorRankingList" class="instructorRanking"><div class="empty">まだ実績はありません。</div></div>
    </div>
-   <div class="completedAdminBox">
+   <div class="completedAdminBox" style="display:none">
      <div class="completedAdminHead"><div class="completedAdminTitle">研修アンケート</div></div>
      <div id="surveySummary"><div class="empty">回答はまだありません。</div></div>
      <details style="margin-top:10px"><summary style="font-weight:900">回答一覧を見る</summary><div id="surveyAdminList"></div></details>
+   </div>
+ </div>
+
+ <div id="surveySectionAdmin" style="display:none">
+   <div class="section">アンケート結果</div>
+   <div class="card">
+     <div class="between">
+       <div>
+         <div class="title" style="font-size:17px">教官別評価</div>
+         <div class="sub">研修生から届いた評価を集計しています。</div>
+       </div>
+       <button class="btn small" type="button" onclick="loadAdminSurveys()">更新</button>
+     </div>
+     <div id="surveySummaryDedicated" style="margin-top:10px"><div class="empty">読み込み中...</div></div>
+   </div>
+
+   <div class="card" style="margin-top:10px">
+     <div class="between">
+       <div class="title" style="font-size:17px">回答一覧</div>
+       <span id="surveyResponseCount" class="pill">0件</span>
+     </div>
+     <div id="surveyAdminListDedicated" style="margin-top:8px"><div class="empty">読み込み中...</div></div>
    </div>
  </div>
 
@@ -3056,18 +3122,22 @@ function showAdminSection(section){
  const instructors=section==='instructors';
  const trainees=section==='trainees';
  const reservations=section==='reservations';
+ const surveys=section==='surveys';
  document.getElementById('programSection').style.display=programs?'block':'none';
  document.getElementById('instructorSection').style.display=instructors?'block':'none';
  document.getElementById('traineeSection').style.display=trainees?'block':'none';
  document.getElementById('reservationsSection').style.display=reservations?'block':'none';
+ document.getElementById('surveySectionAdmin').style.display=surveys?'block':'none';
  document.getElementById('tabPrograms').className='btn '+(programs?'dark':'');
  document.getElementById('tabInstructors').className='btn '+(instructors?'dark':'');
  document.getElementById('tabTrainees').className='btn '+(trainees?'dark':'');
  document.getElementById('tabReservations').className='btn '+(reservations?'dark':'');
+ document.getElementById('tabSurveys').className='btn '+(surveys?'dark':'');
  if(programs)loadPrograms();
  if(instructors)loadInstructors();
  if(trainees)loadTrainees();
  if(reservations)loadReservationControl();
+ if(surveys)loadAdminSurveys();
 }
 function reservationPreferenceDateTime(x,pref){
  const map={
@@ -3880,22 +3950,31 @@ function closeTraineeDetail(){document.getElementById('traineeModal').classList.
 function fmt(d){return new Date(d+'T00:00:00').toLocaleDateString('ja-JP',{month:'numeric',day:'numeric',weekday:'short'})}
 
 async function loadAdminSurveys(){
- const s=document.getElementById('surveySummary'), l=document.getElementById('surveyAdminList');
- if(!s||!l)return;
+ const s=document.getElementById('surveySummary');
+ const l=document.getElementById('surveyAdminList');
+ const sd=document.getElementById('surveySummaryDedicated');
+ const ld=document.getElementById('surveyAdminListDedicated');
+ const countEl=document.getElementById('surveyResponseCount');
+ if(!s&&!l&&!sd&&!ld)return;
  const r=await fetch('/api/admin/surveys',{headers:auth()});
  const d=await r.json().catch(()=>({}));
  if(!r.ok)return;
  const summary=Array.isArray(d.summary)?d.summary:[];
- s.innerHTML=summary.length?summary.map(x=>
+ const summaryHtml=summary.length?summary.map(x=>
    '<div class="card" style="margin-top:7px"><div class="between"><b>'+esc(x.assigned_instructor)+'</b><span class="pill">'+Number(x.responses||0)+'件</span></div>'+
    '<div class="sub">教官 ★'+Number(x.avg_instructor_rating||0).toFixed(2)+' ｜ 内容 ★'+Number(x.avg_content_rating||0).toFixed(2)+' ｜ 満足度 ★'+Number(x.avg_satisfaction_rating||0).toFixed(2)+'</div></div>'
  ).join(''):'<div class="empty">回答はまだありません。</div>';
+ if(s)s.innerHTML=summaryHtml;
+ if(sd)sd.innerHTML=summaryHtml;
  const rows=Array.isArray(d.rows)?d.rows:[];
- l.innerHTML=rows.length?rows.map(x=>
+ const listHtml=rows.length?rows.map(x=>
    '<div class="card" style="margin-top:7px"><b>'+esc(x.training_title||'研修')+'</b><div class="sub">'+esc(x.player_name||'')+' / '+esc(x.assigned_instructor||'')+'</div>'+
    '<div class="sub">教官 '+x.instructor_rating+'/5 ｜ 内容 '+x.content_rating+'/5 ｜ 難易度 '+x.difficulty_rating+'/5 ｜ 満足度 '+x.satisfaction_rating+'/5</div>'+
    (x.comment?'<div class="notice" style="margin-top:6px">'+esc(x.comment)+'</div>':'')+'</div>'
  ).join(''):'<div class="empty">回答はありません。</div>';
+ if(l)l.innerHTML=listHtml;
+ if(ld)ld.innerHTML=listHtml;
+ if(countEl)countEl.textContent=rows.length+'件';
 }
 
 async function loadAdmin(){
@@ -4420,7 +4499,7 @@ async function handle(request, env) {
    const trainee=await requireTrainee();
    if(!trainee)return json({error:"unauthorized"},401);
    await ensureTrainingSurveys(env);
-   const did=String(trainee.discord_user_id||trainee.login_name||"").trim();
+   const did=String(trainee.discord_id||trainee.login_name||"").trim();
    const q=await env.DB.prepare(`
      SELECT r.id reservation_id,r.training_id,COALESCE(t.title,'研修') training_title,
             COALESCE(r.assigned_instructor,'') assigned_instructor
@@ -4449,7 +4528,7 @@ async function handle(request, env) {
    if([ir,cr,dr,sr].some(v=>!Number.isInteger(v)||v<1||v>5))
      return json({error:"評価はすべて1〜5で回答してください"},400);
 
-   const did=String(trainee.discord_user_id||trainee.login_name||"").trim();
+   const did=String(trainee.discord_id||trainee.login_name||"").trim();
    const row=await env.DB.prepare(`
      SELECT r.id,r.training_id,r.player_name,r.assigned_instructor,COALESCE(t.title,'研修') training_title
      FROM reservations r LEFT JOIN trainings t ON t.id=r.training_id
