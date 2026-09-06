@@ -1,4 +1,4 @@
-const APP_VERSION="1.79";
+const APP_VERSION="1.80";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -193,6 +193,19 @@ async function sendReservationConfirmedDM(env,payload){
     "**担当教官**："+String(payload.assigned_instructor||"未設定"),
     "",
     "当日は時間に余裕を持ってご参加ください。"
+  ]);
+}
+
+async function sendReservationReapprovedDM(env,payload){
+  return await sendDiscordDM(env,payload.discord_user_id,[
+    "🔁 **研修予約が別候補で再承認されました**",
+    "",
+    "**研修**："+String(payload.training_title||"研修"),
+    "**変更前**："+String(payload.old_datetime||"未設定"),
+    "**新しい確定日時**："+String(payload.new_datetime||"未設定"),
+    "**担当教官**："+String(payload.assigned_instructor||"未設定"),
+    "",
+    "新しい確定日時をご確認ください。"
   ]);
 }
 
@@ -2850,6 +2863,26 @@ function showAdminSection(section){
  if(trainees)loadTrainees();
  if(reservations)loadReservationControl();
 }
+function reservationPreferenceDateTime(x,pref){
+ const map={
+   1:[x?.preferred_date,x?.preferred_time],
+   2:[x?.preferred_date2,x?.preferred_time2],
+   3:[x?.preferred_date3,x?.preferred_time3]
+ };
+ const pair=map[Number(pref)]||['',''];
+ return [String(pair[0]||'').trim(),String(pair[1]||'').trim()];
+}
+function isFuturePreference(x,pref){
+ const [d,t]=reservationPreferenceDateTime(x,pref);
+ if(!d||!t)return false;
+ const ms=Date.parse(d+'T'+t.slice(0,5)+':00+09:00');
+ return Number.isFinite(ms) && ms>Date.now();
+}
+function futureAlternativePreferences(x){
+ const current=Number(x?.confirmed_preference||0);
+ return [1,2,3].filter(p=>p!==current && isFuturePreference(x,p));
+}
+
 function isPastConfirmedReservation(x){
  const d=String(x?.confirmed_date||'').trim();
  const t=String(x?.confirmed_time||'').trim();
@@ -2976,6 +3009,7 @@ async function loadReservationControl(){
      preferredText2?'<option value="2" '+(Number(x.confirmed_preference)===2?'selected':'')+'>第2希望：'+esc(preferredText2)+'</option>':'',
      preferredText3?'<option value="3" '+(Number(x.confirmed_preference)===3?'selected':'')+'>第3希望：'+esc(preferredText3)+'</option>':''
    ].filter(Boolean).join('');
+   const futureAlternatives=futureAlternativePreferences(x);
    const statusLabel=labels[x.status]||x.status;
    const instructorOptions='<option value="">担当教官なし</option>'+
      instructorRows.map(i=>'<option value="'+esc(i.name)+'" '+(x.assigned_instructor===i.name?'selected':'')+'>'+esc(i.name)+'</option>').join('');
@@ -3027,11 +3061,18 @@ const isFinalExam=isFinalEmploymentExamName(x.title);
      (preferredText3?'<div class="sub" style="font-weight:800">第3希望：'+esc(preferredText3)+'</div>':'')+
      (confirmedText?'<div style="margin-top:8px;padding:7px 9px;border-radius:10px;background:#eef6ff;font-weight:900">✅ 確定日時：'+esc(confirmedText)+'</div>':'')+
      '</div></div>'+
-     (overdue?'<div class="notice error" style="margin-top:10px"><b>予定時刻を過ぎています。</b><br>受講済み・再受講・欠席のいずれかに処理してください。</div>':'')+
-     '<div class="field" style="margin-top:12px"><label>承認する日時</label><select id="reservationPreference_'+x.id+'"><option value="">希望日時を選択</option>'+preferenceOptions+'</select></div>'+
+     (overdue?'<div class="notice error" style="margin-top:10px"><b>予定時刻を過ぎています。</b><br>'+
+       (futureAlternatives.length
+         ?'未来の別候補が残っています。別候補で再承認するか、受講済み・再受講・欠席に処理してください。'
+         :'受講済み・再受講・欠席のいずれかに処理してください。')+
+       '</div>':'')+
+     '<div class="field" style="margin-top:12px"><label>承認する日時</label><select id="reservationPreference_'+x.id+'" data-confirmed-preference="'+Number(x.confirmed_preference||0)+'"><option value="">希望日時を選択</option>'+preferenceOptions+'</select></div>'+
      '<div class="field"><label>状態</label>'+renderReservationStatusButtons(x.id,x.status)+'</div>'+
      '<div class="field"><label>担当教官</label><select id="reservationInstructor_'+x.id+'">'+instructorOptions+'</select></div>'+
      examBox+
+     (overdue && futureAlternatives.length
+       ?'<button class="btn dark" style="width:100%;margin-bottom:8px" type="button" onclick="reapproveReservationFromList('+Number(x.id)+')">別候補で再承認</button>'
+       :'')+
      '<button class="btn primary" style="width:100%" type="button" onclick="saveReservationFromList('+Number(x.id)+')">変更を保存</button>'+
      (x.note?'<div class="sub" style="margin-top:8px">備考：'+esc(x.note)+'</div>':'')+
    '</div>';
@@ -3126,6 +3167,58 @@ document.addEventListener('click',e=>{
  const status=String(btn.dataset.status||'');
  if(id&&status)chooseReservationStatus(id,status);
 });
+
+async function reapproveReservationFromList(id){
+ const preferenceEl=document.getElementById('reservationPreference_'+id);
+ const instructorEl=document.getElementById('reservationInstructor_'+id);
+ const statusEl=document.getElementById('reservationStatus_'+id);
+ const selected=Number(preferenceEl?.value||0);
+ const current=Number(preferenceEl?.dataset.confirmedPreference||0);
+ const assigned=String(instructorEl?.value||'').trim();
+
+ if(!selected){
+   alert('別候補の希望日時を選択してください。');
+   return;
+ }
+ if(selected===current){
+   alert('現在の確定日時とは別の候補を選択してください。');
+   return;
+ }
+ if(!assigned){
+   alert('担当教官を選択してください。');
+   return;
+ }
+
+ if(statusEl)statusEl.value='reserved';
+ document.querySelectorAll('.adminStatusBtn[data-reservation-id="'+id+'"]').forEach(btn=>{
+   btn.classList.toggle('active',btn.dataset.status==='reserved');
+ });
+
+ if(!confirm('選択した別候補の日時で再承認しますか？\n研修生本人へDiscord DMで新しい確定日時を通知します。'))return;
+
+ try{
+   const r=await fetch('/api/admin/reservations/'+id,{
+     method:'PATCH',
+     headers:auth(),
+     body:JSON.stringify({
+       status:'reserved',
+       assigned_instructor:assigned,
+       confirmed_preference:selected,
+       reapprove_alternative:true
+     })
+   });
+   const d=await r.json().catch(()=>({}));
+   if(!r.ok){
+     alert((d.error||'再承認できませんでした')+(d.detail?'\n'+d.detail:''));
+     return;
+   }
+   alert('別候補の日時で再承認しました。');
+   await loadReservationControl();
+   await loadAdmin();
+ }catch(_){
+   alert('通信エラーで再承認できませんでした。');
+ }
+}
 
 async function saveReservationFromList(id){
  const statusEl=document.getElementById('reservationStatus_'+id);
@@ -5165,7 +5258,9 @@ async function handle(request, env) {
    const reservationId=Number(m[1]);
    const before=await env.DB.prepare(`
      SELECT r.status,r.discord_id,r.player_name,r.assigned_instructor,
-            r.confirmed_date,r.confirmed_time,r.confirmed_preference,t.title
+            r.confirmed_date,r.confirmed_time,r.confirmed_preference,
+            r.preferred_date,r.preferred_time,r.preferred_date2,r.preferred_time2,r.preferred_date3,r.preferred_time3,
+            t.title
      FROM reservations r
      LEFT JOIN trainings t ON t.id=r.training_id
      WHERE r.id=?
@@ -5177,6 +5272,7 @@ async function handle(request, env) {
 
    const assigned=String(b.assigned_instructor||"").trim();
    const confirmedPreference=Number(b.confirmed_preference||0);
+   const reapproveAlternative=b.reapprove_alternative===true;
    const finalExam=isFinalEmploymentExamTitle(before.title);
    const violationTest=isViolationTestTitle(before.title);
    const judgementExam=finalExam||violationTest;
@@ -5210,6 +5306,19 @@ async function handle(request, env) {
      confirmedTime=String(chosen[1]||"").trim();
      if(!confirmedDate||!confirmedTime)return json({error:"選択した希望日時が入力されていません"},400);
      confirmedPref=confirmedPreference;
+
+     if(reapproveAlternative){
+       if(String(before.status||"")!=="reserved"){
+         return json({error:"予約確定済みの研修だけ別候補で再承認できます"},409);
+       }
+       if(Number(before.confirmed_preference||0)===confirmedPref){
+         return json({error:"現在の確定日時とは別の候補を選択してください"},400);
+       }
+       const candidateMs=Date.parse(confirmedDate+"T"+confirmedTime.slice(0,5)+":00+09:00");
+       if(!Number.isFinite(candidateMs) || candidateMs<=Date.now()){
+         return json({error:"再承認する候補は現在時刻より後の日時を選択してください"},400);
+       }
+     }
    }else{
      const existing=await env.DB.prepare("SELECT confirmed_date,confirmed_time,confirmed_preference FROM reservations WHERE id=?").bind(reservationId).first();
      confirmedDate=String(existing?.confirmed_date||"");
@@ -5274,6 +5383,14 @@ async function handle(request, env) {
        confirmed_datetime:newDateTime,
        assigned_instructor:assigned
      });
+   }else if(reapproveAlternative && reservedDetailsChanged){
+     dmResult=await sendReservationReapprovedDM(env,{
+       discord_user_id:String(before.discord_id||""),
+       training_title:String(before.title||"研修"),
+       old_datetime:oldDateTime,
+       new_datetime:newDateTime,
+       assigned_instructor:assigned
+     });
    }else if(reservedDetailsChanged){
      dmResult=await sendReservationChangedDM(env,{
        discord_user_id:String(before.discord_id||""),
@@ -5309,6 +5426,7 @@ async function handle(request, env) {
      confirmed_preference:confirmedPref,
      exam_result:judgementExam?examResult:"",
      exam_score:finalExam?examScore:null,
+     reapproved:reapproveAlternative && reservedDetailsChanged,
      dm_sent:!!dmResult.ok,
      dm_skipped:!!dmResult.skipped
    });
