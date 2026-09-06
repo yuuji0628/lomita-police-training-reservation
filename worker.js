@@ -1,4 +1,4 @@
-const APP_VERSION="1.93";
+const APP_VERSION="1.94";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -639,6 +639,27 @@ async function ensureTrainingSurveys(env) {
   `).run();
 }
 
+async function getBlockingSurveyForTrainee(env,discordId){
+  await ensureTrainingSurveys(env);
+  const did=String(discordId||"").trim();
+  if(!did)return null;
+  const row=await env.DB.prepare(`
+    SELECT r.id AS reservation_id,
+           COALESCE(t.title,'研修') AS training_title
+    FROM reservations r
+    LEFT JOIN trainings t ON t.id=r.training_id
+    LEFT JOIN training_surveys s ON s.reservation_id=r.id
+    WHERE r.status='completed'
+      AND lower(trim(COALESCE(r.discord_id,'')))=lower(trim(?))
+      AND COALESCE(r.note,'')<>'途中参加による既修了認定'
+      AND COALESCE(t.title,'')<>'オリエンテーション'
+      AND s.id IS NULL
+    ORDER BY COALESCE(r.completed_at,'' ) DESC,r.id DESC
+    LIMIT 1
+  `).bind(did).first();
+  return row||null;
+}
+
 async function ensureTrainingPrograms(env) {
   await env.DB.prepare(`
     CREATE TABLE IF NOT EXISTS training_programs (
@@ -873,118 +894,98 @@ const html = (title, body, script = "") => new Response(`<!doctype html>
   --compact-gap:8px;
 }
 
-/* v1.93 ultra compact admin dashboard */
-.adminDashboard{
-  padding:9px !important;
-  margin-top:7px !important;
-  border-radius:14px !important;
+/* v1.93 ultra compact dashboard */
+.adminCommand{
+  margin:7px 0 9px !important;
+  padding:8px !important;
+  border-radius:13px !important;
 }
-.adminDashboard .between{
+.adminCommandHead{
+  margin-bottom:6px !important;
   gap:6px !important;
+  align-items:center !important;
 }
-.adminDashboard .sectionTitle{
-  font-size:16px !important;
-  line-height:1.1 !important;
+.adminCommandTitle{
+  font-size:15px !important;
+  line-height:1.05 !important;
 }
-.adminDashboard .sub{
+.adminCommandSub{
+  font-size:8px !important;
+  line-height:1.15 !important;
+  margin-top:1px !important;
+}
+.adminCommandHead .btn{
+  min-height:30px !important;
+  padding:4px 8px !important;
   font-size:9px !important;
-  margin-top:2px !important;
-}
-.adminDashboard > .between .btn,
-.adminDashboard .between > .btn{
-  min-height:32px !important;
-  padding:5px 9px !important;
-  font-size:10px !important;
   border-radius:9px !important;
 }
 .adminDashGrid{
-  gap:5px !important;
-  margin-top:7px !important;
+  gap:4px !important;
 }
 .adminDashTile{
-  min-height:58px !important;
-  padding:7px 8px !important;
-  border-radius:11px !important;
+  min-height:55px !important;
+  padding:6px 8px !important;
+  border-radius:10px !important;
 }
 .adminDashTile .label{
   font-size:9px !important;
-  line-height:1.1 !important;
+  line-height:1 !important;
 }
 .adminDashTile .num{
-  font-size:22px !important;
-  line-height:1 !important;
+  font-size:20px !important;
+  line-height:.95 !important;
   margin-top:2px !important;
 }
 .adminDashTile .hint{
   font-size:7px !important;
-  line-height:1.1 !important;
+  line-height:1.05 !important;
   margin-top:2px !important;
 }
-.adminDashboard details{
-  margin-top:6px !important;
+.adminCommand details{
+  margin-top:5px !important;
 }
-.adminDashboard details summary{
-  min-height:34px !important;
-  padding:7px 9px !important;
+.adminCommand details summary{
+  min-height:32px !important;
+  padding:6px 9px !important;
   font-size:10px !important;
   border-radius:9px !important;
 }
-.adminDashboard details[open]{
-  padding-bottom:2px !important;
+.adminCommand .adminMiniGrid{
+  gap:4px !important;
+  margin-top:5px !important;
 }
-.adminMiniGrid{
+.adminCommand .adminMiniTile{
+  min-height:31px !important;
+  padding:5px 7px !important;
+  border-radius:8px !important;
+}
+.adminCommand .adminMiniTile .name{
+  font-size:8px !important;
+}
+.adminCommand .adminMiniTile .count{
+  font-size:11px !important;
+}
+.adminTabs{
   gap:5px !important;
-  margin-top:6px !important;
+  margin:7px 0 9px !important;
 }
-.adminMiniTile{
-  min-height:36px !important;
-  padding:6px 8px !important;
-  border-radius:9px !important;
-}
-.adminMiniTile .name{
-  font-size:9px !important;
-}
-.adminMiniTile .count{
-  font-size:12px !important;
-}
-.adminCommand{
-  gap:5px !important;
-  margin:7px 0 !important;
-}
-.adminCommand .btn{
-  min-height:40px !important;
-  padding:7px 6px !important;
+.adminTabs .btn{
+  min-height:39px !important;
+  padding:6px 6px !important;
   font-size:10px !important;
   border-radius:10px !important;
 }
-.currentTimeBar{
-  min-height:42px !important;
-  padding:5px 9px !important;
-  margin:6px 0 7px !important;
-}
-.currentTimeClock{
-  font-size:16px !important;
-}
-.currentTimeDate{
-  font-size:7px !important;
-}
-.currentTimeLabel{
-  font-size:7px !important;
-}
 @media(max-width:560px){
-  .adminDashboard{
-    padding:8px !important;
+  .adminCommand{
+    padding:7px !important;
   }
   .adminDashTile{
-    min-height:54px !important;
-    padding:6px 7px !important;
+    min-height:52px !important;
+    padding:5px 7px !important;
   }
   .adminDashTile .num{
-    font-size:20px !important;
-  }
-  .adminCommand .btn{
-    min-height:38px !important;
-    font-size:10px !important;
+    font-size:19px !important;
   }
 }
 
@@ -2281,7 +2282,7 @@ const PUBLIC_BODY = `
 
   <div id="loggedInView" style="display:none">
     <div class="between">
-      <div class="section" style="margin-top:6px">研修記録</div>
+      <div class="section" style="margin-top:8px">研修記録</div>
       <button id="traineeLogoutBtn" class="btn small" type="button">ログアウト</button>
     </div>
     <div id="mySummary"></div>
@@ -2297,11 +2298,11 @@ const PUBLIC_BODY = `
     <span class="badge">FIRST LOGIN</span>
     <div class="title">プレイヤー名を登録してください</div>
     <div class="sub" style="margin-top:6px">研修記録に表示するゲーム内のプレイヤー名を入力してください。</div>
-    <div style="margin-top:6px">
+    <div style="margin-top:8px">
       <input id="playerNameRequiredInput" maxlength="40" placeholder="例：Vip Tonakai">
     </div>
     <button class="btn primary" type="button" style="width:100%;margin-top:10px" onclick="saveRequiredPlayerName()">登録して開始</button>
-    <div id="playerNameRequiredMsg" class="sub" style="margin-top:6px"></div>
+    <div id="playerNameRequiredMsg" class="sub" style="margin-top:8px"></div>
   </div>
 </div>
 
@@ -2316,7 +2317,7 @@ const PUBLIC_BODY = `
       <div><div class="title">研修修了証</div><div class="sub">CERTIFICATE OF COMPLETION</div></div>
       <button type="button" class="btn small" onclick="closeCompletionCertificate()">閉じる</button>
     </div>
-    <div id="completionCertificateBody" style="margin-top:6px"></div>
+    <div id="completionCertificateBody" style="margin-top:8px"></div>
   </div>
 </div>
 <div id="surveyModal" class="modal">
@@ -2328,7 +2329,7 @@ const PUBLIC_BODY = `
       </div>
       <button class="btn small" type="button" onclick="closeSurveyModal()">閉じる</button>
     </div>
-    <div id="surveyList" style="margin-top:6px"></div>
+    <div id="surveyList" style="margin-top:8px"></div>
   </div>
 </div>
 <div id="historyModal" class="modal">
@@ -2340,7 +2341,7 @@ const PUBLIC_BODY = `
       </div>
       <button id="closeHistoryBtn" class="btn small" type="button">閉じる</button>
     </div>
-    <div id="myHistory" style="margin-top:6px"></div>
+    <div id="myHistory" style="margin-top:8px"></div>
   </div>
 </div>
     <div id="msg"></div>
@@ -2354,7 +2355,7 @@ const PUBLIC_BODY = `
   <div class="title" id="bookTitle">研修申請</div>
   <div class="sub" style="margin-top:4px">申請後、管理者が担当教官を選んで承認します。</div>
   <div id="bookingMsg"></div>
-  <div style="margin-top:6px">
+  <div style="margin-top:8px">
     <div style="font-weight:900;margin-bottom:6px">第1希望 <span style="color:#b42318;font-size:12px">必須</span></div>
     <div class="grid" style="grid-template-columns:1.35fr 1fr;gap:8px">
       <div class="field" style="margin:0"><label style="font-size:11px">日付</label><input id="preferredDate" type="date" required style="min-height:44px;font-size:15px;padding:9px 10px"></div>
@@ -2378,12 +2379,12 @@ const PUBLIC_BODY = `
   <div class="field"><label>備考</label><textarea id="note" maxlength="250" placeholder="必要な場合のみ入力"></textarea></div>
   <div class="card" style="margin:12px 0;border:1px solid #d7ad45;padding:12px">
     <div style="font-weight:900">研修ポリシー</div>
-    <button id="openPolicyBtn" type="button" class="btn small" style="margin-top:6px" onclick="openTrainingPolicy()">内容を確認</button>
+    <button id="openPolicyBtn" type="button" class="btn small" style="margin-top:8px" onclick="openTrainingPolicy()">内容を確認</button>
     <label style="display:flex;gap:8px;align-items:flex-start;margin-top:10px;font-weight:800;line-height:1.4">
       <input id="policyAgree" type="checkbox" disabled style="width:20px;height:20px;margin-top:1px">
       <span>研修ポリシーを確認し、内容に同意します</span>
     </label>
-    <div id="policyReadHint" class="sub" style="margin-top:6px">※「内容を確認」を開いた後にチェックできます。</div>
+    <div id="policyReadHint" class="sub" style="margin-top:8px">※「内容を確認」を開いた後にチェックできます。</div>
   </div>
   <button id="bookingSubmitBtn" type="button" class="btn primary" style="width:100%">申請する</button>
 </div></div>`;
@@ -2506,6 +2507,16 @@ async function load(){
    const latest=currentHistory[0]||null;
    const state=String(latest?.status||'');
 
+   if(traineeSurveyGate.blocked){
+     el.innerHTML=
+       '<div class="card">'+
+         '<div class="title">'+esc(current.title||'研修')+'</div>'+
+         '<div class="notice error" style="margin-top:8px"><b>前回研修のアンケート回答が必要です。</b><br>アンケート回答後に、この研修を申請できます。</div>'+
+         '<button class="btn primary" style="width:100%;margin-top:8px" type="button" onclick="openSurveyModal()">アンケート回答へ</button>'+
+       '</div>';
+     return;
+   }
+
    // If currentHistory is empty, this is a genuine first application even if
    // old expired/retake rows exist for the same training_id from before unlock.
    const orientation=String(current.title||'').trim()==='オリエンテーション';
@@ -2539,7 +2550,7 @@ async function load(){
    el.innerHTML=
      '<div class="card profileCard">'+
        '<div class="title">'+esc(current.title||'研修')+'</div>'+
-       '<div class="between" style="margin-top:7px">'+
+       '<div class="between" style="margin-top:10px">'+
          '<span class="sub">'+message+'</span>'+
          '<button class="btn primary bookingBtn" data-id="'+Number(current.training_id||0)+'" data-title="'+encodeURIComponent(current.title||'研修')+'" '+(disabled?'disabled':'')+'>'+buttonText+'</button>'+
        '</div>'+
@@ -2586,7 +2597,7 @@ function openCompletionCertificate(name,date,total){
      '<div class="certificateBody">上記の者は、LOMITA POLICEが定める<br>全研修課程を修了したことを証します。</div>'+
      '<div class="certificateSeal">修了</div>'+
      '<div class="certificateDate">修了日：'+esc(String(date||'').replaceAll('-','/'))+'</div>'+
-     '<div class="certificateBody" style="margin-top:6px">修了研修：'+Number(total||0)+' / '+Number(total||0)+'</div>'+
+     '<div class="certificateBody" style="margin-top:8px">修了研修：'+Number(total||0)+' / '+Number(total||0)+'</div>'+
      '<div class="completionDivision">LOMITA POLICE TRAINING DIVISION</div>'+
    '</div>';
  modal.classList.add('open');
@@ -2821,10 +2832,30 @@ async function submitTrainingSurvey(id){
  }
  alert('アンケートを送信しました。ありがとうございます。');
  delete surveyState[id]; await loadPendingSurveys();
+ await loadSurveyGate();
+ if(typeof loadMyPage==='function')await loadMyPage();
 }
 
 
+
+let traineeSurveyGate={blocked:false,reservation_id:0,training_title:''};
+
+async function loadSurveyGate(){
+ try{
+   const r=await fetch('/api/trainee/survey-gate',{cache:'no-store'});
+   const d=await r.json().catch(()=>({}));
+   traineeSurveyGate={
+     blocked:!!d.blocked,
+     reservation_id:Number(d.reservation_id||0),
+     training_title:String(d.training_title||'')
+   };
+ }catch(_){
+   traineeSurveyGate={blocked:false,reservation_id:0,training_title:''};
+ }
+}
+
 async function loadMyPage(){
+ await loadSurveyGate();
  const r=await fetch('/api/trainee/profile');
  const d=await r.json().catch(()=>({}));
  if(r.status===401){showAuth();return}
@@ -2921,6 +2952,16 @@ loadDiscordLoginConfig();restoreTrainee();
 
 
 updateJstCurrentTime('trainee');setInterval(()=>updateJstCurrentTime('trainee'),1000);
+
+async function handleSurveyRequiredReservationError(d){
+ if(d?.code==='survey_required'){
+   alert(d.error||'前回研修のアンケート回答が必要です');
+   await loadPendingSurveys();
+   openSurveyModal();
+   return true;
+ }
+ return false;
+}
 `;
 
 const ADMIN_BODY = `
@@ -3055,7 +3096,7 @@ const ADMIN_BODY = `
    <div class="completedAdminBox" style="display:none">
      <div class="completedAdminHead"><div class="completedAdminTitle">研修アンケート</div></div>
      <div id="surveySummary"><div class="empty">回答はまだありません。</div></div>
-     <details style="margin-top:7px"><summary style="font-weight:900">回答一覧を見る</summary><div id="surveyAdminList"></div></details>
+     <details style="margin-top:10px"><summary style="font-weight:900">回答一覧を見る</summary><div id="surveyAdminList"></div></details>
    </div>
  </div>
 
@@ -3069,15 +3110,15 @@ const ADMIN_BODY = `
        </div>
        <button class="btn small" type="button" onclick="loadAdminSurveys()">更新</button>
      </div>
-     <div id="surveySummaryDedicated" style="margin-top:7px"><div class="empty">読み込み中...</div></div>
+     <div id="surveySummaryDedicated" style="margin-top:10px"><div class="empty">読み込み中...</div></div>
    </div>
 
-   <div class="card" style="margin-top:7px">
+   <div class="card" style="margin-top:10px">
      <div class="between">
        <div class="title" style="font-size:17px">回答一覧</div>
        <span id="surveyResponseCount" class="pill">0件</span>
      </div>
-     <div id="surveyAdminListDedicated" style="margin-top:6px"><div class="empty">読み込み中...</div></div>
+     <div id="surveyAdminListDedicated" style="margin-top:8px"><div class="empty">読み込み中...</div></div>
    </div>
  </div>
 
@@ -3102,7 +3143,7 @@ const ADMIN_BODY = `
     <button class="btn small" type="button" onclick="loadAdminTrainingPolicy()">読み込む</button>
     <button class="btn primary small" type="button" onclick="saveAdminTrainingPolicy()">変更を保存</button>
   </div>
-  <div id="adminTrainingPolicyMsg" class="sub" style="margin-top:6px"></div>
+  <div id="adminTrainingPolicyMsg" class="sub" style="margin-top:8px"></div>
 </div>
 <div class="card" style="margin-bottom:12px">
   <div class="title">Discord 研修申請通知</div>
@@ -3113,7 +3154,7 @@ const ADMIN_BODY = `
     <button id="checkDiscordWebhookBtn" class="btn small" type="button">設定を確認</button>
     <button id="testDiscordWebhookBtn" class="btn primary small" type="button">テスト通知を送る</button>
   </div>
-  <div id="discordWebhookMsg" style="margin-top:6px"></div>
+  <div id="discordWebhookMsg" style="margin-top:8px"></div>
 </div>
 <div class="section">GitHubアップロード</div>
  <div class="card">
@@ -3146,7 +3187,7 @@ const ADMIN_BODY = `
  <div class="section">Cloudflareビルド状況</div>
  <div class="card">
    <div class="between"><div><div class="title" style="font-size:16px">最新ビルド</div><div class="sub" id="buildCommit">GitHubの最新コミットを確認します</div></div><button class="btn small" id="buildRefreshBtn" onclick="loadBuildStatus(true)">更新</button></div>
-   <div id="buildStatus" class="notice" style="margin-top:6px">未確認</div>
+   <div id="buildStatus" class="notice" style="margin-top:8px">未確認</div>
    <div class="sub" id="buildChecks" style="line-height:1.7"></div>
  </div>
 
@@ -3560,7 +3601,7 @@ async function loadReservationControl(){
        (x.exam_result?(' ／ 判定：'+(x.exam_result==='pass'?'合格':'不合格')):'')+
        ((x.exam_score===null||x.exam_score===undefined)?'':' ／ 得点：'+esc(String(x.exam_score))+'点')+
        '</div>'+
-       '<button type="button" class="btn small danger undoCompletedBtn" data-id="'+x.id+'" data-kind="'+undoKind+'" style="margin-top:6px">'+undoLabel+'</button>'+
+       '<button type="button" class="btn small danger undoCompletedBtn" data-id="'+x.id+'" data-kind="'+undoKind+'" style="margin-top:9px">'+undoLabel+'</button>'+
        '</div>';
    },'<div class="empty">受講済み履歴はありません。</div>','completedHistory');
  }
@@ -3629,7 +3670,7 @@ async function loadReservationControl(){
        '<div class="sub" style="margin-top:7px">第1希望：'+esc([x.preferred_date,x.preferred_time].filter(Boolean).join(' ')||'未登録')+'</div>'+
        (x.preferred_date2?'<div class="sub">第2希望：'+esc([x.preferred_date2,x.preferred_time2].filter(Boolean).join(' '))+'</div>':'')+
        (x.preferred_date3?'<div class="sub">第3希望：'+esc([x.preferred_date3,x.preferred_time3].filter(Boolean).join(' '))+'</div>':'')+
-       '<div class="notice" style="margin-top:6px">'+
+       '<div class="notice" style="margin-top:8px">'+
          '<b>この申請は期限切れです。</b><br>'+
          '研修生の再申請をお待ちください。管理者側での操作は不要です。'+
        '</div>'+
@@ -3666,12 +3707,12 @@ const isFinalExam=isFinalEmploymentExamName(x.title);
      (preferredText3?'<div class="sub" style="font-weight:800">第3希望：'+esc(preferredText3)+'</div>':'')+
      (confirmedText?'<div style="margin-top:8px;padding:7px 9px;border-radius:10px;background:#eef6ff;font-weight:900">✅ 確定日時：'+esc(confirmedText)+'</div>':'')+
      '</div></div>'+
-     (overdue?'<div class="notice error" style="margin-top:7px"><b>予定時刻を過ぎています。</b><br>'+
+     (overdue?'<div class="notice error" style="margin-top:10px"><b>予定時刻を過ぎています。</b><br>'+
        (futureAlternatives.length
          ?'未来の別候補が残っています。別候補で再承認するか、受講済み・再受講・欠席に処理してください。'
          :'受講済み・再受講・欠席のいずれかに処理してください。')+
        '</div>':'')+
-     '<div class="field" style="margin-top:6px"><label>承認する日時</label><select id="reservationPreference_'+x.id+'" data-confirmed-preference="'+Number(x.confirmed_preference||0)+'"><option value="">希望日時を選択</option>'+preferenceOptions+'</select></div>'+
+     '<div class="field" style="margin-top:8px"><label>承認する日時</label><select id="reservationPreference_'+x.id+'" data-confirmed-preference="'+Number(x.confirmed_preference||0)+'"><option value="">希望日時を選択</option>'+preferenceOptions+'</select></div>'+
      '<div class="field"><label>状態</label>'+renderReservationStatusButtons(x.id,x.status)+'</div>'+
      '<div class="field"><label>担当教官</label><select id="reservationInstructor_'+x.id+'">'+instructorOptions+'</select></div>'+
      examBox+
@@ -3679,7 +3720,7 @@ const isFinalExam=isFinalEmploymentExamName(x.title);
        ?'<button class="btn dark" style="width:100%;margin-bottom:8px" type="button" onclick="reapproveReservationFromList('+Number(x.id)+')">別候補で再承認</button>'
        :'')+
      '<button class="btn primary" style="width:100%" type="button" onclick="saveReservationFromList('+Number(x.id)+')">変更を保存</button>'+
-     (x.note?'<div class="sub" style="margin-top:6px">備考：'+esc(x.note)+'</div>':'')+
+     (x.note?'<div class="sub" style="margin-top:8px">備考：'+esc(x.note)+'</div>':'')+
    '</div>';
  }).join('');
  }catch(err){
@@ -4015,7 +4056,7 @@ function renderTrainees(){
    return '<div class="card traineeCard"><div class="between"><div class="profileHead"><div class="avatar">'+esc((x.player_name||'?').slice(0,1))+'</div><div><div class="title">'+esc(x.player_name||'名前未登録')+'</div>'+(x.login_name?'<div class="sub">：'+esc(x.login_name)+'</div>':'')+'</div></div></div>'+
    '<div style="margin-top:12px;padding:10px;border:1px solid #d7ad45;border-radius:12px;background:#fffdf7">'+
      '<div class="between"><div><b>オリエンテーション</b><div class="sub">'+(x.orientation_completed?'受講済み':'未受講')+'</div></div><div class="row"><button class="btn small '+(x.orientation_completed?'dark':'')+' orientationToggleBtn" data-id="'+x.id+'" data-completed="1">済</button><button class="btn small '+(!x.orientation_completed?'dark':'')+' orientationToggleBtn" data-id="'+x.id+'" data-completed="0">未</button></div></div>'+
-     '<select class="orientationInstructorSelect" data-id="'+x.id+'" style="margin-top:6px"><option value="">担当教官を選択...</option>'+instructorRows.map(i=>'<option value="'+esc(i.name)+'">'+esc(i.name)+'</option>').join('')+'</select>'+
+     '<select class="orientationInstructorSelect" data-id="'+x.id+'" style="margin-top:8px"><option value="">担当教官を選択...</option>'+instructorRows.map(i=>'<option value="'+esc(i.name)+'">'+esc(i.name)+'</option>').join('')+'</select>'+
    '</div>'+
    (x.all_completed?'<div style="margin-top:12px;padding:12px;border:2px solid #d7ad45;border-radius:14px;background:#fff9df"><div style="font-weight:1000;font-size:17px">🏅 全研修修了</div><div class="sub" style="margin-top:4px">修了日：'+esc(String(x.all_completed_at||'').replaceAll('-','/'))+'</div></div>':'')+
    '<div class="traineeProgressCompact"><div class="between"><b>研修進捗</b><b>'+done+'/'+total+' 完了</b></div><div class="bar"><div class="fill" style="width:'+pct+'%"></div></div><div class="sub" style="margin-top:5px">'+(x.current_training?'次：'+esc(x.current_training):'全研修修了')+'</div></div>'+
@@ -4033,13 +4074,13 @@ function renderTrainees(){
        '</select>'+
        '<input class="traineeRecognitionDate" data-id="'+x.id+'" type="date" aria-label="既修了認定日">'+
      '</div>'+
-     '<div style="margin-top:6px"><div class="sub" style="font-weight:900;margin-bottom:5px">認定担当教官</div>'+
+     '<div style="margin-top:8px"><div class="sub" style="font-weight:900;margin-bottom:5px">認定担当教官</div>'+
        '<select class="traineeRecognitionInstructor" data-id="'+x.id+'"><option value="">担当教官を選択...</option>'+instructorRows.map(i=>'<option value="'+esc(i.name)+'">'+esc(i.name)+'</option>').join('')+'</select>'+
      '</div>'+
      '<button class="btn small primary transferStartBtn setTraineeStartBtn" data-id="'+x.id+'">この研修から開始に設定</button>'+
      '<div class="sub" style="margin-top:5px">認定日は任意です。担当教官は必ず選択してください。</div>'+
    '</div>'+
-   '<div style="margin-top:6px"><div class="sub" style="font-weight:900">管理メモ（管理者のみ）</div><textarea class="traineeAdminMemo" data-id="'+x.id+'" rows="3" maxlength="5000" placeholder="注意点・指導内容・今後の対応など" style="width:100%;margin-top:6px">'+esc(x.admin_memo||'')+'</textarea><button class="btn small saveTraineeMemoBtn" data-id="'+x.id+'" style="margin-top:6px">管理メモを保存</button></div>'+
+   '<div style="margin-top:8px"><div class="sub" style="font-weight:900">管理メモ（管理者のみ）</div><textarea class="traineeAdminMemo" data-id="'+x.id+'" rows="3" maxlength="5000" placeholder="注意点・指導内容・今後の対応など" style="width:100%;margin-top:6px">'+esc(x.admin_memo||'')+'</textarea><button class="btn small saveTraineeMemoBtn" data-id="'+x.id+'" style="margin-top:6px">管理メモを保存</button></div>'+
    '<div class="traineeAdminActions">'+
      '<button class="btn small traineeProgressBtn" data-discord="'+encodeURIComponent(x.discord_id||x.login_name||x.player_name)+'">進捗表を見る</button>'+
      '<button class="btn small traineeOpenBtn" data-discord="'+encodeURIComponent(x.discord_id||x.login_name||x.player_name)+'">受講履歴を見る</button>'+
@@ -4231,9 +4272,9 @@ async function openTraineeDetail(discord){
    const history=Array.isArray(d.history)?d.history:[];
    detail.innerHTML=
      '<div class="card"><div class="sub">Discord</div><b>'+esc(d.profile?.discord_id||'未登録')+'</b>'+
-     '<div class="sub" style="margin-top:6px">'+esc([d.profile?.affiliation,d.profile?.rank].filter(Boolean).join(' / ')||'所属・階級 未登録')+'</div>'+
+     '<div class="sub" style="margin-top:8px">'+esc([d.profile?.affiliation,d.profile?.rank].filter(Boolean).join(' / ')||'所属・階級 未登録')+'</div>'+
      (d.profile?.all_completed_at?'<div style="margin-top:10px;padding:10px;border:1px solid #d7ad45;border-radius:12px;background:#fff9df"><b>🏅 全研修修了</b><div class="sub">修了日：'+esc(String(d.profile.all_completed_at).replaceAll('-','/'))+'</div></div>':'')+
-     '<div class="grid" style="margin-top:6px">'+
+     '<div class="grid" style="margin-top:9px">'+
        '<div class="stat"><span class="sub">承認待ち</span><b>'+(s.pending||0)+'</b></div>'+
        '<div class="stat"><span class="sub">予約確定</span><b>'+(s.reserved||0)+'</b></div>'+
        '<div class="stat"><span class="sub">受講済み</span><b>'+(s.completed||0)+'</b></div>'+
@@ -4331,7 +4372,7 @@ function render(){const e=document.getElementById('adminList');if(!e)return;if(!
      ?'<div class="meta"><span>📅 申請時に希望日時を指定</span></div>'
      :'<div class="meta"><span>📅 '+fmt(t.training_date)+'</span><span>🕒 '+esc(t.start_time)+(t.end_time?'〜'+esc(t.end_time):'')+'</span>'+(t.location?'<span>📍 '+esc(t.location)+'</span>':'')+'</div>';
    const count=placeholder?'':'<span class="pill">'+t.active_count+'/'+t.capacity+'名</span>';
-   return '<div class="card"><div class="between"><div><span class="pill">'+esc(t.category||'一般研修')+'</span><div class="title" style="margin-top:7px">'+esc(t.title)+(Number(t.pending_count)>0?' <span class="pill pending">申請 '+t.pending_count+'</span>':'')+'</div>'+schedule+'</div>'+count+'</div><div class="row" style="margin-top:6px"><button class="btn small resBtn" data-id="'+t.id+'" data-title="'+encodeURIComponent(t.title)+'">参加者管理</button><button class="btn small editBtn" data-id="'+t.id+'">編集</button><button class="btn danger small delBtn" data-id="'+t.id+'">削除</button></div></div>';
+   return '<div class="card"><div class="between"><div><span class="pill">'+esc(t.category||'一般研修')+'</span><div class="title" style="margin-top:7px">'+esc(t.title)+(Number(t.pending_count)>0?' <span class="pill pending">申請 '+t.pending_count+'</span>':'')+'</div>'+schedule+'</div>'+count+'</div><div class="row" style="margin-top:8px"><button class="btn small resBtn" data-id="'+t.id+'" data-title="'+encodeURIComponent(t.title)+'">参加者管理</button><button class="btn small editBtn" data-id="'+t.id+'">編集</button><button class="btn danger small delBtn" data-id="'+t.id+'">削除</button></div></div>';
  }).join('');
  document.querySelectorAll('.resBtn').forEach(btn=>btn.addEventListener('click',()=>openReservations(Number(btn.dataset.id),decodeURIComponent(btn.dataset.title))));
  document.querySelectorAll('.editBtn').forEach(btn=>btn.addEventListener('click',()=>openTraining(Number(btn.dataset.id))));
@@ -4862,6 +4903,21 @@ async function handle(request, env) {
    return json({ok:true});
  }
 
+ if(path==="/api/trainee/survey-gate" && method==="GET"){
+   const trainee=await getTraineeSession(request,env);
+   if(!trainee)return json({error:"ログインが必要です"},401);
+   const gate=await getBlockingSurveyForTrainee(
+     env,
+     String(trainee.discord_id||trainee.login_name||"")
+   );
+   return json({
+     ok:true,
+     blocked:!!gate,
+     reservation_id:Number(gate?.reservation_id||0),
+     training_title:String(gate?.training_title||"")
+   });
+ }
+
  if(path==="/api/trainee/progress" && method==="GET"){
    // 研修生画面でも期限超過を即時反映
    await runExpiredPendingReservations(env);
@@ -4978,6 +5034,21 @@ async function handle(request, env) {
    return json({profile,stats,history:results});
  }
  if(path==="/api/reservations" && method==="POST"){
+   const surveyGateTrainee=await getTraineeSession(request,env);
+   if(!surveyGateTrainee)return json({error:"ログインが必要です"},401);
+   const surveyGate=await getBlockingSurveyForTrainee(
+     env,
+     String(surveyGateTrainee.discord_id||surveyGateTrainee.login_name||"")
+   );
+   if(surveyGate){
+     return json({
+       error:"前回研修のアンケート回答後に次の研修を申請できます",
+       code:"survey_required",
+       reservation_id:Number(surveyGate.reservation_id||0),
+       training_title:String(surveyGate.training_title||"前回研修")
+     },409);
+   }
+
    await ensureReservationPreferredSchedule(env);
    const profile=await getTraineeSession(request,env);
    if(!profile)return json({error:"ログインが必要です"},401);
