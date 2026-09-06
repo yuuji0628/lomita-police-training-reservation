@@ -1,17 +1,18 @@
-LOMITA POLICE Training Reservation - Version 1.92
+LOMITA POLICE Training Reservation - Version 1.93
 
-アンケート回答不能のランタイム不具合を修正
+UI方針をさらにスマート・コンパクト化
 
-原因
-- アンケートAPIが存在しない requireTrainee() を呼んでいた
-- Worker内で実際に使っているログイン判定は getTraineeSession(request, env)
-- そのためアンケートの取得・送信だけサーバーエラーになっていた
+管理画面
+- ダッシュボードをさらに低く圧縮
+- 4タイルの高さ・余白・文字サイズを縮小
+- 更新ボタン・詳細情報エリアも圧縮
+- 詳細内のミニタイルもコンパクト化
+- 管理メニューのボタン高さと余白を縮小
+- JST時刻バーもさらに薄く
+- iPhoneで1画面により多くの情報を表示
 
-修正
-- GET /api/trainee/surveys/pending を getTraineeSession(request, env) に統一
-- POST /api/trainee/surveys を getTraineeSession(request, env) に統一
-- API読み込み失敗時に「0件」と誤表示せずエラー表示
-- 保存失敗時に原因を確認できるdetailを返す
-- 1研修1回答、既修了認定除外、管理画面アンケート結果は維持
+メニュー整理
+- 下側の「⚠️ここは触らない⚠️」ボタンを削除
+- ヘッダー内の「⚠️ここは触らない⚠️」は維持
 
-Version 1.91までの現在研修判定修正・コンパクトUI・Discord通知なども維持
+Version 1.92のアンケート回答修正・現在研修判定・Discord通知など既存機能を維持
