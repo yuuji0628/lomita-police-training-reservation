@@ -1,4 +1,4 @@
-const APP_VERSION="1.95";
+const APP_VERSION="1.96";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -3287,6 +3287,18 @@ const ADMIN_BODY = `
   </div>
   <div id="discordWebhookMsg" style="margin-top:8px"></div>
 </div>
+<div class="card ownerOnly" style="margin-bottom:12px;border:1px solid #e3a6a0;background:#fff8f7">
+  <div class="title" style="color:#9d2d24">アンケート結果管理</div>
+  <div class="sub" style="margin-top:4px">アンケート結果の削除操作です。削除した回答は元に戻せません。</div>
+  <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+    <button class="btn small" type="button" onclick="loadSurveyDeleteManager()">一覧を読み込む</button>
+  </div>
+  <div id="surveyDeleteManagerList" style="margin-top:8px">
+    <div class="empty">「一覧を読み込む」を押してください。</div>
+  </div>
+  <button class="btn small" style="width:100%;margin-top:10px;border-color:#d97b73;color:#9d2d24" type="button" onclick="deleteAllSurveyResults()">全アンケート結果を削除</button>
+</div>
+
 <div class="section">GitHubアップロード</div>
  <div class="card">
    <div class="card" style="border:2px solid #d7ad45">
@@ -3511,7 +3523,7 @@ async function testDiscordWebhook(){
    if(btn){btn.disabled=false;btn.textContent='テスト通知を送る'}
  }
 }
-function openManageMenu(){setTimeout(checkDiscordWebhookStatus,150);setTimeout(loadAdminTrainingPolicy,150);document.getElementById('manageModal').classList.add('open');setTimeout(()=>loadBuildStatus(),150)}
+function openManageMenu(){setTimeout(checkDiscordWebhookStatus,150);setTimeout(loadAdminTrainingPolicy,150);setTimeout(loadSurveyDeleteManager,150);document.getElementById('manageModal').classList.add('open');setTimeout(()=>loadBuildStatus(),150)}
 function closeManageMenu(){document.getElementById('manageModal').classList.remove('open')}
 let adminReservationFilter='all';
 let traineeDashboardFilter='all';
@@ -4427,6 +4439,80 @@ async function openTraineeDetail(discord){
 }
 function closeTraineeDetail(){document.getElementById('traineeModal').classList.remove('open')}
 function fmt(d){return new Date(d+'T00:00:00').toLocaleDateString('ja-JP',{month:'numeric',day:'numeric',weekday:'short'})}
+
+
+async function loadSurveyDeleteManager(){
+ const el=document.getElementById('surveyDeleteManagerList');
+ if(!el)return;
+ el.innerHTML='<div class="empty">読み込み中...</div>';
+
+ try{
+   const r=await fetch('/api/admin/surveys',{headers:auth()});
+   const d=await r.json().catch(()=>({}));
+   if(!r.ok){
+     el.innerHTML='<div class="notice error">'+esc(d.error||'アンケート結果を読み込めませんでした')+'</div>';
+     return;
+   }
+
+   const rows=Array.isArray(d.rows)?d.rows:[];
+   el.innerHTML=rows.length
+     ?rows.map(x=>
+       '<div class="card" style="margin-top:6px;padding:8px">'+
+         '<div class="between">'+
+           '<div style="min-width:0"><b>'+esc(x.training_title||'研修')+'</b>'+
+             '<div class="sub">'+esc(x.player_name||'')+' / '+esc(x.assigned_instructor||'')+'</div>'+
+           '</div>'+
+           '<button class="btn small" style="border-color:#d97b73;color:#9d2d24" type="button" onclick="deleteSurveyResult('+Number(x.id)+')">削除</button>'+
+         '</div>'+
+         '<div class="sub" style="margin-top:4px">教官 '+Number(x.instructor_rating||0)+'/5 ｜ 内容 '+Number(x.content_rating||0)+'/5 ｜ 難易度 '+Number(x.difficulty_rating||0)+'/5 ｜ 満足度 '+Number(x.satisfaction_rating||0)+'/5</div>'+
+       '</div>'
+     ).join('')
+     :'<div class="empty">アンケート結果はありません。</div>';
+ }catch(_){
+   el.innerHTML='<div class="notice error">アンケート結果の読み込みに失敗しました。</div>';
+ }
+}
+
+async function deleteSurveyResult(id){
+ if(!confirm(
+   'このアンケート結果を削除しますか？\n\n'+
+   '削除すると、その研修は研修生側で再び「アンケート未回答」として扱われます。'
+ ))return;
+
+ const r=await fetch('/api/admin/surveys/'+id,{method:'DELETE',headers:auth()});
+ const d=await r.json().catch(()=>({}));
+
+ if(!r.ok){
+   alert(d.error||'アンケート結果を削除できませんでした');
+   return;
+ }
+
+ alert('アンケート結果を削除しました。');
+ await loadSurveyDeleteManager();
+ await loadAdminSurveys();
+}
+
+async function deleteAllSurveyResults(){
+ if(!confirm(
+   '全アンケート結果を削除しますか？\n\n'+
+   'すべての回答が消え、該当する研修生は再びアンケート未回答として扱われます。'
+ ))return;
+
+ if(!confirm('本当に全件削除しますか？\nこの操作は元に戻せません。'))return;
+
+ const r=await fetch('/api/admin/surveys/delete-all',{method:'POST',headers:auth()});
+ const d=await r.json().catch(()=>({}));
+
+ if(!r.ok){
+   alert(d.error||'アンケート結果を一括削除できませんでした');
+   return;
+ }
+
+ alert('アンケート結果を '+Number(d.deleted||0)+'件 削除しました。');
+ await loadSurveyDeleteManager();
+ await loadAdminSurveys();
+}
+
 
 async function loadAdminSurveys(){
  const s=document.getElementById('surveySummary');
@@ -5599,6 +5685,44 @@ async function handle(request, env) {
    await env.DB.prepare("DELETE FROM reservations WHERE lower(trim(COALESCE(discord_id,'')))=lower(trim(?))").bind(key).run();
    await env.DB.prepare("DELETE FROM trainee_profiles WHERE id=?").bind(Number(traineeDeleteMatch[1])).run();
    return json({ok:true});
+ }
+
+ if(path==="/api/admin/surveys/delete-all" && method==="POST"){
+   if(!(await isAdmin()))return json({error:"unauthorized"},401);
+   await ensureTrainingSurveys(env);
+
+   const count=await env.DB.prepare("SELECT COUNT(*) c FROM training_surveys").first();
+   await env.DB.prepare("DELETE FROM training_surveys").run();
+
+   return json({ok:true,deleted:Number(count?.c||0)});
+ }
+
+ let surveyDeleteMatch=path.match(/^\/api\/admin\/surveys\/(\d+)$/);
+ if(surveyDeleteMatch && method==="DELETE"){
+   if(!(await isAdmin()))return json({error:"unauthorized"},401);
+   await ensureTrainingSurveys(env);
+
+   const id=Number(surveyDeleteMatch[1]||0);
+   if(!id)return json({error:"対象アンケートが不正です"},400);
+
+   const before=await env.DB.prepare(`
+     SELECT id,training_title,player_name,assigned_instructor
+     FROM training_surveys
+     WHERE id=?
+     LIMIT 1
+   `).bind(id).first();
+
+   if(!before)return json({error:"アンケート結果が見つかりません"},404);
+
+   await env.DB.prepare("DELETE FROM training_surveys WHERE id=?").bind(id).run();
+
+   return json({
+     ok:true,
+     deleted_id:id,
+     training_title:String(before.training_title||""),
+     player_name:String(before.player_name||""),
+     assigned_instructor:String(before.assigned_instructor||"")
+   });
  }
 
  if(path==="/api/admin/surveys" && method==="GET"){
