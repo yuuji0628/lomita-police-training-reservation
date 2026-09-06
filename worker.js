@@ -1,4 +1,4 @@
-const APP_VERSION="1.81";
+const APP_VERSION="1.83";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -194,6 +194,27 @@ async function sendReservationConfirmedDM(env,payload){
     "",
     "当日は時間に余裕を持ってご参加ください。"
   ]);
+}
+
+async function sendConfirmedReservationDiscordAnnouncement(env,payload){
+  const webhook=String(env.DISCORD_TRAINING_WEBHOOK_URL||"").trim();
+  if(!webhook)return {ok:false,skipped:true,reason:"webhook_not_configured"};
+  const roleId=String(env.DISCORD_TRAINING_ROLE_ID||"").trim();
+  const mention=roleId?`<@&${roleId}> `:"";
+  const content=[
+    `${mention}✅ **研修予約が確定しました**`,
+    "",
+    `**研修**：${String(payload.training_title||"研修")}`,
+    `**研修生**：${String(payload.player_name||"研修生")}`,
+    `**確定日時**：${String(payload.confirmed_datetime||"未設定")}`,
+    `**担当教官**：${String(payload.assigned_instructor||"未設定")}`,
+    "",
+    "担当教官は研修予定をご確認ください。"
+  ].join("\\n");
+  try{
+    const r=await fetch(webhook,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({content,allowed_mentions:roleId?{roles:[roleId]}:{parse:[]}})});
+    return {ok:r.ok,status:r.status};
+  }catch(err){return {ok:false,error:String(err?.message||err)};}
 }
 
 async function sendReservationReapprovedDM(env,payload){
@@ -768,6 +789,57 @@ const html = (title, body, script = "") => new Response(`<!doctype html>
 #historyModal #myHistory{overflow:visible}
 @supports not (height:1dvh){
   #historyModal .modalCard{max-height:88vh}
+}
+
+.miniDateTime{
+  display:grid;
+  grid-template-columns:116px 1fr;
+  gap:9px;
+  margin:10px 0 14px;
+}
+.miniCalendarCard,.miniClockCard{
+  border:1px solid #cdd8e5;
+  border-radius:13px;
+  background:#fff;
+  box-shadow:0 2px 8px rgba(12,39,72,.04);
+}
+.miniCalendarCard{overflow:hidden}
+.miniCalendarMonth{
+  background:#0c2748;
+  color:#fff;
+  text-align:center;
+  font-size:10px;
+  font-weight:1000;
+  padding:5px 4px;
+  letter-spacing:.08em;
+}
+.miniCalendarDay{
+  text-align:center;
+  font-size:32px;
+  font-weight:1000;
+  color:#0c2748;
+  line-height:1;
+  padding-top:8px;
+}
+.miniCalendarWeekday{
+  text-align:center;
+  font-size:10px;
+  font-weight:900;
+  color:#748195;
+  padding:4px 4px 8px;
+}
+.miniClockCard{
+  display:flex;
+  flex-direction:column;
+  justify-content:center;
+  padding:10px 12px;
+}
+.miniClockLabel{font-size:9px;font-weight:1000;color:#8692a3;letter-spacing:.09em}
+.miniClockTime{font-size:25px;font-weight:1000;color:#0c2748;line-height:1.05;margin-top:3px;font-variant-numeric:tabular-nums}
+.miniClockDate{font-size:10px;font-weight:850;color:#69778a;margin-top:4px}
+@media(max-width:380px){
+  .miniDateTime{grid-template-columns:104px 1fr}
+  .miniClockTime{font-size:22px}
 }
 body{
   margin:0;
@@ -1879,6 +1951,19 @@ const PUBLIC_BODY = `
     </div>
   </div>
 
+  <div class="miniDateTime">
+    <div class="miniCalendarCard">
+      <div id="traineeMiniMonth" class="miniCalendarMonth">JST</div>
+      <div id="traineeMiniDay" class="miniCalendarDay">--</div>
+      <div id="traineeMiniWeekday" class="miniCalendarWeekday">---</div>
+    </div>
+    <div class="miniClockCard">
+      <div class="miniClockLabel">CURRENT TIME / JST</div>
+      <div id="traineeMiniTime" class="miniClockTime">--:--:--</div>
+      <div id="traineeMiniDate" class="miniClockDate">----/--/--</div>
+    </div>
+  </div>
+
   <div id="authView">
     <div class="card">
       <div class="title">研修生ログイン</div>
@@ -1993,6 +2078,30 @@ function enableHistoryModalScroll(){
  scroller.style.webkitOverflowScrolling='touch';
  scroller.style.touchAction='pan-y';
 }
+
+function updateMiniJstClock(prefix){
+ const now=new Date();
+ const parts=new Intl.DateTimeFormat('ja-JP',{
+   timeZone:'Asia/Tokyo',
+   year:'numeric',month:'2-digit',day:'2-digit',
+   weekday:'short',hour:'2-digit',minute:'2-digit',second:'2-digit',
+   hour12:false
+ }).formatToParts(now);
+ const get=t=>parts.find(x=>x.type===t)?.value||'';
+ const y=get('year'),m=get('month'),d=get('day'),wd=get('weekday');
+ const hh=get('hour'),mm=get('minute'),ss=get('second');
+ const monthEl=document.getElementById(prefix+'MiniMonth');
+ const dayEl=document.getElementById(prefix+'MiniDay');
+ const weekdayEl=document.getElementById(prefix+'MiniWeekday');
+ const timeEl=document.getElementById(prefix+'MiniTime');
+ const dateEl=document.getElementById(prefix+'MiniDate');
+ if(monthEl)monthEl.textContent=y+' / '+m;
+ if(dayEl)dayEl.textContent=d;
+ if(weekdayEl)weekdayEl.textContent=wd;
+ if(timeEl)timeEl.textContent=hh+':'+mm+':'+ss;
+ if(dateEl)dateEl.textContent=y+'/'+m+'/'+d+'  日本時間';
+}
+
 function esc(s){return String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 function noticeIn(id,t,c){document.getElementById(id).innerHTML='<div class="notice '+(c||'')+'">'+esc(t)+'</div>'}
 function show(t,c){const e=document.getElementById('msg');e.innerHTML='<div class="notice '+c+'">'+esc(t)+'</div>';setTimeout(()=>e.innerHTML='',4200)}
@@ -2403,7 +2512,9 @@ document.getElementById('openHistoryBtn')?.addEventListener('click',()=>{
 document.getElementById('closeHistoryBtn')?.addEventListener('click',()=>document.getElementById('historyModal')?.classList.remove('open'));
 document.getElementById('historyModal')?.addEventListener('click',e=>{if(e.target.id==='historyModal')e.currentTarget.classList.remove('open')});
 
-loadDiscordLoginConfig();restoreTrainee();`;
+loadDiscordLoginConfig();restoreTrainee();
+updateMiniJstClock('trainee');setInterval(()=>updateMiniJstClock('trainee'),1000);
+`;
 
 const ADMIN_BODY = `
 <div id="loginView" class="wrap login">
@@ -2425,6 +2536,18 @@ const ADMIN_BODY = `
 <div id="adminView" style="display:none"><div class="wrap">
  <div class="header"><div class="between"><div><span class="badge">LOMITA POLICE</span><div class="brand">研修管理本部</div><div class="sub">研修・参加申請・受講状況を一括管理</div><div class="sub" style="margin-top:6px;opacity:.78">Version ${APP_VERSION}</div><div id="adminRoleLabel" class="sub" style="margin-top:4px"></div></div><div class="row"><button class="btn small" onclick="logout()">ログアウト</button><button class="btn small" onclick="openManageMenu()">⚠️ここは触らない⚠️</button> </div></div></div>
  <div id="msg"></div>
+ <div class="miniDateTime">
+   <div class="miniCalendarCard">
+     <div id="adminMiniMonth" class="miniCalendarMonth">JST</div>
+     <div id="adminMiniDay" class="miniCalendarDay">--</div>
+     <div id="adminMiniWeekday" class="miniCalendarWeekday">---</div>
+   </div>
+   <div class="miniClockCard">
+     <div class="miniClockLabel">CURRENT TIME / JST</div>
+     <div id="adminMiniTime" class="miniClockTime">--:--:--</div>
+     <div id="adminMiniDate" class="miniClockDate">----/--/--</div>
+   </div>
+ </div>
  <div class="adminCommand">
    <div class="adminCommandHead">
      <div><div class="adminCommandTitle">管理ダッシュボード</div><div class="adminCommandSub">今対応する内容をここで確認できます</div></div>
@@ -2452,6 +2575,7 @@ const ADMIN_BODY = `
        <div class="adminMiniGrid">
          <button class="adminMiniTile" type="button" onclick="openDashboardReservations('week')"><div class="between"><span class="name">今週の研修</span><span id="dashWeek" class="count">0</span></div></button>
          <button class="adminMiniTile" type="button" onclick="openDashboardReservations('unassigned')"><div class="between"><span class="name">教官未決定</span><span id="dashUnassigned" class="count">0</span></div></button>
+         <button class="adminMiniTile warn" type="button" onclick="openDashboardTrainees('orientationPending')"><div class="between"><span class="name">オリエンテーション未</span><span id="dashOrientationPending" class="count">0</span></div></button>
          <button class="adminMiniTile" type="button" onclick="openDashboardReservations('expired')"><div class="between"><span class="name">希望日時超過</span><span id="dashExpired" class="count">0</span></div></button>
          <button class="adminMiniTile" type="button" onclick="openDashboardTrainees('all')"><div class="between"><span class="name">登録研修生</span><span id="dashTrainees" class="count">0</span></div></button>
          <button class="adminMiniTile" type="button" onclick="openDashboardTrainees('inProgress')"><div class="between"><span class="name">研修中・未修了</span><span id="dashInProgress" class="count">0</span></div></button>
@@ -2636,6 +2760,30 @@ const ADMIN_BODY = `
 const ADMIN_SCRIPT = String.raw`
 let adminPassword='', trainings=[], activeTrainingId=null, buildTimer=null, currentAdminRole='owner';
 const labels={pending:'承認待ち',reserved:'予約確定',completed:'受講済み',retake:'再受講',absent:'欠席',cancelled:'キャンセル',expired:'希望日時超過'};
+
+function updateMiniJstClock(prefix){
+ const now=new Date();
+ const parts=new Intl.DateTimeFormat('ja-JP',{
+   timeZone:'Asia/Tokyo',
+   year:'numeric',month:'2-digit',day:'2-digit',
+   weekday:'short',hour:'2-digit',minute:'2-digit',second:'2-digit',
+   hour12:false
+ }).formatToParts(now);
+ const get=t=>parts.find(x=>x.type===t)?.value||'';
+ const y=get('year'),m=get('month'),d=get('day'),wd=get('weekday');
+ const hh=get('hour'),mm=get('minute'),ss=get('second');
+ const monthEl=document.getElementById(prefix+'MiniMonth');
+ const dayEl=document.getElementById(prefix+'MiniDay');
+ const weekdayEl=document.getElementById(prefix+'MiniWeekday');
+ const timeEl=document.getElementById(prefix+'MiniTime');
+ const dateEl=document.getElementById(prefix+'MiniDate');
+ if(monthEl)monthEl.textContent=y+' / '+m;
+ if(dayEl)dayEl.textContent=d;
+ if(weekdayEl)weekdayEl.textContent=wd;
+ if(timeEl)timeEl.textContent=hh+':'+mm+':'+ss;
+ if(dateEl)dateEl.textContent=y+'/'+m+'/'+d+'  日本時間';
+}
+
 function esc(s){return String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 function auth(){const h={'content-type':'application/json'};if(adminPassword)h['x-admin-password']=adminPassword;return h}
 function msg(t,c){const e=document.getElementById('msg');e.innerHTML='<div class="notice '+c+'">'+esc(t)+'</div>';setTimeout(()=>e.innerHTML='',3500)}
@@ -2783,7 +2931,8 @@ const traineeFilterLabels={
   all:'すべての研修生',
   inProgress:'研修中・未修了',
   completed:'全研修修了',
-  retake:'再受講あり'
+  retake:'再受講あり',
+  orientationPending:'オリエンテーション未'
 };
 
 async function refreshAdminNow(){
@@ -2981,7 +3130,10 @@ async function loadReservationControl(){
    const counts=new Map();
    completed.forEach(x=>{
      const name=String(x.assigned_instructor||'').trim();
-     if(name)counts.set(name,(counts.get(name)||0)+1);
+     const recognition=
+       String(x.note||'')==='途中参加による既修了認定' ||
+       name==='既修了認定';
+     if(!recognition && name)counts.set(name,(counts.get(name)||0)+1);
    });
    const ranking=[...counts.entries()].sort((a,b)=>b[1]-a[1]||a[0].localeCompare(b[0],'ja'));
    rankingEl.innerHTML=ranking.length?ranking.map(([name,count],i)=>
@@ -3401,6 +3553,7 @@ function renderTrainees(){
  if(traineeDashboardFilter==='completed')rows=rows.filter(x=>!!x.all_completed);
  else if(traineeDashboardFilter==='inProgress')rows=rows.filter(x=>!x.all_completed);
  else if(traineeDashboardFilter==='retake')rows=rows.filter(x=>Number(x.retake||0)>0);
+ else if(traineeDashboardFilter==='orientationPending')rows=rows.filter(x=>!x.orientation_completed);
  updateTraineeFilterBar();
  const e=document.getElementById('traineeList');
  if(!rows.length){e.innerHTML='<div class="empty">該当する研修生はいません。</div>';return}
@@ -3676,6 +3829,7 @@ async function loadAdmin(){
    dashFullCompleted:st.full_completed,
    dashPending:st.pending,
    dashUnassigned:st.unassigned,
+   dashOrientationPending:st.orientation_pending,
    dashExpired:st.expired,
    dashRetake:st.retake,
    dashTrainees:st.trainees,
@@ -4046,6 +4200,8 @@ document.getElementById('gitFile')?.addEventListener('change',updateFileInfo);
 document.getElementById('adminLoginBtn')?.addEventListener('click',login);
 document.getElementById('password')?.addEventListener('keydown',e=>{if(e.key==='Enter')login()});
 restoreAdmin();
+
+updateMiniJstClock('admin');setInterval(()=>updateMiniJstClock('admin'),1000);
 `;
 
 async function handle(request, env) {
@@ -4412,6 +4568,24 @@ async function handle(request, env) {
        AND trim(COALESCE(discord_id,player_name,''))<>''
    `).first();
 
+   const orientationTraining=await getOrientationTraining(env);
+   let orientationPendingCount=0;
+   if(orientationTraining?.training_id){
+     const orientationPending=await env.DB.prepare(`
+       SELECT COUNT(*) c
+       FROM trainee_profiles p
+       WHERE NOT EXISTS (
+         SELECT 1
+         FROM reservations r
+         WHERE r.training_id=?
+           AND r.status='completed'
+           AND lower(trim(COALESCE(r.discord_id,'')))=
+               lower(trim(COALESCE(p.discord_id,p.login_name,p.player_name,'')))
+       )
+     `).bind(Number(orientationTraining.training_id)).first();
+     orientationPendingCount=Number(orientationPending?.c||0);
+   }
+
    const pendingCount=Number(pending?.c||0);
    const expiredCount=Number(expired?.c||0);
    const retakeCount=Number(retake?.c||0);
@@ -4433,7 +4607,8 @@ async function handle(request, env) {
      trainees:traineeCount,
      in_progress:Math.max(0,traineeCount-fullCount),
      full_completed:fullCount,
-     retake_trainees:Number(retakeTrainees?.c||0)
+     retake_trainees:Number(retakeTrainees?.c||0),
+     orientation_pending:orientationPendingCount
    });
  }
 
@@ -4842,6 +5017,12 @@ async function handle(request, env) {
  if(path==="/api/admin/expired-pending/run" && method==="POST"){
    if(!(await isAdmin()))return json({error:"unauthorized"},401);
    return json(await runExpiredPendingReservations(env));
+ }
+
+ if(path==="/api/admin/orientation-announcement/run" && method==="POST"){
+   if(!(await isAdmin()))return json({error:"unauthorized"},401);
+   const result=await runOrientationPendingAnnouncement(env);
+   return json({ok:true,...result});
  }
 
  if(path==="/api/admin/pending-approval-announcement/run" && method==="POST"){
@@ -5388,6 +5569,8 @@ async function handle(request, env) {
        oldInstructor!==assigned ||
        Number(before.confirmed_preference||0)!==confirmedPref
      );
+   const reservationConfirmationChanged=
+     b.status==="reserved" && (previousStatus!=="reserved" || reservedDetailsChanged);
 
    if(finalExam && ["pass","fail"].includes(examResult) && previousStatus!==b.status){
      dmResult=await sendFinalEmploymentExamResultDM(env,{
@@ -5447,8 +5630,20 @@ async function handle(request, env) {
 
    await refreshTraineeFullCompletionByDiscord(env,String(before.discord_id||""));
 
+   let discordAnnouncementResult={ok:false,skipped:true};
+   if(reservationConfirmationChanged && assigned && confirmedDate && confirmedTime){
+     discordAnnouncementResult=await sendConfirmedReservationDiscordAnnouncement(env,{
+       training_title:String(before.title||"研修"),
+       player_name:String(before.player_name||"研修生"),
+       confirmed_datetime:newDateTime,
+       assigned_instructor:assigned
+     });
+   }
+
    return json({
      ok:true,
+     discord_announcement_sent:!!discordAnnouncementResult.ok,
+     discord_announcement_skipped:!!discordAnnouncementResult.skipped,
      confirmed_date:confirmedDate,
      confirmed_time:confirmedTime,
      confirmed_preference:confirmedPref,
@@ -5771,6 +5966,93 @@ async function runExpiredPendingReservations(env){
   return {ok:true,expired:expired.length};
 }
 
+async function ensureOrientationAnnouncementLog(env){
+  await env.DB.prepare(`
+    CREATE TABLE IF NOT EXISTS orientation_announcement_log(
+      hour_bucket TEXT PRIMARY KEY,
+      sent_at TEXT NOT NULL
+    )
+  `).run();
+}
+
+async function sendOrientationPendingDiscordAnnouncement(env,rows){
+  const webhook=String(env.DISCORD_TRAINING_WEBHOOK_URL||"").trim();
+  if(!webhook)return {ok:false,skipped:true,reason:"webhook_not_configured"};
+
+  const roleId=String(env.DISCORD_TRAINING_ROLE_ID||"").trim();
+  const mention=roleId?`<@&${roleId}> `:"";
+  const names=rows.slice(0,10).map((x,i)=>`${i+1}. ${String(x.player_name||"研修生")}`);
+  if(rows.length>10)names.push(`ほか ${rows.length-10}名`);
+
+  const content=[
+    `${mention}📘 **オリエンテーション確認のお知らせ**`,
+    "",
+    `オリエンテーションが「未」の研修生が **${rows.length}名** います。`,
+    "",
+    ...names,
+    "",
+    "**オリエンテーションを実施した場合は、実施した講師が管理画面から担当教官を選択して「済」にしてください。**"
+  ].join("\n");
+
+  try{
+    const r=await fetch(webhook,{
+      method:"POST",
+      headers:{"content-type":"application/json"},
+      body:JSON.stringify({
+        content,
+        allowed_mentions:roleId?{roles:[roleId]}:{parse:[]}
+      })
+    });
+    return {ok:r.ok,status:r.status};
+  }catch(err){
+    return {ok:false,error:String(err?.message||err)};
+  }
+}
+
+async function runOrientationPendingAnnouncement(env){
+  await ensureTraineeProfiles(env);
+  await ensureTrainingPrograms(env);
+  await ensureOrientationAnnouncementLog(env);
+
+  const orientation=await getOrientationTraining(env);
+  if(!orientation?.training_id)return {ok:true,total:0,sent:0,skipped:true};
+
+  const hourStart=new Date();
+  hourStart.setUTCMinutes(0,0,0);
+  const hourBucket=hourStart.toISOString();
+
+  const already=await env.DB.prepare(
+    "SELECT hour_bucket FROM orientation_announcement_log WHERE hour_bucket=?"
+  ).bind(hourBucket).first();
+  if(already)return {ok:true,total:0,sent:0,duplicate_hour:true};
+
+  const q=await env.DB.prepare(`
+    SELECT p.id,p.player_name,p.discord_id,p.login_name
+    FROM trainee_profiles p
+    WHERE NOT EXISTS (
+      SELECT 1
+      FROM reservations r
+      WHERE r.training_id=?
+        AND r.status='completed'
+        AND lower(trim(COALESCE(r.discord_id,'')))=
+            lower(trim(COALESCE(p.discord_id,p.login_name,p.player_name,'')))
+    )
+    ORDER BY p.player_name COLLATE NOCASE
+  `).bind(Number(orientation.training_id)).all();
+
+  const rows=Array.isArray(q?.results)?q.results:[];
+  if(!rows.length)return {ok:true,total:0,sent:0};
+
+  const result=await sendOrientationPendingDiscordAnnouncement(env,rows);
+  if(!result.ok)return {ok:false,total:rows.length,sent:0,status:result.status||0};
+
+  await env.DB.prepare(
+    "INSERT OR REPLACE INTO orientation_announcement_log(hour_bucket,sent_at) VALUES(?,?)"
+  ).bind(hourBucket,new Date().toISOString()).run();
+
+  return {ok:true,total:rows.length,sent:rows.length};
+}
+
 async function runPendingApprovalAnnouncement(env){
   await ensureReservationInstructor(env);
   await ensureReservationPreferredSchedule(env);
@@ -5868,6 +6150,7 @@ async function scheduled(event,env,ctx){
     await runSameDayReminder(env);
     await runExpiredPendingReservations(env);
     await runPendingApprovalAnnouncement(env);
+    await runOrientationPendingAnnouncement(env);
   })();
   if(ctx && typeof ctx.waitUntil==="function")ctx.waitUntil(task);
   else await task;
