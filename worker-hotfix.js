@@ -1,7 +1,7 @@
 import core from "./worker.js";
 
 /*
-  Version 2.09 D1 usage saver wrapper
+  Version 2.10 D1 maintenance mode wrapper
 
   v2.05 の復旧取得が失敗する環境向けに、復旧経路をさらに単純化。
   - PRAGMA を使わない
@@ -19,7 +19,7 @@ const json = (data, status = 200) => new Response(JSON.stringify(data), {
   }
 });
 
-const HOTFIX_VERSION = "2.09";
+const HOTFIX_VERSION = "2.10";
 
 async function syncDisplayedVersion(response){
   try{
@@ -158,10 +158,125 @@ async function safeReservationList(request, env, ctx){
       _d1_saver: true
     })));
   }catch(err){
+    if(isD1QuotaError(err)){
+      return json({
+        error:"D1利用上限に達したためメンテナンス中です",
+        code:"maintenance_d1_quota",
+        version:HOTFIX_VERSION
+      },503);
+    }
     return fail("D1_SAVER_READ", err?.message || err);
   }
 }
 
+
+
+function isD1QuotaError(err){
+  const s = String(err?.message || err || "").toLowerCase();
+  return (
+    s.includes("exceeded d1's free tier daily row read limit") ||
+    s.includes("daily row read limit") ||
+    s.includes("upgrade to a paid plan or wait until tomorrow") ||
+    (s.includes("d1_error") && s.includes("row read"))
+  );
+}
+
+async function isD1ReadQuotaExhausted(env){
+  if(!env?.DB) return false;
+  try{
+    // 1行だけ読む軽量確認。通常時のD1消費を最小限にする。
+    await env.DB.prepare("SELECT id FROM reservations ORDER BY id DESC LIMIT 1").first();
+    return false;
+  }catch(err){
+    if(isD1QuotaError(err)) return true;
+    // D1上限以外の障害は通常エラー処理に任せる。
+    return false;
+  }
+}
+
+function maintenanceHtml(){
+  const nextJst = (() => {
+    const now = new Date();
+    const jst = new Date(now.getTime() + 9*60*60*1000);
+    const target = new Date(Date.UTC(
+      jst.getUTCFullYear(),
+      jst.getUTCMonth(),
+      jst.getUTCDate(),
+      9, 0, 0
+    ));
+    if(target.getTime() <= now.getTime()){
+      target.setUTCDate(target.getUTCDate() + 1);
+    }
+    return target;
+  })();
+
+  return `<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0b2d52">
+<title>メンテナンス中｜LOMITA POLICE TRAINING</title>
+<style>
+  *{box-sizing:border-box}
+  html,body{margin:0;min-height:100%;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Hiragino Sans","Noto Sans JP",sans-serif;background:#eef3f8;color:#102b47}
+  body{display:flex;align-items:center;justify-content:center;padding:24px}
+  .wrap{width:min(100%,560px)}
+  .brand{background:linear-gradient(135deg,#092744,#123f6d);color:#fff;border-radius:22px;padding:22px 20px;box-shadow:0 16px 40px rgba(7,35,64,.16);position:relative;overflow:hidden}
+  .brand:after{content:"POLICE";position:absolute;right:-8px;top:8px;font-size:72px;font-weight:1000;color:rgba(255,255,255,.035)}
+  .badge{display:inline-block;background:linear-gradient(#f9e390,#d6ad43);color:#18304a;border-radius:999px;padding:6px 12px;font-size:12px;font-weight:1000;letter-spacing:.06em}
+  h1{margin:14px 0 6px;font-size:28px;line-height:1.15}
+  .sub{margin:0;color:#d8e5f2;font-size:14px}
+  .card{margin-top:14px;background:#fff;border:1px solid #d5e0eb;border-radius:18px;padding:20px;box-shadow:0 8px 24px rgba(22,50,80,.06)}
+  .status{display:flex;align-items:center;gap:10px;font-weight:1000;font-size:18px}
+  .dot{width:11px;height:11px;border-radius:50%;background:#d8ac3c;box-shadow:0 0 0 5px rgba(216,172,60,.14)}
+  .msg{margin-top:12px;font-size:14px;line-height:1.7;color:#52677d}
+  .small{margin-top:14px;padding-top:12px;border-top:1px solid #e7edf3;font-size:12px;line-height:1.6;color:#738397}
+  .btn{margin-top:14px;width:100%;border:0;border-radius:12px;background:#0b2d52;color:#fff;font-weight:900;font-size:15px;padding:13px 16px}
+  .ver{text-align:center;margin-top:10px;font-size:11px;color:#8997a7}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="brand">
+    <span class="badge">LOMITA POLICE</span>
+    <h1>現在メンテナンス中です</h1>
+    <p class="sub">研修管理システム</p>
+  </div>
+
+  <div class="card">
+    <div class="status"><span class="dot"></span>システム利用を一時停止しています</div>
+    <div class="msg">
+      データベースの1日利用上限に達したため、現在は安全のため画面をメンテナンスモードに切り替えています。<br>
+      データが削除されたわけではありません。
+    </div>
+    <div class="small">
+      利用上限がリセットされると通常画面へ戻ります。<br>
+      この画面は約5分ごとに自動で再確認します。
+    </div>
+    <button class="btn" type="button" onclick="location.reload()">再確認する</button>
+  </div>
+
+  <div class="ver">Version ${HOTFIX_VERSION}</div>
+</div>
+
+<script>
+  setTimeout(()=>location.reload(), 5*60*1000);
+</script>
+</body>
+</html>`;
+}
+
+function maintenanceResponse(){
+  return new Response(maintenanceHtml(), {
+    status:503,
+    headers:{
+      "content-type":"text/html; charset=utf-8",
+      "cache-control":"no-store, no-cache, must-revalidate",
+      "retry-after":"300"
+    }
+  });
+}
 
 const CACHEABLE_ADMIN_GETS = new Set([
   "/api/admin/stats",
@@ -196,6 +311,20 @@ async function fetchWithShortCache(request, env, ctx){
 }
 
 async function fetch(request, env, ctx){
+  const requestUrl = new URL(request.url);
+  const accept = String(request.headers.get("accept") || "").toLowerCase();
+  const isDocumentRequest =
+    request.method === "GET" &&
+    !requestUrl.pathname.startsWith("/api/") &&
+    (accept.includes("text/html") || requestUrl.pathname === "/" || !requestUrl.pathname.includes("."));
+
+  if(isDocumentRequest){
+    const exhausted = await isD1ReadQuotaExhausted(env);
+    if(exhausted){
+      return maintenanceResponse();
+    }
+  }
+
   const url = new URL(request.url);
 
   if(url.pathname !== "/api/admin/reservation-control" || request.method !== "GET"){
