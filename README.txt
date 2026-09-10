@@ -1,20 +1,25 @@
-LOMITA POLICE Training Reservation - Version 2.05 Recovery
+LOMITA POLICE Training Reservation - Version 2.06 Recovery
 
-予約一覧の取得失敗を復旧するための安全ラッパーです。
+v2.05でも「予約一覧の復旧取得にも失敗しました」となる問題への再修正版です。
 
-構成:
+v2.06の変更:
+- 復旧処理から PRAGMA を完全に削除
+- 管理者確認を /api/admin/check のみに変更
+- reservations を r.* で直接読み取り
+- trainings は LEFT JOIN
+- 予約一覧取得時の復旧経路では
+  DELETE / UPDATE / ALTER TABLE / 期限超過処理を一切実行しない
+- 新しいカラムが無い場合は画面用の既定値を補完
+
+安全性:
+- 予約データを削除しません
+- 受講履歴を初期化しません
+- 研修生進捗を変更しません
+- 通常ルートは既存 worker.js にそのまま委譲します
+
+配置:
 - worker-hotfix.js
 - wrangler.jsonc
 - README.txt
 
-動作:
-1. 通常は既存 worker.js (Version 2.04) をそのまま使用します。
-2. /api/admin/reservation-control は既存処理を最初に実行します。
-3. 既存処理が 5xx で失敗した場合だけ、安全な読み取り専用フォールバックで予約一覧を取得します。
-4. フォールバックでは予約データの削除・初期化・期限超過更新を行いません。
-5. 管理者認証は既存 worker.js 側で確認してから一覧を返します。
-
-重要:
-- worker.js 自体は上書きしません。
-- wrangler.jsonc の main を worker-hotfix.js に変更します。
-- 問題解消後も通常ルートはすべて既存 worker.js に委譲されます。
+既存の worker.js は残したまま使います。
