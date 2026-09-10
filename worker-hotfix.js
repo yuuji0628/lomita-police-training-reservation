@@ -1,7 +1,7 @@
 import core from "./worker.js";
 
 /*
-  Version 2.07 reservation-control recovery wrapper
+  Version 2.08 reservation-control diagnostic wrapper
 
   v2.05 の復旧取得が失敗する環境向けに、復旧経路をさらに単純化。
   - PRAGMA を使わない
@@ -19,7 +19,7 @@ const json = (data, status = 200) => new Response(JSON.stringify(data), {
   }
 });
 
-const HOTFIX_VERSION = "2.07";
+const HOTFIX_VERSION = "2.08";
 
 async function syncDisplayedVersion(response){
   try{
@@ -60,70 +60,130 @@ async function verifyAdmin(request, env, ctx){
 }
 
 async function safeReservationList(request, env, ctx){
+  const fail = (stage, detail, status = 500) => json({
+    error: `【診断:${stage}】 ${String(detail || "不明なエラー").slice(0, 700)}`,
+    stage,
+    detail: String(detail || "").slice(0, 700),
+    version: HOTFIX_VERSION
+  }, status);
+
+  // 1) DB binding
   if(!env?.DB){
-    return json({
-      error: "予約一覧の復旧取得にも失敗しました",
-      detail: "DB binding が見つかりません"
-    }, 500);
+    return fail("DB_BINDING", "DB binding が見つかりません");
   }
 
-  const authed = await verifyAdmin(request, env, ctx);
-  if(!authed){
-    return json({error:"unauthorized"}, 401);
+  // 2) Admin auth
+  try{
+    const authed = await verifyAdmin(request, env, ctx);
+    if(!authed){
+      return fail("ADMIN_AUTH", "管理者認証に失敗しました", 401);
+    }
+  }catch(err){
+    return fail("ADMIN_AUTH_CHECK", err?.message || err);
   }
 
-  /*
-    r.* を使うことで、追加カラムの有無に依存しない。
-    trainings 側は以前から存在する基本項目だけを取得。
-    LEFT JOIN のため、研修マスタ側に不整合があっても予約自体は返す。
-  */
-  const result = await env.DB.prepare(`
-    SELECT
-      r.*,
-      COALESCE(t.title,'研修') AS title,
-      COALESCE(t.training_date,'') AS training_date,
-      COALESCE(t.start_time,'') AS start_time,
-      COALESCE(t.instructor,'') AS instructor
-    FROM reservations r
-    LEFT JOIN trainings t ON t.id = r.training_id
-    WHERE COALESCE(r.status,'') IN (
-      'pending','reserved','completed','retake','absent','expired'
-    )
-    ORDER BY
-      CASE COALESCE(r.status,'')
-        WHEN 'pending' THEN 0
-        WHEN 'reserved' THEN 1
-        WHEN 'retake' THEN 2
-        WHEN 'completed' THEN 3
-        WHEN 'absent' THEN 4
-        ELSE 5
-      END,
-      r.id DESC
-  `).all();
+  // 3) reservations 単体テスト
+  let basicRows = [];
+  try{
+    const basic = await env.DB.prepare(`
+      SELECT *
+      FROM reservations
+      ORDER BY id DESC
+      LIMIT 300
+    `).all();
+    basicRows = Array.isArray(basic?.results) ? basic.results : [];
+  }catch(err){
+    return fail("RESERVATIONS_READ", err?.message || err);
+  }
 
-  const rows = Array.isArray(result?.results) ? result.results : [];
+  // 4) trainings JOIN テスト
+  try{
+    const joined = await env.DB.prepare(`
+      SELECT
+        r.*,
+        COALESCE(t.title,'研修') AS title,
+        COALESCE(t.training_date,'') AS training_date,
+        COALESCE(t.start_time,'') AS start_time,
+        COALESCE(t.instructor,'') AS instructor
+      FROM reservations r
+      LEFT JOIN trainings t ON t.id = r.training_id
+      WHERE COALESCE(r.status,'') IN (
+        'pending','reserved','completed','retake','absent','expired'
+      )
+      ORDER BY
+        CASE COALESCE(r.status,'')
+          WHEN 'pending' THEN 0
+          WHEN 'reserved' THEN 1
+          WHEN 'retake' THEN 2
+          WHEN 'completed' THEN 3
+          WHEN 'absent' THEN 4
+          ELSE 5
+        END,
+        r.id DESC
+      LIMIT 300
+    `).all();
 
-  /*
-    UI が期待する新しめの項目がDBに無い場合でも
-    undefined のままにせず安全な既定値を補う。
-  */
-  const normalized = rows.map(x => ({
-    ...x,
-    assigned_instructor: String(x.assigned_instructor || ""),
-    preferred_date: String(x.preferred_date || ""),
-    preferred_time: String(x.preferred_time || ""),
-    preferred_date2: String(x.preferred_date2 || ""),
-    preferred_time2: String(x.preferred_time2 || ""),
-    preferred_date3: String(x.preferred_date3 || ""),
-    preferred_time3: String(x.preferred_time3 || ""),
-    confirmed_date: String(x.confirmed_date || ""),
-    confirmed_time: String(x.confirmed_time || ""),
-    confirmed_preference: Number(x.confirmed_preference || 0),
-    exam_result: String(x.exam_result || ""),
-    exam_score: x.exam_score ?? null
-  }));
+    const rows = Array.isArray(joined?.results) ? joined.results : [];
 
-  return json(normalized);
+    return json(rows.map(x => ({
+      ...x,
+      assigned_instructor: String(x.assigned_instructor || ""),
+      preferred_date: String(x.preferred_date || ""),
+      preferred_time: String(x.preferred_time || ""),
+      preferred_date2: String(x.preferred_date2 || ""),
+      preferred_time2: String(x.preferred_time2 || ""),
+      preferred_date3: String(x.preferred_date3 || ""),
+      preferred_time3: String(x.preferred_time3 || ""),
+      confirmed_date: String(x.confirmed_date || ""),
+      confirmed_time: String(x.confirmed_time || ""),
+      confirmed_preference: Number(x.confirmed_preference || 0),
+      exam_result: String(x.exam_result || ""),
+      exam_score: x.exam_score ?? null,
+      _diagnostic_source: "joined"
+    })));
+  }catch(joinErr){
+    // 5) JOIN だけ失敗した場合は reservations 単体で返す
+    try{
+      const rows = basicRows
+        .filter(x => ['pending','reserved','completed','retake','absent','expired']
+          .includes(String(x.status || '')))
+        .map(x => ({
+          ...x,
+          title: String(x.title || "研修"),
+          training_date: String(x.training_date || ""),
+          start_time: String(x.start_time || ""),
+          instructor: String(x.instructor || ""),
+          assigned_instructor: String(x.assigned_instructor || ""),
+          preferred_date: String(x.preferred_date || ""),
+          preferred_time: String(x.preferred_time || ""),
+          preferred_date2: String(x.preferred_date2 || ""),
+          preferred_time2: String(x.preferred_time2 || ""),
+          preferred_date3: String(x.preferred_date3 || ""),
+          preferred_time3: String(x.preferred_time3 || ""),
+          confirmed_date: String(x.confirmed_date || ""),
+          confirmed_time: String(x.confirmed_time || ""),
+          confirmed_preference: Number(x.confirmed_preference || 0),
+          exam_result: String(x.exam_result || ""),
+          exam_score: x.exam_score ?? null,
+          _diagnostic_source: "reservations_only",
+          _diagnostic_warning: `JOIN失敗: ${String(joinErr?.message || joinErr).slice(0,300)}`
+        }));
+
+      if(rows.length){
+        return json(rows);
+      }
+
+      return fail(
+        "TRAININGS_JOIN",
+        `reservations は読めました（${basicRows.length}件）が、JOINに失敗しました: ${joinErr?.message || joinErr}`
+      );
+    }catch(fallbackErr){
+      return fail(
+        "FALLBACK_NORMALIZE",
+        `${joinErr?.message || joinErr} / fallback: ${fallbackErr?.message || fallbackErr}`
+      );
+    }
+  }
 }
 
 async function fetch(request, env, ctx){
@@ -146,7 +206,7 @@ async function fetch(request, env, ctx){
     }
 
     console.error(
-      "reservation-control primary failed; switching to v2.07 safe fallback",
+      "reservation-control primary failed; switching to v2.08 diagnostic fallback",
       original.status
     );
   }catch(err){
@@ -160,10 +220,13 @@ async function fetch(request, env, ctx){
   try{
     return await safeReservationList(request, env, ctx);
   }catch(err){
-    console.error("reservation-control v2.07 fallback failed", err);
+    console.error("reservation-control v2.08 diagnostic fallback failed", err);
+    const detail = String(err?.message || err || "UNKNOWN_ERROR").slice(0, 800);
     return json({
-      error: "予約一覧の復旧取得にも失敗しました",
-      detail: String(err?.message || err || "UNKNOWN_ERROR").slice(0, 800)
+      error: "【診断:UNHANDLED】 " + detail,
+      stage: "UNHANDLED",
+      detail,
+      version: HOTFIX_VERSION
     }, 500);
   }
 }
