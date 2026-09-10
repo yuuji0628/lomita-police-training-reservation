@@ -1,4 +1,4 @@
-const APP_VERSION="1.97";
+const APP_VERSION="1.98";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -561,6 +561,293 @@ async function ensureInstructors(env) {
 }
 
 
+async function ensureTrainingCycleResetTables(env){
+  await env.DB.prepare(`
+    CREATE TABLE IF NOT EXISTS training_cycle_resets(
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      profile_id INTEGER NOT NULL DEFAULT 0,
+      discord_id TEXT NOT NULL DEFAULT '',
+      player_name TEXT NOT NULL DEFAULT '',
+      cycle_started_at TEXT NOT NULL DEFAULT '',
+      deadline_date TEXT NOT NULL DEFAULT '',
+      reset_at TEXT NOT NULL DEFAULT '',
+      reservation_count INTEGER NOT NULL DEFAULT 0,
+      reason TEXT NOT NULL DEFAULT '',
+      UNIQUE(discord_id,cycle_started_at)
+    )
+  `).run();
+
+  await env.DB.prepare(`
+    CREATE TABLE IF NOT EXISTS training_cycle_reset_items(
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      reset_id INTEGER NOT NULL DEFAULT 0,
+      reservation_id INTEGER NOT NULL DEFAULT 0,
+      training_id INTEGER NOT NULL DEFAULT 0,
+      training_title TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT '',
+      assigned_instructor TEXT NOT NULL DEFAULT '',
+      preferred_date TEXT NOT NULL DEFAULT '',
+      preferred_time TEXT NOT NULL DEFAULT '',
+      confirmed_date TEXT NOT NULL DEFAULT '',
+      confirmed_time TEXT NOT NULL DEFAULT '',
+      completed_at TEXT NOT NULL DEFAULT '',
+      note TEXT NOT NULL DEFAULT '',
+      archived_at TEXT NOT NULL DEFAULT ''
+    )
+  `).run();
+}
+
+function jstTodayYmd(){
+  const j=new Date(Date.now()+9*60*60*1000);
+  return [
+    j.getUTCFullYear(),
+    String(j.getUTCMonth()+1).padStart(2,"0"),
+    String(j.getUTCDate()).padStart(2,"0")
+  ].join("-");
+}
+
+function addCalendarDaysYmd(ymd,days){
+  const m=String(ymd||"").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if(!m)return "";
+  const d=new Date(Date.UTC(Number(m[1]),Number(m[2])-1,Number(m[3])));
+  d.setUTCDate(d.getUTCDate()+Number(days||0));
+  return [
+    d.getUTCFullYear(),
+    String(d.getUTCMonth()+1).padStart(2,"0"),
+    String(d.getUTCDate()).padStart(2,"0")
+  ].join("-");
+}
+
+function calendarDaysBetweenYmd(fromYmd,toYmd){
+  const a=String(fromYmd||"").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  const b=String(toYmd||"").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if(!a||!b)return null;
+  const ams=Date.UTC(Number(a[1]),Number(a[2])-1,Number(a[3]));
+  const bms=Date.UTC(Number(b[1]),Number(b[2])-1,Number(b[3]));
+  return Math.round((bms-ams)/86400000);
+}
+
+async function getTraineeCycleInfo(env,profile){
+  await ensureTrainingPrograms(env);
+  await ensureTrainingCycleResetTables(env);
+
+  const key=String(profile?.discord_id||profile?.login_name||profile?.player_name||"").trim();
+  if(!key){
+    return {started:false,all_completed:false,start_date:"",deadline_date:"",days_remaining:null};
+  }
+
+  const totalRow=await env.DB.prepare(
+    "SELECT COUNT(*) c FROM training_programs WHERE COALESCE(active,1)=1 AND training_id IS NOT NULL"
+  ).first();
+  const total=Number(totalRow?.c||0);
+
+  const completedRow=await env.DB.prepare(`
+    SELECT COUNT(DISTINCT r.training_id) c
+    FROM reservations r
+    JOIN training_programs p ON p.training_id=r.training_id
+    WHERE COALESCE(p.active,1)=1
+      AND r.status='completed'
+      AND lower(trim(COALESCE(r.discord_id,'')))=lower(trim(?))
+  `).bind(key).first();
+
+  const completed=Number(completedRow?.c||0);
+  const allCompleted=total>0 && completed>=total;
+  if(allCompleted){
+    return {
+      started:true,
+      all_completed:true,
+      total,
+      completed,
+      start_date:"",
+      deadline_date:"",
+      days_remaining:null
+    };
+  }
+
+  const orientation=await getOrientationTraining(env);
+  let startRow=null;
+
+  if(orientation?.training_id){
+    startRow=await env.DB.prepare(`
+      SELECT substr(COALESCE(NULLIF(completed_at,''),confirmed_date),1,10) d
+      FROM reservations
+      WHERE training_id=?
+        AND status='completed'
+        AND lower(trim(COALESCE(discord_id,'')))=lower(trim(?))
+        AND trim(COALESCE(NULLIF(completed_at,''),confirmed_date,''))<>''
+      ORDER BY id ASC
+      LIMIT 1
+    `).bind(Number(orientation.training_id),key).first();
+  }
+
+  // 途中参加などでオリエンテーション記録がない場合は、最初の修了日を開始日にする。
+  if(!String(startRow?.d||"").match(/^\d{4}-\d{2}-\d{2}$/)){
+    startRow=await env.DB.prepare(`
+      SELECT substr(COALESCE(NULLIF(completed_at,''),confirmed_date),1,10) d
+      FROM reservations
+      WHERE status='completed'
+        AND lower(trim(COALESCE(discord_id,'')))=lower(trim(?))
+        AND trim(COALESCE(NULLIF(completed_at,''),confirmed_date,''))<>''
+      ORDER BY COALESCE(NULLIF(completed_at,''),confirmed_date) ASC,id ASC
+      LIMIT 1
+    `).bind(key).first();
+  }
+
+  const startDate=String(startRow?.d||"");
+  if(!startDate.match(/^\d{4}-\d{2}-\d{2}$/)){
+    return {
+      started:false,
+      all_completed:false,
+      total,
+      completed,
+      start_date:"",
+      deadline_date:"",
+      days_remaining:null
+    };
+  }
+
+  const deadlineDate=addCalendarDaysYmd(startDate,30);
+  const today=jstTodayYmd();
+  const daysRemaining=calendarDaysBetweenYmd(today,deadlineDate);
+
+  return {
+    started:true,
+    all_completed:false,
+    total,
+    completed,
+    start_date:startDate,
+    deadline_date:deadlineDate,
+    days_remaining:daysRemaining,
+    expired:today>deadlineDate
+  };
+}
+
+async function resetOneExpiredTrainingCycle(env,profile){
+  const info=await getTraineeCycleInfo(env,profile);
+  if(!info.started || info.all_completed || !info.expired)return {reset:false,info};
+
+  const key=String(profile.discord_id||profile.login_name||profile.player_name||"").trim();
+  const now=new Date().toISOString();
+
+  const existing=await env.DB.prepare(`
+    SELECT id
+    FROM training_cycle_resets
+    WHERE lower(trim(discord_id))=lower(trim(?))
+      AND cycle_started_at=?
+    LIMIT 1
+  `).bind(key,info.start_date).first();
+
+  if(existing){
+    return {reset:false,already_reset:true,info};
+  }
+
+  const reservations=await env.DB.prepare(`
+    SELECT r.id,r.training_id,COALESCE(t.title,'研修') training_title,
+           r.status,COALESCE(r.assigned_instructor,'') assigned_instructor,
+           COALESCE(r.preferred_date,'') preferred_date,
+           COALESCE(r.preferred_time,'') preferred_time,
+           COALESCE(r.confirmed_date,'') confirmed_date,
+           COALESCE(r.confirmed_time,'') confirmed_time,
+           COALESCE(r.completed_at,'') completed_at,
+           COALESCE(r.note,'') note
+    FROM reservations r
+    LEFT JOIN trainings t ON t.id=r.training_id
+    WHERE lower(trim(COALESCE(r.discord_id,'')))=lower(trim(?))
+    ORDER BY r.id
+  `).bind(key).all();
+
+  const rows=Array.isArray(reservations?.results)?reservations.results:[];
+
+  const inserted=await env.DB.prepare(`
+    INSERT INTO training_cycle_resets(
+      profile_id,discord_id,player_name,cycle_started_at,deadline_date,
+      reset_at,reservation_count,reason
+    ) VALUES(?,?,?,?,?,?,?,?)
+  `).bind(
+    Number(profile.id||0),
+    key,
+    String(profile.player_name||""),
+    info.start_date,
+    info.deadline_date,
+    now,
+    rows.length,
+    "研修開始から30日以内に全研修を修了できなかったため自動リセット"
+  ).run();
+
+  const resetId=Number(inserted?.meta?.last_row_id||0);
+
+  for(const r of rows){
+    await env.DB.prepare(`
+      INSERT INTO training_cycle_reset_items(
+        reset_id,reservation_id,training_id,training_title,status,assigned_instructor,
+        preferred_date,preferred_time,confirmed_date,confirmed_time,completed_at,note,archived_at
+      ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
+    `).bind(
+      resetId,
+      Number(r.id||0),
+      Number(r.training_id||0),
+      String(r.training_title||"研修"),
+      String(r.status||""),
+      String(r.assigned_instructor||""),
+      String(r.preferred_date||""),
+      String(r.preferred_time||""),
+      String(r.confirmed_date||""),
+      String(r.confirmed_time||""),
+      String(r.completed_at||""),
+      String(r.note||""),
+      now
+    ).run();
+  }
+
+  // 現在の受講サイクルだけを初期化。アンケート結果は履歴として保持する。
+  await env.DB.prepare(`
+    DELETE FROM reservations
+    WHERE lower(trim(COALESCE(discord_id,'')))=lower(trim(?))
+  `).bind(key).run();
+
+  await env.DB.prepare(`
+    UPDATE trainee_profiles
+    SET all_completed_at='',updated_at=CURRENT_TIMESTAMP
+    WHERE id=?
+  `).bind(Number(profile.id||0)).run();
+
+  return {reset:true,info,archived:rows.length};
+}
+
+async function resetExpiredTrainingCycles(env,onlyProfileId=0){
+  await ensureTraineeProfiles(env);
+  await ensureTrainingCycleResetTables(env);
+
+  let rows=[];
+  if(Number(onlyProfileId)>0){
+    const p=await env.DB.prepare(`
+      SELECT id,player_name,login_name,discord_id
+      FROM trainee_profiles
+      WHERE id=?
+      LIMIT 1
+    `).bind(Number(onlyProfileId)).first();
+    if(p)rows=[p];
+  }else{
+    const q=await env.DB.prepare(`
+      SELECT id,player_name,login_name,discord_id
+      FROM trainee_profiles
+      ORDER BY id
+    `).all();
+    rows=Array.isArray(q?.results)?q.results:[];
+  }
+
+  let resetCount=0;
+  for(const p of rows){
+    try{
+      const result=await resetOneExpiredTrainingCycle(env,p);
+      if(result?.reset)resetCount++;
+    }catch(err){
+      console.error("training cycle reset failed",Number(p?.id||0),err);
+    }
+  }
+  return {checked:rows.length,reset:resetCount};
+}
+
 async function refreshTraineeFullCompletion(env,profileId){
   await ensureTraineeProfiles(env);
   await ensureTrainingPrograms(env);
@@ -889,6 +1176,30 @@ const html = (title, body, script = "") => new Response(`<!doctype html>
   text-align:right;
 }
 
+
+.trainingLimitNotice{
+  margin:7px 0 8px;
+  padding:8px 10px;
+  border:1px solid #e2bd61;
+  border-radius:10px;
+  background:#fffaf0;
+  color:#584316;
+  font-size:10px;
+  line-height:1.4;
+}
+.trainingLimitTitle{
+  font-weight:1000;
+  color:#8a6411;
+  margin-bottom:2px;
+}
+.trainingLimitNotice.urgent{
+  border-color:#d47f77;
+  background:#fff6f5;
+  color:#842d27;
+}
+.trainingLimitNotice.urgent .trainingLimitTitle{
+  color:#a7372d;
+}
 /* v1.90 smart compact UI */
 :root{
   --compact-gap:8px;
@@ -2417,6 +2728,10 @@ const PUBLIC_BODY = `
       <button id="traineeLogoutBtn" class="btn small" type="button">ログアウト</button>
     </div>
     <div id="mySummary"></div>
+    <div id="trainingLimitNotice" class="trainingLimitNotice">
+      <div class="trainingLimitTitle">⚠️ 研修修了期限</div>
+      <div id="trainingLimitText">オリエンテーション実施後、30日以内に全研修を修了してください。</div>
+    </div>
     <div class="historyLauncher" style="display:flex;gap:8px;flex-wrap:wrap">
   <button id="openHistoryBtn" class="btn small" type="button">申請・受講履歴を見る</button>
   <button id="openSurveyBtn" class="btn small primary" type="button" onclick="openSurveyModal()">
@@ -2755,6 +3070,37 @@ function ledgerStamp(name){
 }
 
 
+
+function renderTrainingLimitNotice(cycle){
+ const box=document.getElementById('trainingLimitNotice');
+ const text=document.getElementById('trainingLimitText');
+ if(!box||!text)return;
+
+ const c=cycle||{};
+ box.classList.remove('urgent');
+
+ if(!c.started){
+   text.innerHTML=
+     'オリエンテーション実施日から <b>30日以内</b> に全研修を修了してください。'+
+     '期限を過ぎると、それまでの研修進捗は自動的にリセットされます。';
+   return;
+ }
+
+ const start=String(c.start_date||'').replaceAll('-','/');
+ const deadline=String(c.deadline_date||'').replaceAll('-','/');
+ const left=Number(c.days_remaining);
+
+ if(Number.isFinite(left) && left<=7)box.classList.add('urgent');
+
+ text.innerHTML=
+   '研修開始：<b>'+esc(start)+'</b>　期限：<b>'+esc(deadline)+'</b><br>'+
+   (Number.isFinite(left)
+     ?'残り <b>'+Math.max(0,left)+'日</b>。'
+     :'')+
+   '30日以内に全研修を修了してください。期限超過で進捗がリセットされます。';
+}
+
+
 async function loadProgress(){
  const el=document.getElementById('trainingProgressList');
  if(!el)return;
@@ -2766,6 +3112,7 @@ async function loadProgress(){
      el.innerHTML='<div class="notice error">'+esc(d.error||'進捗を取得できませんでした')+'</div>';
      return;
    }
+   renderTrainingLimitNotice(d.cycle||{});
    const rows=Array.isArray(d.programs)?d.programs:[];
    if(!rows.length){
      el.innerHTML='<div class="empty">研修プログラムが登録されていません。</div>';
@@ -5141,8 +5488,12 @@ async function handle(request, env) {
    await ensureTrainingPrograms(env);
    await ensureReservationInstructor(env);
    await ensureReservationNotifications(env);
-   const profile=await getTraineeSession(request,env);
+   let profile=await getTraineeSession(request,env);
    if(!profile)return json({error:"ログインが必要です"},401);
+
+   await resetExpiredTrainingCycles(env,Number(profile.id||0));
+   profile=await getTraineeSession(request,env);
+
    const key=String(profile.discord_id||profile.login_name||profile.player_name||"").trim();
 
    const q=await env.DB.prepare(`
@@ -5201,7 +5552,19 @@ async function handle(request, env) {
      const refreshed=await refreshTraineeFullCompletion(env,Number(profile.id));
      allCompletedAt=String(refreshed.date||"");
    }
-   return json({programs,all_completed:allCompleted,all_completed_at:allCompletedAt});
+   const cycle=await getTraineeCycleInfo(env,profile);
+   return json({
+     programs,
+     all_completed:allCompleted,
+     all_completed_at:allCompletedAt,
+     cycle:{
+       started:!!cycle.started,
+       start_date:String(cycle.start_date||""),
+       deadline_date:String(cycle.deadline_date||""),
+       days_remaining:cycle.days_remaining===null?null:Number(cycle.days_remaining),
+       limit_days:30
+     }
+   });
  }
 
  if(path==="/api/trainee/profile" && method==="PUT"){
@@ -5241,8 +5604,12 @@ async function handle(request, env) {
  if(path==="/api/trainee/profile" && method==="GET"){
    await ensureReservationInstructor(env);
    await ensureReservationPreferredSchedule(env);
-   const profile=await getTraineeSession(request,env);
+   let profile=await getTraineeSession(request,env);
    if(!profile)return json({error:"ログインが必要です"},401);
+
+   await resetExpiredTrainingCycles(env,Number(profile.id||0));
+   profile=await getTraineeSession(request,env);
+
    const key=String(profile.discord_id||profile.login_name||profile.player_name||"").trim();
    const q=await env.DB.prepare("SELECT r.id,r.training_id,r.player_name,r.discord_id,r.affiliation,r.note,r.status,r.assigned_instructor,r.preferred_date,r.preferred_time,r.preferred_date2,r.preferred_time2,r.preferred_date3,r.preferred_time3,r.confirmed_date,r.confirmed_time,r.confirmed_preference,r.created_at,t.title FROM reservations r JOIN trainings t ON t.id=r.training_id WHERE lower(trim(COALESCE(r.discord_id,'')))=lower(trim(?)) ORDER BY r.id DESC").bind(key).all();
    const results=Array.isArray(q?.results)?q.results:[];
@@ -5912,6 +6279,11 @@ async function handle(request, env) {
    await ensureTrainingPolicy(env);
    await env.DB.prepare("UPDATE training_policy SET body=?,updated_at=CURRENT_TIMESTAMP WHERE id=1").bind(body).run();
    return json({ok:true});
+ }
+
+ if(path==="/api/admin/training-cycle-reset/run" && method==="POST"){
+   if(!(await isAdmin()))return json({error:"unauthorized"},401);
+   return json({ok:true,...await resetExpiredTrainingCycles(env)});
  }
 
  if(path==="/api/admin/expired-pending/run" && method==="POST"){
@@ -7052,6 +7424,7 @@ async function runTrainingReminder(env){
 
 async function scheduled(event,env,ctx){
   const task=(async()=>{
+    await resetExpiredTrainingCycles(env);
     await runTrainingReminder(env);
     await runSameDayReminder(env);
     await runExpiredPendingReservations(env);
