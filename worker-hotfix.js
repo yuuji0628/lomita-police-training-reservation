@@ -1,7 +1,7 @@
 import core from "./worker.js";
 
 /*
-  Version 2.12 maintenance ETA wrapper
+  Version 2.13 D1 status wrapper
 
   v2.05 の復旧取得が失敗する環境向けに、復旧経路をさらに単純化。
   - PRAGMA を使わない
@@ -19,7 +19,7 @@ const json = (data, status = 200) => new Response(JSON.stringify(data), {
   }
 });
 
-const HOTFIX_VERSION = "2.12";
+const HOTFIX_VERSION = "2.13";
 
 async function syncDisplayedVersion(response){
   try{
@@ -27,10 +27,63 @@ async function syncDisplayedVersion(response){
     if(!type.includes("text/html")) return response;
 
     const body = await response.text();
-    const replaced = body
+    let replaced = body
       .replace(/Version\s+2\.04/g, "Version " + HOTFIX_VERSION)
       .replace(/Version\s+2\.05/g, "Version " + HOTFIX_VERSION)
-      .replace(/Version\s+2\.06/g, "Version " + HOTFIX_VERSION);
+      .replace(/Version\s+2\.06/g, "Version " + HOTFIX_VERSION)
+      .replace(/Version\s+2\.07/g, "Version " + HOTFIX_VERSION)
+      .replace(/Version\s+2\.08/g, "Version " + HOTFIX_VERSION)
+      .replace(/Version\s+2\.09/g, "Version " + HOTFIX_VERSION)
+      .replace(/Version\s+2\.10/g, "Version " + HOTFIX_VERSION)
+      .replace(/Version\s+2\.11/g, "Version " + HOTFIX_VERSION)
+      .replace(/Version\s+2\.12/g, "Version " + HOTFIX_VERSION);
+
+    const d1Widget = `
+<style>
+#d1StatusMini{
+  position:fixed;right:10px;top:10px;z-index:9998;
+  display:none;align-items:center;gap:6px;
+  max-width:220px;padding:6px 9px;border-radius:999px;
+  background:rgba(255,255,255,.95);
+  border:1px solid #d7e1eb;
+  box-shadow:0 4px 14px rgba(20,45,70,.10);
+  font:700 10px/1.2 -apple-system,BlinkMacSystemFont,"Segoe UI","Hiragino Sans","Noto Sans JP",sans-serif;
+  color:#41566c;
+  backdrop-filter:blur(10px);
+}
+#d1StatusMini .dot{width:7px;height:7px;border-radius:50%;background:#2f9b5e}
+#d1StatusMini.warn{border-color:#e0b649;color:#7f5c00}
+#d1StatusMini.warn .dot{background:#d7a400}
+#d1StatusMini.err{border-color:#df8a81;color:#922e26}
+#d1StatusMini.err .dot{background:#c84034}
+</style>
+<div id="d1StatusMini"><span class="dot"></span><span id="d1StatusMiniText">D1確認中</span></div>
+<script>
+(async()=>{
+  const box=document.getElementById("d1StatusMini");
+  const text=document.getElementById("d1StatusMiniText");
+  if(!box||!text)return;
+  try{
+    const r=await fetch("/api/admin/d1-status",{credentials:"same-origin",cache:"no-store"});
+    if(r.status===401)return;
+    const d=await r.json().catch(()=>({}));
+    box.style.display="flex";
+    box.classList.remove("warn","err");
+    if(d.status==="maintenance")box.classList.add("warn");
+    if(d.status==="error")box.classList.add("err");
+    text.textContent=
+      d.status==="normal"
+        ? "D1 正常 ｜ 次回 "+(d.reset_at_jst||"09:00")
+        : d.status==="maintenance"
+        ? "メンテナンス中 ｜ "+(d.remaining_label||"")
+        : "D1 確認エラー";
+  }catch(_){}
+})();
+</script>`;
+
+    if(replaced.includes("</body>")){
+      replaced = replaced.replace("</body>", d1Widget + "</body>");
+    }
 
     const headers = new Headers(response.headers);
     headers.delete("content-length");
@@ -291,6 +344,82 @@ function maintenanceResponse(){
   });
 }
 
+
+function getNextD1ResetInfo(){
+  const now = new Date();
+
+  // D1 daily limits reset at 00:00 UTC = 09:00 JST.
+  let resetUtc = new Date(Date.UTC(
+    now.getUTCFullYear(),
+    now.getUTCMonth(),
+    now.getUTCDate(),
+    0, 0, 0
+  ));
+  if(resetUtc.getTime() <= now.getTime()){
+    resetUtc = new Date(resetUtc.getTime() + 24*60*60*1000);
+  }
+
+  const jst = new Date(resetUtc.getTime() + 9*60*60*1000);
+  const mm = String(jst.getUTCMonth()+1).padStart(2,"0");
+  const dd = String(jst.getUTCDate()).padStart(2,"0");
+  const hh = String(jst.getUTCHours()).padStart(2,"0");
+  const mi = String(jst.getUTCMinutes()).padStart(2,"0");
+
+  const remainingMs = Math.max(0, resetUtc.getTime() - now.getTime());
+  const totalMinutes = Math.ceil(remainingMs/60000);
+  const hours = Math.floor(totalMinutes/60);
+  const minutes = totalMinutes%60;
+
+  return {
+    reset_at_jst: `${mm}/${dd} ${hh}:${mi}`,
+    remaining_minutes: totalMinutes,
+    remaining_label: `${hours}時間${minutes}分`
+  };
+}
+
+async function getD1Status(env){
+  const reset = getNextD1ResetInfo();
+
+  if(!env?.DB){
+    return {
+      ok:false,
+      status:"error",
+      label:"接続エラー",
+      message:"DB binding が見つかりません",
+      ...reset
+    };
+  }
+
+  try{
+    // 1行だけ読む軽量ヘルスチェック。
+    await env.DB.prepare("SELECT id FROM reservations ORDER BY id DESC LIMIT 1").first();
+    return {
+      ok:true,
+      status:"normal",
+      label:"正常",
+      message:"D1は正常に利用できます",
+      ...reset
+    };
+  }catch(err){
+    if(isD1QuotaError(err)){
+      return {
+        ok:false,
+        status:"maintenance",
+        label:"メンテナンス中",
+        message:"現在メンテナンス中です",
+        ...reset
+      };
+    }
+    return {
+      ok:false,
+      status:"error",
+      label:"確認エラー",
+      message:String(err?.message || err || "UNKNOWN_ERROR").slice(0,300),
+      ...reset
+    };
+  }
+}
+
 const CACHEABLE_ADMIN_GETS = new Set([
   "/api/admin/stats",
   "/api/admin/trainees",
@@ -339,6 +468,23 @@ async function fetch(request, env, ctx){
   }
 
   const url = new URL(request.url);
+
+  if(url.pathname === "/api/admin/d1-status" && request.method === "GET"){
+    try{
+      const authed = await verifyAdmin(request, env, ctx);
+      if(!authed) return json({error:"unauthorized"},401);
+      return json(await getD1Status(env));
+    }catch(err){
+      return json({
+        ok:false,
+        status:"error",
+        label:"確認エラー",
+        message:String(err?.message || err || "UNKNOWN_ERROR").slice(0,300),
+        ...getNextD1ResetInfo()
+      },500);
+    }
+  }
+
 
   if(url.pathname !== "/api/admin/reservation-control" || request.method !== "GET"){
     const response = await fetchWithShortCache(request, env, ctx);
