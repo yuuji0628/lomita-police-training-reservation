@@ -1,6 +1,6 @@
 {
   "name": "lomita-police-training-reservation",
-  "main": "worker.js",
+  "main": "worker-hotfix.js",
   "compatibility_date": "2026-08-28",
   "keep_vars": true,
   "vars": {
