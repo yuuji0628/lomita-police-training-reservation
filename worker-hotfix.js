@@ -1,7 +1,7 @@
 import core from "./worker.js";
 
 /*
-  Version 2.11 maintenance message wrapper
+  Version 2.12 maintenance ETA wrapper
 
   v2.05 の復旧取得が失敗する環境向けに、復旧経路をさらに単純化。
   - PRAGMA を使わない
@@ -19,7 +19,7 @@ const json = (data, status = 200) => new Response(JSON.stringify(data), {
   }
 });
 
-const HOTFIX_VERSION = "2.11";
+const HOTFIX_VERSION = "2.12";
 
 async function syncDisplayedVersion(response){
   try{
@@ -195,19 +195,25 @@ async function isD1ReadQuotaExhausted(env){
 }
 
 function maintenanceHtml(){
-  const nextJst = (() => {
+  const nextResetLabel = (() => {
     const now = new Date();
-    const jst = new Date(now.getTime() + 9*60*60*1000);
-    const target = new Date(Date.UTC(
-      jst.getUTCFullYear(),
-      jst.getUTCMonth(),
-      jst.getUTCDate(),
-      9, 0, 0
-    ));
-    if(target.getTime() <= now.getTime()){
-      target.setUTCDate(target.getUTCDate() + 1);
+    // D1 Free Tier daily limits reset at 00:00 UTC = 09:00 JST.
+    const jstNow = new Date(now.getTime() + 9*60*60*1000);
+    const y = jstNow.getUTCFullYear();
+    const m = jstNow.getUTCMonth();
+    const d = jstNow.getUTCDate();
+
+    let resetUtc = new Date(Date.UTC(y, m, d, 0, 0, 0));
+    if(resetUtc.getTime() <= now.getTime()){
+      resetUtc = new Date(resetUtc.getTime() + 24*60*60*1000);
     }
-    return target;
+
+    const resetJst = new Date(resetUtc.getTime() + 9*60*60*1000);
+    const mm = String(resetJst.getUTCMonth()+1).padStart(2,"0");
+    const dd = String(resetJst.getUTCDate()).padStart(2,"0");
+    const hh = String(resetJst.getUTCHours()).padStart(2,"0");
+    const mi = String(resetJst.getUTCMinutes()).padStart(2,"0");
+    return `${mm}/${dd} ${hh}:${mi}頃`;
   })();
 
   return `<!doctype html>
@@ -231,7 +237,10 @@ function maintenanceHtml(){
   .status{display:flex;align-items:center;gap:10px;font-weight:1000;font-size:18px}
   .dot{width:11px;height:11px;border-radius:50%;background:#d8ac3c;box-shadow:0 0 0 5px rgba(216,172,60,.14)}
   .msg{margin-top:12px;font-size:14px;line-height:1.7;color:#52677d}
-  .small{margin-top:14px;padding-top:12px;border-top:1px solid #e7edf3;font-size:12px;line-height:1.6;color:#738397}
+  .eta{margin-top:14px;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 14px;border-radius:12px;background:#f5f8fb;border:1px solid #dfe7ef}
+  .eta span{font-size:12px;font-weight:800;color:#6c7d8e}
+  .eta strong{font-size:17px;color:#102b47}
+  .small{margin-top:12px;padding-top:12px;border-top:1px solid #e7edf3;font-size:12px;line-height:1.6;color:#738397}
   .btn{margin-top:14px;width:100%;border:0;border-radius:12px;background:#0b2d52;color:#fff;font-weight:900;font-size:15px;padding:13px 16px}
   .ver{text-align:center;margin-top:10px;font-size:11px;color:#8997a7}
 </style>
@@ -249,6 +258,10 @@ function maintenanceHtml(){
     <div class="msg">
       現在、システムメンテナンスのため一時的にご利用いただけません。<br>
       しばらくしてから再度お試しください。
+    </div>
+    <div class="eta">
+      <span>終了予定</span>
+      <strong>${nextResetLabel}</strong>
     </div>
     <div class="small">
       復旧を確認でき次第、通常画面へ戻ります。<br>
