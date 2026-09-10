@@ -1,24 +1,21 @@
-LOMITA POLICE Training Reservation - Version 2.09 D1 Saver
+LOMITA POLICE Training Reservation - Version 2.10
 
-目的:
-Cloudflare D1 Free Tier の daily row read limit 超過を起こしにくくする。
+D1利用上限時の自動メンテナンスモードを追加。
 
-主な変更:
-- /api/admin/reservation-control は既存coreの重い処理を通さず直接取得
-- 対応が必要な予約は最大80件
-- 受講済み履歴は直近20件のみ
-- reservations(status,id) インデックスを自動作成
-- reservations(training_id) インデックスを自動作成
-- /api/admin/stats / trainees / surveys は60秒短期キャッシュ
-- 同じ画面で更新を連打してもD1再読込を減らす
-- 予約一覧取得時に期限超過処理・ensure系の連続処理を実行しない
-- HTML表示バージョンを2.09に同期
+動作:
+- 通常のHTML画面アクセス時にD1を1行だけ軽量確認
+- Cloudflare D1のdaily row read limit超過を検知した場合、
+  通常の管理画面/研修生画面を表示せず「現在メンテナンス中です」画面へ切り替え
+- 予約データが消えたわけではないことを明記
+- 約5分ごとに自動再確認
+- 「再確認する」ボタンを設置
+- D1上限が戻れば通常画面へ自動復帰
+- API側もD1上限時は maintenance_d1_quota / HTTP 503 を返す
 
-重要:
-D1の日次上限をすでに使い切っている日は、リセットされるまでD1読み取り自体は失敗します。
-この版は「次のリセット以降、再び上限を使い切りにくくする」ための節約版です。
-
-データ:
+安全性:
 - 予約削除なし
 - 履歴削除なし
-- 研修生進捗削除なし
+- 研修進捗削除なし
+- D1上限以外のエラーではメンテナンス画面へ強制しない
+
+Version 2.09のD1節約処理を維持。
