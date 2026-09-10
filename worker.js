@@ -1,4 +1,4 @@
-const APP_VERSION="2.02";
+const APP_VERSION="2.03";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -1249,6 +1249,126 @@ html,
   .traineeCompactProgress{font-size:9px}
   .traineeCompactNext,
   .traineeCompactDeadline{font-size:7px}
+}
+
+
+/* v2.03 compact booking form */
+#booking .sheet{
+  padding-top:11px !important;
+}
+#booking .title{
+  font-size:18px !important;
+  line-height:1.15 !important;
+}
+#booking .sub{
+  line-height:1.25 !important;
+}
+#booking .sheet > div[style*="margin-top:8px"]{
+  margin-top:6px !important;
+}
+#booking .sheet > div[style*="margin-top:10px"]{
+  margin-top:7px !important;
+  padding-top:7px !important;
+}
+#booking .grid{
+  gap:5px !important;
+}
+#booking .field label{
+  font-size:9px !important;
+  margin-bottom:3px !important;
+}
+#booking input[type="date"],
+#booking input[type="time"]{
+  min-height:38px !important;
+  height:38px !important;
+  padding:5px 7px !important;
+  font-size:13px !important;
+  border-radius:9px !important;
+}
+#booking .field{
+  margin-top:7px !important;
+}
+#booking textarea#note{
+  min-height:56px !important;
+  height:56px !important;
+  padding:7px 9px !important;
+  font-size:11px !important;
+  border-radius:9px !important;
+}
+#booking .card{
+  padding:8px 9px !important;
+  margin:8px 0 !important;
+  border-radius:11px !important;
+}
+#booking .card > div[style*="font-weight:900"]{
+  font-size:12px !important;
+}
+#booking #openPolicyBtn{
+  min-height:30px !important;
+  height:30px !important;
+  margin-top:5px !important;
+  padding:4px 8px !important;
+  font-size:9px !important;
+}
+#booking .card label{
+  display:grid !important;
+  grid-template-columns:24px minmax(0,1fr) !important;
+  gap:7px !important;
+  align-items:start !important;
+  margin-top:7px !important;
+  font-size:10px !important;
+  line-height:1.28 !important;
+}
+#booking #policyAgree{
+  width:22px !important;
+  height:22px !important;
+  margin:0 !important;
+}
+#booking #policyReadHint{
+  margin-top:5px !important;
+  font-size:8px !important;
+  line-height:1.2 !important;
+}
+#booking #bookingSubmitBtn{
+  min-height:42px !important;
+  height:42px !important;
+  margin-top:7px !important;
+  font-size:12px !important;
+  border-radius:10px !important;
+}
+@media(max-width:560px){
+  #booking .sheet{
+    padding:10px 11px calc(18px + env(safe-area-inset-bottom)) !important;
+  }
+  #booking .title{
+    font-size:17px !important;
+  }
+  #booking input[type="date"],
+  #booking input[type="time"]{
+    min-height:36px !important;
+    height:36px !important;
+    font-size:12px !important;
+  }
+  #booking textarea#note{
+    min-height:50px !important;
+    height:50px !important;
+  }
+  #booking .card{
+    padding:7px 8px !important;
+  }
+  #booking #bookingSubmitBtn{
+    min-height:40px !important;
+    height:40px !important;
+  }
+}
+@media(max-width:390px){
+  #booking .grid{
+    grid-template-columns:1fr 1fr !important;
+  }
+  #booking input[type="date"],
+  #booking input[type="time"]{
+    font-size:11px !important;
+  }
 }
 
 body{
@@ -3192,21 +3312,21 @@ const PUBLIC_BODY = `
   <div class="sub" style="margin-top:4px">申請後、管理者が担当教官を選んで承認します。</div>
   <div id="bookingMsg"></div>
   <div style="margin-top:8px">
-    <div style="font-weight:900;margin-bottom:6px">第1希望 <span style="color:#b42318;font-size:12px">必須</span></div>
+    <div style="font-weight:900;margin-bottom:4px">第1希望 <span style="color:#b42318;font-size:12px">必須</span></div>
     <div class="grid" style="grid-template-columns:1.35fr 1fr;gap:8px">
       <div class="field" style="margin:0"><label style="font-size:11px">日付</label><input id="preferredDate" type="date" required style="min-height:44px;font-size:15px;padding:9px 10px"></div>
       <div class="field" style="margin:0"><label style="font-size:11px">時間</label><input id="preferredTime" type="time" required style="min-height:44px;font-size:15px;padding:9px 10px"></div>
     </div>
   </div>
-  <div style="margin-top:10px;padding-top:10px;border-top:1px solid #e5e7eb">
-    <div style="font-weight:900;margin-bottom:6px">第2希望 <span class="sub" style="font-size:11px">任意</span></div>
+  <div style="margin-top:7px;padding-top:7px;border-top:1px solid #e5e7eb">
+    <div style="font-weight:900;margin-bottom:4px">第2希望 <span class="sub" style="font-size:11px">任意</span></div>
     <div class="grid" style="grid-template-columns:1.35fr 1fr;gap:8px">
       <div class="field" style="margin:0"><label style="font-size:11px">日付</label><input id="preferredDate2" type="date" style="min-height:44px;font-size:15px;padding:9px 10px"></div>
       <div class="field" style="margin:0"><label style="font-size:11px">時間</label><input id="preferredTime2" type="time" style="min-height:44px;font-size:15px;padding:9px 10px"></div>
     </div>
   </div>
-  <div style="margin-top:10px;padding-top:10px;border-top:1px solid #e5e7eb">
-    <div style="font-weight:900;margin-bottom:6px">第3希望 <span class="sub" style="font-size:11px">任意</span></div>
+  <div style="margin-top:7px;padding-top:7px;border-top:1px solid #e5e7eb">
+    <div style="font-weight:900;margin-bottom:4px">第3希望 <span class="sub" style="font-size:11px">任意</span></div>
     <div class="grid" style="grid-template-columns:1.35fr 1fr;gap:8px">
       <div class="field" style="margin:0"><label style="font-size:11px">日付</label><input id="preferredDate3" type="date" style="min-height:44px;font-size:15px;padding:9px 10px"></div>
       <div class="field" style="margin:0"><label style="font-size:11px">時間</label><input id="preferredTime3" type="time" style="min-height:44px;font-size:15px;padding:9px 10px"></div>
@@ -3218,9 +3338,9 @@ const PUBLIC_BODY = `
     <button id="openPolicyBtn" type="button" class="btn small" style="margin-top:8px" onclick="openTrainingPolicy()">内容を確認</button>
     <label style="display:flex;gap:8px;align-items:flex-start;margin-top:10px;font-weight:800;line-height:1.4">
       <input id="policyAgree" type="checkbox" disabled style="width:20px;height:20px;margin-top:1px">
-      <span>研修ポリシーを確認し、内容に同意します</span>
+      <span>研修ポリシーを確認し、同意します</span>
     </label>
-    <div id="policyReadHint" class="sub" style="margin-top:8px">※「内容を確認」を開いた後にチェックできます。</div>
+    <div id="policyReadHint" class="sub" style="margin-top:8px">※内容確認後にチェックできます。</div>
   </div>
   <button id="bookingSubmitBtn" type="button" class="btn primary" style="width:100%">申請する</button>
 </div></div>`;
@@ -3408,7 +3528,7 @@ function openBooking(id,title){
   document.getElementById('policyAgree').disabled=true;
  }
  const policyHint=document.getElementById('policyReadHint');
- if(policyHint)policyHint.textContent='※「内容を確認」を開いた後にチェックできます。';
+ if(policyHint)policyHint.textContent='※内容確認後にチェックできます。';
  document.getElementById('bookTitle').textContent=title+' 申請';
  const now=new Date();
  const local=new Date(now.getTime()-now.getTimezoneOffset()*60000).toISOString().slice(0,10);
