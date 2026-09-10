@@ -1,7 +1,7 @@
 import core from "./worker.js";
 
 /*
-  Version 2.06 reservation-control recovery wrapper
+  Version 2.07 reservation-control recovery wrapper
 
   v2.05 の復旧取得が失敗する環境向けに、復旧経路をさらに単純化。
   - PRAGMA を使わない
@@ -18,6 +18,32 @@ const json = (data, status = 200) => new Response(JSON.stringify(data), {
     "cache-control": "no-store"
   }
 });
+
+const HOTFIX_VERSION = "2.07";
+
+async function syncDisplayedVersion(response){
+  try{
+    const type = String(response.headers.get("content-type") || "").toLowerCase();
+    if(!type.includes("text/html")) return response;
+
+    const body = await response.text();
+    const replaced = body
+      .replace(/Version\s+2\.04/g, "Version " + HOTFIX_VERSION)
+      .replace(/Version\s+2\.05/g, "Version " + HOTFIX_VERSION)
+      .replace(/Version\s+2\.06/g, "Version " + HOTFIX_VERSION);
+
+    const headers = new Headers(response.headers);
+    headers.delete("content-length");
+
+    return new Response(replaced, {
+      status: response.status,
+      statusText: response.statusText,
+      headers
+    });
+  }catch(_){
+    return response;
+  }
+}
 
 async function verifyAdmin(request, env, ctx){
   const url = new URL(request.url);
@@ -104,7 +130,8 @@ async function fetch(request, env, ctx){
   const url = new URL(request.url);
 
   if(url.pathname !== "/api/admin/reservation-control" || request.method !== "GET"){
-    return core.fetch(request, env, ctx);
+    const response = await core.fetch(request, env, ctx);
+    return syncDisplayedVersion(response);
   }
 
   /*
@@ -115,11 +142,11 @@ async function fetch(request, env, ctx){
     const original = await core.fetch(request, env, ctx);
 
     if(original.status < 500){
-      return original;
+      return syncDisplayedVersion(original);
     }
 
     console.error(
-      "reservation-control primary failed; switching to v2.06 safe fallback",
+      "reservation-control primary failed; switching to v2.07 safe fallback",
       original.status
     );
   }catch(err){
@@ -133,7 +160,7 @@ async function fetch(request, env, ctx){
   try{
     return await safeReservationList(request, env, ctx);
   }catch(err){
-    console.error("reservation-control v2.06 fallback failed", err);
+    console.error("reservation-control v2.07 fallback failed", err);
     return json({
       error: "予約一覧の復旧取得にも失敗しました",
       detail: String(err?.message || err || "UNKNOWN_ERROR").slice(0, 800)
