@@ -1,18 +1,32 @@
-LOMITA POLICE Training Reservation - Version 2.07
+LOMITA POLICE Training Reservation - Version 2.08 Diagnostic
 
-表示バージョン同期修正
+予約一覧APIの原因特定用・読み取り専用診断版。
 
-原因:
-- Cloudflare の main は worker-hotfix.js
-- 画面HTMLは既存 worker.js が生成
-- worker.js の APP_VERSION が 2.04 のため、復旧版を入れても画面は 2.04 のままだった
+診断順:
+1. DB binding
+2. 管理者認証
+3. reservations 単体読み取り
+4. trainings LEFT JOIN
+5. JOIN失敗時は reservations 単体で一覧返却
 
-v2.07:
-- worker-hotfix.js を表示バージョンの最終ラッパーに変更
-- HTML内の Version 2.04 / 2.05 / 2.06 を Version 2.07 に統一
-- JSON/APIレスポンスは変更しない
-- 既存の予約復旧処理 v2.06 を維持
-- 予約データの削除・初期化はしない
+画面表示:
+エラー時は既存UIの赤枠に
+【診断:STAGE】 実際のエラー内容
+を表示します。
 
-wrangler.jsonc:
-- main は worker-hotfix.js のまま
+例:
+【診断:DB_BINDING】 ...
+【診断:ADMIN_AUTH】 ...
+【診断:RESERVATIONS_READ】 ...
+【診断:TRAININGS_JOIN】 ...
+【診断:UNHANDLED】 ...
+
+安全性:
+- DELETEなし
+- UPDATEなし
+- ALTER TABLEなし
+- 期限超過処理なし
+- 予約/履歴/進捗を変更しない
+- HTML表示バージョンを 2.08 に同期
+
+wrangler.jsonc の main は worker-hotfix.js のままです。
