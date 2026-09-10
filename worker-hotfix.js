@@ -1,7 +1,7 @@
 import core from "./worker.js";
 
 /*
-  Version 2.13 D1 status wrapper
+  Version 2.14 compact admin UI wrapper
 
   v2.05 の復旧取得が失敗する環境向けに、復旧経路をさらに単純化。
   - PRAGMA を使わない
@@ -19,7 +19,7 @@ const json = (data, status = 200) => new Response(JSON.stringify(data), {
   }
 });
 
-const HOTFIX_VERSION = "2.13";
+const HOTFIX_VERSION = "2.14";
 
 async function syncDisplayedVersion(response){
   try{
@@ -40,48 +40,156 @@ async function syncDisplayedVersion(response){
 
     const d1Widget = `
 <style>
-#d1StatusMini{
-  position:fixed;right:10px;top:10px;z-index:9998;
-  display:none;align-items:center;gap:6px;
-  max-width:220px;padding:6px 9px;border-radius:999px;
-  background:rgba(255,255,255,.95);
-  border:1px solid #d7e1eb;
-  box-shadow:0 4px 14px rgba(20,45,70,.10);
-  font:700 10px/1.2 -apple-system,BlinkMacSystemFont,"Segoe UI","Hiragino Sans","Noto Sans JP",sans-serif;
-  color:#41566c;
-  backdrop-filter:blur(10px);
+#d1StatusInline{
+  display:flex;align-items:center;justify-content:space-between;gap:8px;
+  margin:8px 0 10px;padding:7px 10px;border-radius:12px;
+  background:#fff;border:1px solid #d8e2ec;
+  box-shadow:0 3px 10px rgba(20,45,70,.05);
+  font:800 10px/1.2 -apple-system,BlinkMacSystemFont,"Segoe UI","Hiragino Sans","Noto Sans JP",sans-serif;
+  color:#53667a
 }
-#d1StatusMini .dot{width:7px;height:7px;border-radius:50%;background:#2f9b5e}
-#d1StatusMini.warn{border-color:#e0b649;color:#7f5c00}
-#d1StatusMini.warn .dot{background:#d7a400}
-#d1StatusMini.err{border-color:#df8a81;color:#922e26}
-#d1StatusMini.err .dot{background:#c84034}
+#d1StatusInline .left{display:flex;align-items:center;gap:6px;min-width:0}
+#d1StatusInline .dot{width:7px;height:7px;border-radius:50%;background:#2f9b5e;flex:0 0 auto}
+#d1StatusInline .label{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#d1StatusInline .reset{color:#8090a1;white-space:nowrap}
+#d1StatusInline.warn{border-color:#e1bd5d;background:#fffdf4;color:#7a5a00}
+#d1StatusInline.warn .dot{background:#d3a100}
+#d1StatusInline.err{border-color:#df9d95;background:#fff8f7;color:#8f3028}
+#d1StatusInline.err .dot{background:#c64035}
+
+/* v2.14 管理メニューをコンパクト化 */
+#adminToolsSection,
+.adminToolsSection,
+#adminMenuSection{
+  padding:10px !important;
+}
+#adminToolsSection .card,
+.adminToolsSection .card,
+#adminMenuSection .card{
+  padding:10px !important;
+  margin-top:8px !important;
+  border-radius:12px !important;
+}
+#adminToolsSection h2,
+#adminToolsSection .title,
+.adminToolsSection h2,
+.adminToolsSection .title,
+#adminMenuSection h2,
+#adminMenuSection .title{
+  margin:0 0 4px !important;
+  font-size:17px !important;
+  line-height:1.15 !important;
+}
+#adminToolsSection .sub,
+.adminToolsSection .sub,
+#adminMenuSection .sub{
+  font-size:10px !important;
+  line-height:1.35 !important;
+}
+#adminToolsSection textarea,
+.adminToolsSection textarea,
+#adminMenuSection textarea{
+  min-height:110px !important;
+  max-height:160px !important;
+  height:120px !important;
+  padding:9px !important;
+  font-size:11px !important;
+  border-radius:10px !important;
+}
+#adminToolsSection button,
+.adminToolsSection button,
+#adminMenuSection button{
+  min-height:34px !important;
+  height:auto !important;
+  padding:7px 10px !important;
+  font-size:10px !important;
+  border-radius:9px !important;
+}
+#adminToolsSection .row,
+.adminToolsSection .row,
+#adminMenuSection .row{
+  gap:6px !important;
+  flex-wrap:wrap;
+}
+#adminToolsSection [style*="margin-top:14px"],
+.adminToolsSection [style*="margin-top:14px"],
+#adminMenuSection [style*="margin-top:14px"]{
+  margin-top:8px !important;
+}
+#adminToolsSection [style*="margin-top:12px"],
+.adminToolsSection [style*="margin-top:12px"],
+#adminMenuSection [style*="margin-top:12px"]{
+  margin-top:7px !important;
+}
+#adminToolsSection .notice,
+.adminToolsSection .notice,
+#adminMenuSection .notice{
+  padding:7px 9px !important;
+  margin-top:6px !important;
+  font-size:9px !important;
+  line-height:1.3 !important;
+  border-radius:9px !important;
+}
+@media(max-width:560px){
+  #d1StatusInline{margin:6px 0 8px;padding:6px 8px;font-size:9px}
+  #adminToolsSection textarea,
+  .adminToolsSection textarea,
+  #adminMenuSection textarea{
+    min-height:90px !important;
+    height:96px !important;
+    max-height:130px !important;
+  }
+}
 </style>
-<div id="d1StatusMini"><span class="dot"></span><span id="d1StatusMiniText">D1確認中</span></div>
+<div id="d1StatusInline">
+  <div class="left"><span class="dot"></span><span class="label" id="d1StatusInlineText">D1確認中</span></div>
+  <span class="reset" id="d1StatusInlineReset"></span>
+</div>
 <script>
 (async()=>{
-  const box=document.getElementById("d1StatusMini");
-  const text=document.getElementById("d1StatusMiniText");
-  if(!box||!text)return;
+  const box=document.getElementById("d1StatusInline");
+  const text=document.getElementById("d1StatusInlineText");
+  const reset=document.getElementById("d1StatusInlineReset");
+  if(!box||!text||!reset)return;
   try{
     const r=await fetch("/api/admin/d1-status",{credentials:"same-origin",cache:"no-store"});
-    if(r.status===401)return;
+    if(r.status===401){ box.remove(); return; }
     const d=await r.json().catch(()=>({}));
-    box.style.display="flex";
     box.classList.remove("warn","err");
     if(d.status==="maintenance")box.classList.add("warn");
     if(d.status==="error")box.classList.add("err");
-    text.textContent=
-      d.status==="normal"
-        ? "D1 正常 ｜ 次回 "+(d.reset_at_jst||"09:00")
-        : d.status==="maintenance"
-        ? "メンテナンス中 ｜ "+(d.remaining_label||"")
-        : "D1 確認エラー";
-  }catch(_){}
+
+    if(d.status==="normal"){
+      text.textContent="D1 正常";
+      reset.textContent="次回 "+(d.reset_at_jst||"09:00");
+    }else if(d.status==="maintenance"){
+      text.textContent="メンテナンス中";
+      reset.textContent=d.remaining_label||"";
+    }else{
+      text.textContent="D1 確認エラー";
+      reset.textContent="";
+    }
+  }catch(_){
+    box.remove();
+  }
 })();
 </script>`;
 
-    if(replaced.includes("</body>")){
+
+    const timeBlockPatterns = [
+      /(<div[^>]*class="[^"]*(?:time|clock|jst)[^"]*"[^>]*>[\s\S]*?<\/div>)/i,
+      /(<div[^>]*>[\s\S]*?JST[\s\S]*?<\/div>)/i
+    ];
+
+    let placed = false;
+    for(const p of timeBlockPatterns){
+      if(p.test(replaced)){
+        replaced = replaced.replace(p, "$1" + d1Widget);
+        placed = true;
+        break;
+      }
+    }
+    if(!placed && replaced.includes("</body>")){
       replaced = replaced.replace("</body>", d1Widget + "</body>");
     }
 
