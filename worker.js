@@ -1,4 +1,4 @@
-const APP_VERSION="1.98";
+const APP_VERSION="1.99";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -1428,6 +1428,112 @@ const html = (title, body, script = "") => new Response(`<!doctype html>
     min-height:34px !important;
     height:34px !important;
     font-size:8.5px !important;
+  }
+}
+
+
+/* v1.99 compact survey UI */
+#surveySectionAdmin .card,
+#surveySummaryDedicated .card,
+#surveyAdminListDedicated .card,
+#surveyDeleteManagerList .card{
+  padding:7px 8px !important;
+  margin-top:5px !important;
+  border-radius:10px !important;
+}
+#surveySectionAdmin .title,
+#surveyDeleteManagerList b{
+  font-size:12px !important;
+  line-height:1.15 !important;
+}
+#surveySectionAdmin .sub,
+#surveySummaryDedicated .sub,
+#surveyAdminListDedicated .sub,
+#surveyDeleteManagerList .sub{
+  font-size:8px !important;
+  line-height:1.2 !important;
+}
+#surveySummaryDedicated .pill,
+#surveyAdminListDedicated .pill{
+  font-size:8px !important;
+  min-height:22px !important;
+  padding:3px 7px !important;
+}
+#surveyDeleteManagerList .btn.small{
+  min-height:28px !important;
+  height:28px !important;
+  padding:4px 8px !important;
+  font-size:9px !important;
+  border-radius:8px !important;
+}
+#surveyDeleteManagerList .between{
+  gap:6px !important;
+  align-items:center !important;
+}
+#surveyDeleteManagerList{
+  max-height:330px !important;
+  overflow-y:auto !important;
+  -webkit-overflow-scrolling:touch;
+}
+#surveySummaryDedicated{
+  max-height:240px !important;
+  overflow-y:auto !important;
+}
+#surveyAdminListDedicated{
+  max-height:420px !important;
+  overflow-y:auto !important;
+  -webkit-overflow-scrolling:touch;
+}
+#surveySectionAdmin > .panel,
+#surveySectionAdmin > .card{
+  padding:9px !important;
+}
+#surveySectionAdmin .sectionTitle{
+  font-size:16px !important;
+}
+#surveySectionAdmin details summary{
+  min-height:30px !important;
+  padding:5px 7px !important;
+  font-size:9px !important;
+}
+.surveyCard{
+  padding:9px !important;
+  margin-top:7px !important;
+  border-radius:11px !important;
+}
+.surveyField{
+  margin-top:7px !important;
+}
+.surveyField label{
+  font-size:9px !important;
+  margin-bottom:3px !important;
+}
+.surveyStars{
+  gap:3px !important;
+}
+.surveyStars button{
+  min-width:30px !important;
+  width:30px !important;
+  height:30px !important;
+  font-size:10px !important;
+  border-radius:7px !important;
+}
+.surveyField textarea{
+  min-height:60px !important;
+  font-size:11px !important;
+  padding:7px !important;
+}
+@media(max-width:560px){
+  #surveyDeleteManagerList{
+    max-height:300px !important;
+  }
+  #surveyAdminListDedicated{
+    max-height:360px !important;
+  }
+  #surveySummaryDedicated .card,
+  #surveyAdminListDedicated .card,
+  #surveyDeleteManagerList .card{
+    padding:6px 7px !important;
   }
 }
 
@@ -3584,7 +3690,7 @@ const ADMIN_BODY = `
      <div class="between">
        <div>
          <div class="title" style="font-size:17px">教官別評価</div>
-         <div class="sub">研修生から届いた評価を集計しています。</div>
+         <div class="sub">研修生評価を集計</div>
        </div>
        <button class="btn small" type="button" onclick="loadAdminSurveys()">更新</button>
      </div>
@@ -3636,14 +3742,14 @@ const ADMIN_BODY = `
 </div>
 <div class="card ownerOnly" style="margin-bottom:12px;border:1px solid #e3a6a0;background:#fff8f7">
   <div class="title" style="color:#9d2d24">アンケート結果管理</div>
-  <div class="sub" style="margin-top:4px">アンケート結果の削除操作です。削除した回答は元に戻せません。</div>
+  <div class="sub" style="margin-top:4px">回答削除。元に戻せません。</div>
   <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
-    <button class="btn small" type="button" onclick="loadSurveyDeleteManager()">一覧を読み込む</button>
+    <button class="btn small" type="button" onclick="loadSurveyDeleteManager()">読込</button>
   </div>
   <div id="surveyDeleteManagerList" style="margin-top:8px">
-    <div class="empty">「一覧を読み込む」を押してください。</div>
+    <div class="empty">「読込」を押してください。</div>
   </div>
-  <button class="btn small" style="width:100%;margin-top:10px;border-color:#d97b73;color:#9d2d24" type="button" onclick="deleteAllSurveyResults()">全アンケート結果を削除</button>
+  <button class="btn small" style="width:100%;margin-top:10px;border-color:#d97b73;color:#9d2d24" type="button" onclick="deleteAllSurveyResults()">全件削除</button>
 </div>
 
 <div class="section">GitHubアップロード</div>
@@ -4804,14 +4910,15 @@ async function loadSurveyDeleteManager(){
    const rows=Array.isArray(d.rows)?d.rows:[];
    el.innerHTML=rows.length
      ?rows.map(x=>
-       '<div class="card" style="margin-top:6px;padding:8px">'+
+       '<div class="card">'+
          '<div class="between">'+
-           '<div style="min-width:0"><b>'+esc(x.training_title||'研修')+'</b>'+
+           '<div style="min-width:0;flex:1">'+
+             '<b>'+esc(x.training_title||'研修')+'</b>'+
              '<div class="sub">'+esc(x.player_name||'')+' / '+esc(x.assigned_instructor||'')+'</div>'+
+             '<div class="sub">教官 '+Number(x.instructor_rating||0)+'｜内容 '+Number(x.content_rating||0)+'｜難易度 '+Number(x.difficulty_rating||0)+'｜満足 '+Number(x.satisfaction_rating||0)+'</div>'+
            '</div>'+
            '<button class="btn small" style="border-color:#d97b73;color:#9d2d24" type="button" onclick="deleteSurveyResult('+Number(x.id)+')">削除</button>'+
          '</div>'+
-         '<div class="sub" style="margin-top:4px">教官 '+Number(x.instructor_rating||0)+'/5 ｜ 内容 '+Number(x.content_rating||0)+'/5 ｜ 難易度 '+Number(x.difficulty_rating||0)+'/5 ｜ 満足度 '+Number(x.satisfaction_rating||0)+'/5</div>'+
        '</div>'
      ).join('')
      :'<div class="empty">アンケート結果はありません。</div>';
@@ -4841,7 +4948,7 @@ async function deleteSurveyResult(id){
 
 async function deleteAllSurveyResults(){
  if(!confirm(
-   '全アンケート結果を削除しますか？\n\n'+
+   '全件削除しますか？\n\n'+
    'すべての回答が消え、該当する研修生は再びアンケート未回答として扱われます。'
  ))return;
 
