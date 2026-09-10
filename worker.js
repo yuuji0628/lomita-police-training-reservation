@@ -1,4 +1,4 @@
-const APP_VERSION="1.99";
+const APP_VERSION="2.00";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -1535,6 +1535,29 @@ const html = (title, body, script = "") => new Response(`<!doctype html>
   #surveyDeleteManagerList .card{
     padding:6px 7px !important;
   }
+}
+
+
+/* v2.00 admin training deadline */
+.adminDeadlineLine{
+  margin-top:3px;
+  font-size:8px;
+  line-height:1.15;
+  font-weight:850;
+  color:#68768a;
+  white-space:normal;
+}
+.adminDeadlineLine.urgent{
+  color:#9a6a00;
+  font-weight:1000;
+}
+.adminDeadlineLine.expired{
+  color:#a7372d;
+  font-weight:1000;
+}
+.adminDeadlineLine.done{
+  color:#2f7b4b;
+  font-weight:1000;
 }
 
 body{
@@ -4637,6 +4660,26 @@ async function loadTrainees(){
  traineeStartOptions=optR.ok?await optR.json().catch(()=>[]):[];
  renderTrainees();
 }
+
+function renderAdminTrainingDeadline(cycle){
+ const c=cycle||{};
+ if(c.all_completed){
+   return '<div class="adminDeadlineLine done">期限：全研修修了</div>';
+ }
+ if(!c.started){
+   return '<div class="adminDeadlineLine">期限：開始前（開始後30日）</div>';
+ }
+ const start=String(c.start_date||'').replaceAll('-','/');
+ const deadline=String(c.deadline_date||'').replaceAll('-','/');
+ const left=Number(c.days_remaining);
+
+ if(c.expired || (Number.isFinite(left) && left<0)){
+   return '<div class="adminDeadlineLine expired">開始 '+esc(start)+' ｜ 期限 '+esc(deadline)+' ｜ 期限超過・リセット対象</div>';
+ }
+ const urgent=Number.isFinite(left) && left<=7;
+ return '<div class="adminDeadlineLine '+(urgent?'urgent':'')+'">開始 '+esc(start)+' ｜ 期限 '+esc(deadline)+' ｜ 残り '+(Number.isFinite(left)?Math.max(0,left):'-')+'日</div>';
+}
+
 function renderTrainees(){
  const q=(document.getElementById('traineeSearch')?.value||'').trim().toLowerCase();
  let rows=traineeRows.filter(x=>!q||[x.player_name,x.login_name,x.discord_id,x.affiliation].some(v=>String(v||'').toLowerCase().includes(q)));
@@ -4655,7 +4698,7 @@ function renderTrainees(){
      '<select class="orientationInstructorSelect" data-id="'+x.id+'" style="margin-top:8px"><option value="">担当教官を選択...</option>'+instructorRows.map(i=>'<option value="'+esc(i.name)+'">'+esc(i.name)+'</option>').join('')+'</select>'+
    '</div>'+
    (x.all_completed?'<div style="margin-top:12px;padding:12px;border:2px solid #d7ad45;border-radius:14px;background:#fff9df"><div style="font-weight:1000;font-size:17px">🏅 全研修修了</div><div class="sub" style="margin-top:4px">修了日：'+esc(String(x.all_completed_at||'').replaceAll('-','/'))+'</div></div>':'')+
-   '<div class="traineeProgressCompact"><div class="between"><b>研修進捗</b><b>'+done+'/'+total+' 完了</b></div><div class="bar"><div class="fill" style="width:'+pct+'%"></div></div><div class="sub" style="margin-top:5px">'+(x.current_training?'次：'+esc(x.current_training):'全研修修了')+'</div></div>'+
+   '<div class="traineeProgressCompact"><div class="between"><b>研修進捗</b><b>'+done+'/'+total+' 完了</b></div><div class="bar"><div class="fill" style="width:'+pct+'%"></div></div><div class="sub" style="margin-top:5px">'+(x.current_training?'次：'+esc(x.current_training):'全研修修了')+'</div>'+renderAdminTrainingDeadline(x.training_cycle)+'</div>'+
    '<div class="meta"><span>承認 '+x.pending+'</span><span>予約 '+x.reserved+'</span><span>再受講 '+x.retake+'</span><span>欠席 '+x.absent+'</span></div>'+
    '<details class="traineeAdminDetails">'+
      '<summary>管理メニューを開く</summary>'+
@@ -5973,7 +6016,20 @@ async function handle(request, env) {
      const orientationRow=orientationProgram?latest.get(Number(orientationProgram.training_id)):null;
      const orientation_completed=!!(orientationRow && orientationRow.status==="completed");
      const full=await refreshTraineeFullCompletion(env,p.id);
-     out.push({...p,total:(hist||[]).length,pending,reserved,retake,completed,absent,cancelled,orientation_completed,all_completed:full.completed,all_completed_at:full.date,progress_completed:completed,progress_total:totalPrograms,progress_percent:totalPrograms?Math.round(completed/totalPrograms*100):0,current_training:current,current_training_id});
+     let cycle={started:false,all_completed:false,start_date:"",deadline_date:"",days_remaining:null,expired:false,limit_days:30};
+     try{
+       const c=await getTraineeCycleInfo(env,p);
+       cycle={
+         started:!!c.started,
+         all_completed:!!c.all_completed,
+         start_date:String(c.start_date||""),
+         deadline_date:String(c.deadline_date||""),
+         days_remaining:c.days_remaining===null?null:Number(c.days_remaining),
+         expired:!!c.expired,
+         limit_days:30
+       };
+     }catch(_){}
+     out.push({...p,total:(hist||[]).length,pending,reserved,retake,completed,absent,cancelled,orientation_completed,all_completed:full.completed,all_completed_at:full.date,progress_completed:completed,progress_total:totalPrograms,progress_percent:totalPrograms?Math.round(completed/totalPrograms*100):0,current_training:current,current_training_id,training_cycle:cycle});
    }
    return json(out);
  }
