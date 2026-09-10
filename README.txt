@@ -1,32 +1,24 @@
-LOMITA POLICE Training Reservation - Version 2.08 Diagnostic
+LOMITA POLICE Training Reservation - Version 2.09 D1 Saver
 
-予約一覧APIの原因特定用・読み取り専用診断版。
+目的:
+Cloudflare D1 Free Tier の daily row read limit 超過を起こしにくくする。
 
-診断順:
-1. DB binding
-2. 管理者認証
-3. reservations 単体読み取り
-4. trainings LEFT JOIN
-5. JOIN失敗時は reservations 単体で一覧返却
+主な変更:
+- /api/admin/reservation-control は既存coreの重い処理を通さず直接取得
+- 対応が必要な予約は最大80件
+- 受講済み履歴は直近20件のみ
+- reservations(status,id) インデックスを自動作成
+- reservations(training_id) インデックスを自動作成
+- /api/admin/stats / trainees / surveys は60秒短期キャッシュ
+- 同じ画面で更新を連打してもD1再読込を減らす
+- 予約一覧取得時に期限超過処理・ensure系の連続処理を実行しない
+- HTML表示バージョンを2.09に同期
 
-画面表示:
-エラー時は既存UIの赤枠に
-【診断:STAGE】 実際のエラー内容
-を表示します。
+重要:
+D1の日次上限をすでに使い切っている日は、リセットされるまでD1読み取り自体は失敗します。
+この版は「次のリセット以降、再び上限を使い切りにくくする」ための節約版です。
 
-例:
-【診断:DB_BINDING】 ...
-【診断:ADMIN_AUTH】 ...
-【診断:RESERVATIONS_READ】 ...
-【診断:TRAININGS_JOIN】 ...
-【診断:UNHANDLED】 ...
-
-安全性:
-- DELETEなし
-- UPDATEなし
-- ALTER TABLEなし
-- 期限超過処理なし
-- 予約/履歴/進捗を変更しない
-- HTML表示バージョンを 2.08 に同期
-
-wrangler.jsonc の main は worker-hotfix.js のままです。
+データ:
+- 予約削除なし
+- 履歴削除なし
+- 研修生進捗削除なし
