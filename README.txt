@@ -1,25 +1,18 @@
-LOMITA POLICE Training Reservation - Version 2.06 Recovery
+LOMITA POLICE Training Reservation - Version 2.07
 
-v2.05でも「予約一覧の復旧取得にも失敗しました」となる問題への再修正版です。
+表示バージョン同期修正
 
-v2.06の変更:
-- 復旧処理から PRAGMA を完全に削除
-- 管理者確認を /api/admin/check のみに変更
-- reservations を r.* で直接読み取り
-- trainings は LEFT JOIN
-- 予約一覧取得時の復旧経路では
-  DELETE / UPDATE / ALTER TABLE / 期限超過処理を一切実行しない
-- 新しいカラムが無い場合は画面用の既定値を補完
+原因:
+- Cloudflare の main は worker-hotfix.js
+- 画面HTMLは既存 worker.js が生成
+- worker.js の APP_VERSION が 2.04 のため、復旧版を入れても画面は 2.04 のままだった
 
-安全性:
-- 予約データを削除しません
-- 受講履歴を初期化しません
-- 研修生進捗を変更しません
-- 通常ルートは既存 worker.js にそのまま委譲します
+v2.07:
+- worker-hotfix.js を表示バージョンの最終ラッパーに変更
+- HTML内の Version 2.04 / 2.05 / 2.06 を Version 2.07 に統一
+- JSON/APIレスポンスは変更しない
+- 既存の予約復旧処理 v2.06 を維持
+- 予約データの削除・初期化はしない
 
-配置:
-- worker-hotfix.js
-- wrangler.jsonc
-- README.txt
-
-既存の worker.js は残したまま使います。
+wrangler.jsonc:
+- main は worker-hotfix.js のまま
