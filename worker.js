@@ -1,4 +1,4 @@
-const APP_VERSION="1.96";
+const APP_VERSION="1.97";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -210,7 +210,7 @@ async function sendConfirmedReservationDiscordAnnouncement(env,payload){
     `**担当教官**：${String(payload.assigned_instructor||"未設定")}`,
     "",
     "担当教官は研修予定をご確認ください。"
-  ].join("\\n");
+  ].join("\n");
   try{
     const r=await fetch(webhook,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({content,allowed_mentions:roleId?{roles:[roleId]}:{parse:[]}})});
     return {ok:r.ok,status:r.status};
@@ -6470,7 +6470,11 @@ async function handle(request, env) {
        Number(before.confirmed_preference||0)!==confirmedPref
      );
    const reservationConfirmationChanged=
-     b.status==="reserved" && (previousStatus!=="reserved" || reservedDetailsChanged);
+     b.status==="reserved" &&
+     (
+       previousStatus!=="reserved" ||
+       (reapproveAlternative && reservedDetailsChanged)
+     );
 
    if(finalExam && ["pass","fail"].includes(examResult) && previousStatus!==b.status){
      dmResult=await sendFinalEmploymentExamResultDM(env,{
@@ -6918,7 +6922,8 @@ async function runOrientationPendingAnnouncement(env){
   if(!orientation?.training_id)return {ok:true,total:0,sent:0,skipped:true};
 
   const hourStart=new Date();
-  hourStart.setUTCMinutes(0,0,0);
+  const bucketHour=Math.floor(hourStart.getUTCHours()/3)*3;
+  hourStart.setUTCHours(bucketHour,0,0,0);
   const hourBucket=hourStart.toISOString();
 
   const already=await env.DB.prepare(
@@ -6958,11 +6963,12 @@ async function runPendingApprovalAnnouncement(env){
   await ensureReservationPreferredSchedule(env);
   await ensureReservationNotifications(env);
 
-  // 1時間「経過」ではなく、時刻の1時間枠ごとに1回送る。
-  // Cronの数秒〜数十秒のズレで次の時間帯をスキップしないための方式。
-  const hourStart=new Date();
-  hourStart.setUTCMinutes(0,0,0);
-  const currentHourStart=hourStart.toISOString();
+  // 通知過多を防ぐため、3時間枠ごとに1回だけ送る。
+  // 例: 00-02時 / 03-05時 / 06-08時 ...
+  const bucketStart=new Date();
+  const bucketHour=Math.floor(bucketStart.getUTCHours()/3)*3;
+  bucketStart.setUTCHours(bucketHour,0,0,0);
+  const currentHourStart=bucketStart.toISOString();
 
   const q=await env.DB.prepare(`
     SELECT
