@@ -1,4 +1,4 @@
-const APP_VERSION="2.03";
+const APP_VERSION="2.04";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -1369,6 +1369,30 @@ html,
   #booking input[type="time"]{
     font-size:11px !important;
   }
+}
+
+
+/* v2.04 clearer trainee progress */
+.traineeCompactProgress{
+  display:flex !important;
+  flex-direction:column;
+  align-items:flex-end;
+  gap:1px;
+}
+.traineeCompactProgress b{
+  font-size:11px;
+  line-height:1;
+}
+.traineeCompactPct{
+  font-size:7px;
+  font-weight:1000;
+  color:#647386;
+}
+.traineeCompactBar{
+  height:5px !important;
+  border-radius:999px !important;
+  overflow:hidden;
+  background:#e6ecf2 !important;
 }
 
 body{
@@ -3789,7 +3813,7 @@ async function loadPendingSurveys(){
     surveyStars(id,'content_rating','研修内容の評価')+
     surveyStars(id,'difficulty_rating','難易度（1=やさしい / 5=難しい）')+
     surveyStars(id,'satisfaction_rating','総合満足度')+
-    '<div class="surveyField"><label>自由コメント（任意）</label><textarea id="surveyComment_'+id+'" placeholder="良かった点・改善点など"></textarea></div>'+
+    '<div class="surveyField"><label>自由コメント（必須）</label><textarea id="surveyComment_'+id+'" placeholder="良かった点・改善点などを入力してください"></textarea></div>'+
     '<button class="btn primary" style="width:100%;margin-top:10px" type="button" onclick="submitTrainingSurvey('+id+')">アンケートを送信</button></div>';
  }).join(''):'<div class="empty">現在、未回答のアンケートはありません。</div>';
 }
@@ -3812,6 +3836,11 @@ async function submitTrainingSurvey(id){
    alert('4項目すべて1〜5で回答してください。');return;
  }
  const comment=String(document.getElementById('surveyComment_'+id)?.value||'').trim();
+ if(!comment){
+   alert('自由コメントも必須です。');
+   document.getElementById('surveyComment_'+id)?.focus();
+   return;
+ }
  if(!confirm('この内容でアンケートを送信しますか？'))return;
  const r=await fetch('/api/trainee/surveys',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({reservation_id:id,...s,comment})});
  const d=await r.json().catch(()=>({}));
@@ -5092,6 +5121,26 @@ function renderTrainees(){
  else if(traineeDashboardFilter==='retake')rows=rows.filter(x=>Number(x.retake||0)>0);
  else if(traineeDashboardFilter==='orientationPending')rows=rows.filter(x=>!x.orientation_completed);
 
+ // 期限が近い順に自動整列。
+ rows.sort((a,b)=>{
+   const ac=a.training_cycle||{}, bc=b.training_cycle||{};
+   const group=c=>{
+     if(c.expired)return 0;
+     if(c.started && !c.all_completed)return 1;
+     if(!c.started && !c.all_completed)return 2;
+     if(c.all_completed)return 3;
+     return 4;
+   };
+   const ag=group(ac), bg=group(bc);
+   if(ag!==bg)return ag-bg;
+   if(ag===1){
+     const ad=Number.isFinite(Number(ac.days_remaining))?Number(ac.days_remaining):99999;
+     const bd=Number.isFinite(Number(bc.days_remaining))?Number(bc.days_remaining):99999;
+     if(ad!==bd)return ad-bd;
+   }
+   return String(a.player_name||'').localeCompare(String(b.player_name||''),'ja');
+ });
+
  updateTraineeFilterBar();
 
  const e=document.getElementById('traineeList');
@@ -5113,10 +5162,10 @@ function renderTrainees(){
          '<div class="traineeCompactName">'+esc(x.player_name||'名前未登録')+'</div>'+
          '<div class="traineeCompactId">discord:'+esc(x.discord_id||x.login_name||'-')+'</div>'+
        '</div>'+
-       '<div class="traineeCompactProgress">'+done+'/'+total+'</div>'+
+       '<div class="traineeCompactProgress"><b>'+done+'/'+total+'</b><span class="traineeCompactPct">'+pct+'%</span></div>'+
      '</div>'+
      '<div class="traineeCompactSub">'+
-       '<div class="traineeCompactNext">次：'+esc(next)+'</div>'+
+       '<div class="traineeCompactNext">次の研修：'+esc(next)+'</div>'+
        compactDeadlineHtml(x.training_cycle)+
      '</div>'+
      '<div class="bar traineeCompactBar"><div class="fill" style="width:'+pct+'%"></div></div>'+
@@ -5166,11 +5215,11 @@ function renderTrainees(){
            '<button class="btn small traineeProgressBtn" data-discord="'+encodeURIComponent(x.discord_id||x.login_name||x.player_name)+'">進捗</button>'+
            '<button class="btn small traineeOpenBtn" data-discord="'+encodeURIComponent(x.discord_id||x.login_name||x.player_name)+'">履歴</button>'+
          '</div>'+
+         '<div style="margin-top:7px;padding-top:7px;border-top:1px solid #ead0cd;text-align:right">'+
+           '<button class="btn small danger traineeDeleteBtn" data-id="'+x.id+'" data-name="'+encodeURIComponent(x.player_name||'研修生')+'">研修生を削除</button>'+
+         '</div>'+
        '</div>'+
      '</details>'+
-     '<div class="traineeCompactDanger">'+
-       '<button class="btn small danger traineeDeleteBtn" data-id="'+x.id+'" data-name="'+encodeURIComponent(x.player_name||'研修生')+'">削除</button>'+
-     '</div>'+
    '</div>';
  }).join('');
 
@@ -6035,6 +6084,7 @@ async function handle(request, env) {
    if(!rid)return json({error:"対象研修が不正です"},400);
    if([ir,cr,dr,sr].some(v=>!Number.isInteger(v)||v<1||v>5))
      return json({error:"評価はすべて1〜5で回答してください"},400);
+   if(!comment)return json({error:"自由コメントも必須です"},400);
 
    const did=String(trainee.discord_id||trainee.login_name||"").trim();
    const row=await env.DB.prepare(`
