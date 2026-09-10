@@ -1,4 +1,4 @@
-const APP_VERSION="2.01";
+const APP_VERSION="2.02";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -1099,7 +1099,159 @@ const html = (title, body, script = "") => new Response(`<!doctype html>
 }
 *{box-sizing:border-box}
 
-html,body{
+html,
+/* v2.02 compact trainee list */
+#traineeList{
+  display:grid;
+  gap:5px;
+}
+.traineeCard{
+  padding:7px 8px !important;
+  border-radius:11px !important;
+  margin:0 !important;
+}
+.traineeCompactHead{
+  display:grid;
+  grid-template-columns:34px minmax(0,1fr) auto;
+  gap:7px;
+  align-items:center;
+}
+.traineeCompactAvatar{
+  width:34px;
+  height:34px;
+  border-radius:50%;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  background:#edf3fa;
+  border:1px solid #cbd8e6;
+  color:#1659a7;
+  font-weight:1000;
+  font-size:14px;
+}
+.traineeCompactName{
+  font-size:12px;
+  font-weight:1000;
+  line-height:1.1;
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+.traineeCompactId{
+  font-size:7px;
+  color:#7b8797;
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  margin-top:2px;
+}
+.traineeCompactProgress{
+  text-align:right;
+  font-size:10px;
+  font-weight:1000;
+  white-space:nowrap;
+}
+.traineeCompactSub{
+  display:grid;
+  grid-template-columns:minmax(0,1fr) auto;
+  gap:6px;
+  align-items:center;
+  margin-top:4px;
+}
+.traineeCompactNext{
+  font-size:8px;
+  color:#5f6f82;
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+.traineeCompactDeadline{
+  font-size:8px;
+  font-weight:1000;
+  white-space:nowrap;
+  color:#667487;
+}
+.traineeCompactDeadline.urgent{color:#9a6a00}
+.traineeCompactDeadline.expired{color:#a7372d}
+.traineeCompactDeadline.done{color:#2f7b4b}
+.traineeCompactBar{
+  height:4px !important;
+  margin-top:4px !important;
+}
+.traineeCompactStatuses{
+  display:flex;
+  flex-wrap:wrap;
+  gap:3px;
+  margin-top:4px;
+}
+.traineeCompactStatuses span{
+  font-size:7px;
+  padding:2px 5px;
+  border-radius:999px;
+  background:#f3f6f9;
+  color:#536274;
+}
+.traineeCompactDetails{
+  margin-top:5px;
+}
+.traineeCompactDetails summary{
+  min-height:28px !important;
+  padding:5px 7px !important;
+  border-radius:8px !important;
+  font-size:8px !important;
+  font-weight:900 !important;
+}
+.traineeCompactDetailsBody{
+  padding-top:6px;
+}
+.traineeCompactDetailsBody .card,
+.traineeCompactDetailsBody .transferStartBox{
+  margin-top:5px !important;
+  padding:7px !important;
+}
+.traineeCompactDetailsBody textarea{
+  min-height:56px !important;
+}
+.traineeCompactDetailsBody .btn{
+  min-height:30px !important;
+  padding:5px 7px !important;
+  font-size:8px !important;
+}
+.traineeCompactDetailsBody select,
+.traineeCompactDetailsBody input{
+  min-height:34px !important;
+  height:34px !important;
+  font-size:10px !important;
+}
+.traineeCompactDanger{
+  margin-top:5px;
+  text-align:right;
+}
+.traineeCompactDanger .btn{
+  min-height:28px !important;
+  padding:4px 7px !important;
+  font-size:8px !important;
+}
+@media(max-width:560px){
+  #traineeList{gap:4px}
+  .traineeCard{padding:6px 7px !important}
+  .traineeCompactHead{
+    grid-template-columns:30px minmax(0,1fr) auto;
+    gap:6px;
+  }
+  .traineeCompactAvatar{
+    width:30px;
+    height:30px;
+    font-size:12px;
+  }
+  .traineeCompactName{font-size:11px}
+  .traineeCompactId{font-size:6.5px}
+  .traineeCompactProgress{font-size:9px}
+  .traineeCompactNext,
+  .traineeCompactDeadline{font-size:7px}
+}
+
+body{
   max-width:100%;
   overflow-x:hidden;
 }
@@ -4801,6 +4953,17 @@ function renderAdminTrainingDeadline(cycle){
  return '<div class="adminDeadlineLine '+(urgent?'urgent':'')+'">開始 '+esc(start)+' ｜ 期限 '+esc(deadline)+' ｜ 残り '+(Number.isFinite(left)?Math.max(0,left):'-')+'日</div>';
 }
 
+function compactDeadlineHtml(cycle){
+ const c=cycle||{};
+ if(c.all_completed)return '<span class="traineeCompactDeadline done">修了</span>';
+ if(!c.started)return '<span class="traineeCompactDeadline">開始前</span>';
+ const left=Number(c.days_remaining);
+ if(c.expired || (Number.isFinite(left) && left<0)){
+   return '<span class="traineeCompactDeadline expired">期限超過</span>';
+ }
+ return '<span class="traineeCompactDeadline '+(Number.isFinite(left)&&left<=7?'urgent':'')+'">残り '+(Number.isFinite(left)?Math.max(0,left):'-')+'日</span>';
+}
+
 function renderTrainees(){
  const q=(document.getElementById('traineeSearch')?.value||'').trim().toLowerCase();
  let rows=traineeRows.filter(x=>!q||[x.player_name,x.login_name,x.discord_id,x.affiliation].some(v=>String(v||'').toLowerCase().includes(q)));
@@ -4808,47 +4971,89 @@ function renderTrainees(){
  else if(traineeDashboardFilter==='inProgress')rows=rows.filter(x=>!x.all_completed);
  else if(traineeDashboardFilter==='retake')rows=rows.filter(x=>Number(x.retake||0)>0);
  else if(traineeDashboardFilter==='orientationPending')rows=rows.filter(x=>!x.orientation_completed);
+
  updateTraineeFilterBar();
+
  const e=document.getElementById('traineeList');
- if(!rows.length){e.innerHTML='<div class="empty">該当する研修生はいません。</div>';return}
+ if(!rows.length){
+   e.innerHTML='<div class="empty">該当する研修生はいません。</div>';
+   return;
+ }
+
  e.innerHTML=rows.map(x=>{
-   const done=Number(x.progress_completed||0),total=Number(x.progress_total||0),pct=Number(x.progress_percent||0);
-   return '<div class="card traineeCard"><div class="between"><div class="profileHead"><div class="avatar">'+esc((x.player_name||'?').slice(0,1))+'</div><div><div class="title">'+esc(x.player_name||'名前未登録')+'</div>'+(x.login_name?'<div class="sub">：'+esc(x.login_name)+'</div>':'')+'</div></div></div>'+
-   '<div style="margin-top:12px;padding:10px;border:1px solid #d7ad45;border-radius:12px;background:#fffdf7">'+
-     '<div class="between"><div><b>オリエンテーション</b><div class="sub">'+(x.orientation_completed?'受講済み':'未受講')+'</div></div><div class="row"><button class="btn small '+(x.orientation_completed?'dark':'')+' orientationToggleBtn" data-id="'+x.id+'" data-completed="1">済</button><button class="btn small '+(!x.orientation_completed?'dark':'')+' orientationToggleBtn" data-id="'+x.id+'" data-completed="0">未</button></div></div>'+
-     '<select class="orientationInstructorSelect" data-id="'+x.id+'" style="margin-top:8px"><option value="">担当教官を選択...</option>'+instructorRows.map(i=>'<option value="'+esc(i.name)+'">'+esc(i.name)+'</option>').join('')+'</select>'+
-   '</div>'+
-   (x.all_completed?'<div style="margin-top:12px;padding:12px;border:2px solid #d7ad45;border-radius:14px;background:#fff9df"><div style="font-weight:1000;font-size:17px">🏅 全研修修了</div><div class="sub" style="margin-top:4px">修了日：'+esc(String(x.all_completed_at||'').replaceAll('-','/'))+'</div></div>':'')+
-   '<div class="traineeProgressCompact"><div class="between"><b>研修進捗</b><b>'+done+'/'+total+' 完了</b></div><div class="bar"><div class="fill" style="width:'+pct+'%"></div></div><div class="sub" style="margin-top:5px">'+(x.current_training?'次：'+esc(x.current_training):'全研修修了')+'</div>'+renderAdminTrainingDeadline(x.training_cycle)+'</div>'+
-   '<div class="meta"><span>承認 '+x.pending+'</span><span>予約 '+x.reserved+'</span><span>再受講 '+x.retake+'</span><span>欠席 '+x.absent+'</span></div>'+
-   '<details class="traineeAdminDetails">'+
-     '<summary>管理メニューを開く</summary>'+
-     '<div class="traineeAdminDetailsBody">'+
-   '<div class="transferStartBox">'+
-     '<div class="transferStartTitle">途中参加・開始研修を指定</div>'+
-     '<div class="sub" style="margin-top:3px">選択した研修より前を「既修了認定」にします。</div>'+
-     '<div class="transferStartGrid">'+
-       '<select class="traineeStartSelect" data-id="'+x.id+'">'+
-         '<option value="">この研修から開始...</option>'+
-         traineeStartOptions.map(o=>'<option value="'+Number(o.training_id)+'" '+(Number(x.current_training_id)===Number(o.training_id)?'selected':'')+'>'+esc(o.title||'研修')+'</option>').join('')+
-       '</select>'+
-       '<input class="traineeRecognitionDate" data-id="'+x.id+'" type="date" aria-label="既修了認定日">'+
+   const done=Number(x.progress_completed||0);
+   const total=Number(x.progress_total||0);
+   const pct=Number(x.progress_percent||0);
+   const next=x.current_training||'全研修修了';
+
+   return '<div class="card traineeCard">'+
+     '<div class="traineeCompactHead">'+
+       '<div class="traineeCompactAvatar">'+esc((x.player_name||'?').slice(0,1))+'</div>'+
+       '<div style="min-width:0">'+
+         '<div class="traineeCompactName">'+esc(x.player_name||'名前未登録')+'</div>'+
+         '<div class="traineeCompactId">discord:'+esc(x.discord_id||x.login_name||'-')+'</div>'+
+       '</div>'+
+       '<div class="traineeCompactProgress">'+done+'/'+total+'</div>'+
      '</div>'+
-     '<div style="margin-top:8px"><div class="sub" style="font-weight:900;margin-bottom:5px">認定担当教官</div>'+
-       '<select class="traineeRecognitionInstructor" data-id="'+x.id+'"><option value="">担当教官を選択...</option>'+instructorRows.map(i=>'<option value="'+esc(i.name)+'">'+esc(i.name)+'</option>').join('')+'</select>'+
+     '<div class="traineeCompactSub">'+
+       '<div class="traineeCompactNext">次：'+esc(next)+'</div>'+
+       compactDeadlineHtml(x.training_cycle)+
      '</div>'+
-     '<button class="btn small primary transferStartBtn setTraineeStartBtn" data-id="'+x.id+'">この研修から開始に設定</button>'+
-     '<div class="sub" style="margin-top:5px">認定日は任意です。担当教官は必ず選択してください。</div>'+
-   '</div>'+
-   '<div style="margin-top:8px"><div class="sub" style="font-weight:900">管理メモ（管理者のみ）</div><textarea class="traineeAdminMemo" data-id="'+x.id+'" rows="3" maxlength="5000" placeholder="注意点・指導内容・今後の対応など" style="width:100%;margin-top:6px">'+esc(x.admin_memo||'')+'</textarea><button class="btn small saveTraineeMemoBtn" data-id="'+x.id+'" style="margin-top:6px">管理メモを保存</button></div>'+
-   '<div class="traineeAdminActions">'+
-     '<button class="btn small traineeProgressBtn" data-discord="'+encodeURIComponent(x.discord_id||x.login_name||x.player_name)+'">進捗表を見る</button>'+
-     '<button class="btn small traineeOpenBtn" data-discord="'+encodeURIComponent(x.discord_id||x.login_name||x.player_name)+'">受講履歴を見る</button>'+
-   '</div>'+
-   '</div></details>'+
-   '<div class="traineeAdminDanger"><button class="btn small danger traineeDeleteBtn" data-id="'+x.id+'" data-name="'+encodeURIComponent(x.player_name||'研修生')+'">研修生を削除</button></div>'+
+     '<div class="bar traineeCompactBar"><div class="fill" style="width:'+pct+'%"></div></div>'+
+     '<div class="traineeCompactStatuses">'+
+       '<span>承認 '+Number(x.pending||0)+'</span>'+
+       '<span>予約 '+Number(x.reserved||0)+'</span>'+
+       '<span>再 '+Number(x.retake||0)+'</span>'+
+       '<span>欠 '+Number(x.absent||0)+'</span>'+
+       '<span>OT '+(x.orientation_completed?'済':'未')+'</span>'+
+     '</div>'+
+     '<details class="traineeAdminDetails traineeCompactDetails">'+
+       '<summary>詳細・管理</summary>'+
+       '<div class="traineeAdminDetailsBody traineeCompactDetailsBody">'+
+         '<div style="padding:7px;border:1px solid #d7ad45;border-radius:9px;background:#fffdf7">'+
+           '<div class="between"><b style="font-size:10px">オリエンテーション</b>'+
+             '<div class="row">'+
+               '<button class="btn small '+(x.orientation_completed?'dark':'')+' orientationToggleBtn" data-id="'+x.id+'" data-completed="1">済</button>'+
+               '<button class="btn small '+(!x.orientation_completed?'dark':'')+' orientationToggleBtn" data-id="'+x.id+'" data-completed="0">未</button>'+
+             '</div>'+
+           '</div>'+
+           '<select class="orientationInstructorSelect" data-id="'+x.id+'" style="margin-top:5px"><option value="">担当教官を選択...</option>'+
+             instructorRows.map(i=>'<option value="'+esc(i.name)+'">'+esc(i.name)+'</option>').join('')+
+           '</select>'+
+         '</div>'+
+         (x.all_completed?
+           '<div style="margin-top:5px;padding:7px;border:1px solid #d7ad45;border-radius:9px;background:#fff9df;font-size:9px;font-weight:1000">🏅 全研修修了 '+esc(String(x.all_completed_at||'').replaceAll('-','/'))+'</div>'
+           :'')+
+         '<div class="transferStartBox">'+
+           '<div class="transferStartTitle" style="font-size:10px">途中参加・開始研修</div>'+
+           '<div class="transferStartGrid">'+
+             '<select class="traineeStartSelect" data-id="'+x.id+'">'+
+               '<option value="">この研修から開始...</option>'+
+               traineeStartOptions.map(o=>'<option value="'+Number(o.training_id)+'" '+(Number(x.current_training_id)===Number(o.training_id)?'selected':'')+'>'+esc(o.title||'研修')+'</option>').join('')+
+             '</select>'+
+             '<input class="traineeRecognitionDate" data-id="'+x.id+'" type="date" aria-label="既修了認定日">'+
+           '</div>'+
+           '<select class="traineeRecognitionInstructor" data-id="'+x.id+'" style="margin-top:5px"><option value="">認定担当教官...</option>'+
+             instructorRows.map(i=>'<option value="'+esc(i.name)+'">'+esc(i.name)+'</option>').join('')+
+           '</select>'+
+           '<button class="btn small primary transferStartBtn setTraineeStartBtn" data-id="'+x.id+'" style="margin-top:5px">開始研修を設定</button>'+
+         '</div>'+
+         '<div style="margin-top:5px">'+
+           '<textarea class="traineeAdminMemo" data-id="'+x.id+'" rows="2" maxlength="5000" placeholder="管理メモ">'+esc(x.admin_memo||'')+'</textarea>'+
+           '<button class="btn small saveTraineeMemoBtn" data-id="'+x.id+'" style="margin-top:5px">メモ保存</button>'+
+         '</div>'+
+         '<div class="traineeAdminActions" style="margin-top:5px">'+
+           '<button class="btn small traineeProgressBtn" data-discord="'+encodeURIComponent(x.discord_id||x.login_name||x.player_name)+'">進捗</button>'+
+           '<button class="btn small traineeOpenBtn" data-discord="'+encodeURIComponent(x.discord_id||x.login_name||x.player_name)+'">履歴</button>'+
+         '</div>'+
+       '</div>'+
+     '</details>'+
+     '<div class="traineeCompactDanger">'+
+       '<button class="btn small danger traineeDeleteBtn" data-id="'+x.id+'" data-name="'+encodeURIComponent(x.player_name||'研修生')+'">削除</button>'+
+     '</div>'+
    '</div>';
  }).join('');
+
  document.querySelectorAll('.traineeProgressBtn').forEach(btn=>btn.addEventListener('click',()=>openAdminProgress(decodeURIComponent(btn.dataset.discord))));
  document.querySelectorAll('.traineeOpenBtn').forEach(btn=>btn.addEventListener('click',()=>openTraineeDetail(decodeURIComponent(btn.dataset.discord))));
  document.querySelectorAll('.orientationToggleBtn').forEach(btn=>btn.addEventListener('click',()=>setOrientationStatus(Number(btn.dataset.id),btn.dataset.completed==='1')));
