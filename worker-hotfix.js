@@ -1,7 +1,7 @@
 import core from "./worker.js";
 
 /*
-  Version 2.10 D1 maintenance mode wrapper
+  Version 2.11 maintenance message wrapper
 
   v2.05 の復旧取得が失敗する環境向けに、復旧経路をさらに単純化。
   - PRAGMA を使わない
@@ -19,7 +19,7 @@ const json = (data, status = 200) => new Response(JSON.stringify(data), {
   }
 });
 
-const HOTFIX_VERSION = "2.10";
+const HOTFIX_VERSION = "2.11";
 
 async function syncDisplayedVersion(response){
   try{
@@ -160,7 +160,7 @@ async function safeReservationList(request, env, ctx){
   }catch(err){
     if(isD1QuotaError(err)){
       return json({
-        error:"D1利用上限に達したためメンテナンス中です",
+        error:"現在メンテナンス中です",
         code:"maintenance_d1_quota",
         version:HOTFIX_VERSION
       },503);
@@ -247,11 +247,11 @@ function maintenanceHtml(){
   <div class="card">
     <div class="status"><span class="dot"></span>システム利用を一時停止しています</div>
     <div class="msg">
-      データベースの1日利用上限に達したため、現在は安全のため画面をメンテナンスモードに切り替えています。<br>
-      データが削除されたわけではありません。
+      現在、システムメンテナンスのため一時的にご利用いただけません。<br>
+      しばらくしてから再度お試しください。
     </div>
     <div class="small">
-      利用上限がリセットされると通常画面へ戻ります。<br>
+      復旧を確認でき次第、通常画面へ戻ります。<br>
       この画面は約5分ごとに自動で再確認します。
     </div>
     <button class="btn" type="button" onclick="location.reload()">再確認する</button>
