@@ -1,4 +1,4 @@
-const APP_VERSION="2.00";
+const APP_VERSION="2.01";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -1099,6 +1099,12 @@ const html = (title, body, script = "") => new Response(`<!doctype html>
 }
 *{box-sizing:border-box}
 
+html,body{
+  max-width:100%;
+  overflow-x:hidden;
+}
+
+
 #historyModal{
   align-items:flex-end;
   overflow:hidden;
@@ -1558,6 +1564,109 @@ const html = (title, body, script = "") => new Response(`<!doctype html>
 .adminDeadlineLine.done{
   color:#2f7b4b;
   font-weight:1000;
+}
+
+
+/* v2.01 booking modal mobile fix */
+#booking{
+  align-items:flex-end;
+  overflow:hidden;
+  overscroll-behavior:contain;
+}
+#booking .sheet{
+  width:min(100%,680px) !important;
+  max-width:100% !important;
+  max-height:92dvh !important;
+  margin:0 auto !important;
+  padding:14px 14px calc(22px + env(safe-area-inset-bottom)) !important;
+  overflow-y:auto !important;
+  overflow-x:hidden !important;
+  -webkit-overflow-scrolling:touch;
+  overscroll-behavior:contain;
+  touch-action:pan-y;
+  border-radius:18px 18px 0 0 !important;
+}
+#booking .grid{
+  min-width:0 !important;
+  max-width:100% !important;
+}
+#booking .field{
+  min-width:0 !important;
+  max-width:100% !important;
+}
+#booking input,
+#booking textarea,
+#booking select{
+  display:block;
+  width:100% !important;
+  max-width:100% !important;
+  min-width:0 !important;
+  box-sizing:border-box !important;
+}
+#booking input[type="date"],
+#booking input[type="time"]{
+  -webkit-appearance:none;
+  appearance:none;
+  overflow:hidden;
+}
+#booking textarea{
+  min-height:82px !important;
+}
+#booking .card{
+  max-width:100% !important;
+  overflow:hidden !important;
+}
+#booking #bookingSubmitBtn{
+  position:sticky;
+  bottom:0;
+  z-index:2;
+  margin-top:10px !important;
+  margin-bottom:0 !important;
+  box-shadow:0 -6px 14px rgba(233,238,244,.9);
+}
+@supports not (height:1dvh){
+  #booking .sheet{max-height:92vh !important}
+}
+@media(max-width:560px){
+  #booking .sheet{
+    width:100% !important;
+    padding:12px 12px calc(20px + env(safe-area-inset-bottom)) !important;
+  }
+  #booking .grid{
+    grid-template-columns:minmax(0,1fr) minmax(0,.78fr) !important;
+    gap:6px !important;
+  }
+  #booking .field label{
+    font-size:10px !important;
+  }
+  #booking input[type="date"],
+  #booking input[type="time"]{
+    min-height:42px !important;
+    height:42px !important;
+    padding:7px 8px !important;
+    font-size:14px !important;
+  }
+  #booking textarea{
+    min-height:72px !important;
+  }
+  #booking .card{
+    padding:9px !important;
+    margin:9px 0 !important;
+  }
+  #booking #openPolicyBtn{
+    margin-top:6px !important;
+  }
+  #booking #bookingSubmitBtn{
+    min-height:46px !important;
+  }
+}
+@media(max-width:390px){
+  #booking .grid{
+    grid-template-columns:1fr !important;
+  }
+  #booking .grid .field + .field{
+    margin-top:2px !important;
+  }
 }
 
 body{
@@ -3139,6 +3248,7 @@ async function load(){
  }
 }
 function openBooking(id,title){
+ setTimeout(fitBookingModalToViewport,0);
  selectedTraining={id,title};
  document.getElementById('bookingMsg').innerHTML='';
  if(document.getElementById('policyAgree')){
@@ -3569,6 +3679,17 @@ async function handleSurveyRequiredReservationError(d){
  }
  return false;
 }
+
+
+function fitBookingModalToViewport(){
+ const sheet=document.querySelector('#booking .sheet');
+ if(!sheet)return;
+ const h=window.visualViewport?.height||window.innerHeight;
+ sheet.style.maxHeight=Math.max(320,Math.floor(h*0.92))+'px';
+}
+window.visualViewport?.addEventListener('resize',fitBookingModalToViewport);
+window.addEventListener('orientationchange',()=>setTimeout(fitBookingModalToViewport,120));
+
 `;
 
 const ADMIN_BODY = `
