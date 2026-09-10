@@ -1,7 +1,7 @@
 import core from "./worker.js";
 
 /*
-  Version 2.08 reservation-control diagnostic wrapper
+  Version 2.09 D1 usage saver wrapper
 
   v2.05 の復旧取得が失敗する環境向けに、復旧経路をさらに単純化。
   - PRAGMA を使わない
@@ -19,7 +19,7 @@ const json = (data, status = 200) => new Response(JSON.stringify(data), {
   }
 });
 
-const HOTFIX_VERSION = "2.08";
+const HOTFIX_VERSION = "2.09";
 
 async function syncDisplayedVersion(response){
   try{
@@ -59,6 +59,21 @@ async function verifyAdmin(request, env, ctx){
   return response.ok;
 }
 
+async function ensureReadIndexes(env){
+  // 1回作成後は軽量。予約一覧の status + id 絞り込みを高速化し、
+  // D1 の不要な行読み取りを減らす。
+  try{
+    await env.DB.prepare(
+      "CREATE INDEX IF NOT EXISTS idx_reservations_status_id ON reservations(status,id DESC)"
+    ).run();
+  }catch(_){}
+  try{
+    await env.DB.prepare(
+      "CREATE INDEX IF NOT EXISTS idx_reservations_training_id ON reservations(training_id)"
+    ).run();
+  }catch(_){}
+}
+
 async function safeReservationList(request, env, ctx){
   const fail = (stage, detail, status = 500) => json({
     error: `【診断:${stage}】 ${String(detail || "不明なエラー").slice(0, 700)}`,
@@ -67,12 +82,10 @@ async function safeReservationList(request, env, ctx){
     version: HOTFIX_VERSION
   }, status);
 
-  // 1) DB binding
   if(!env?.DB){
     return fail("DB_BINDING", "DB binding が見つかりません");
   }
 
-  // 2) Admin auth
   try{
     const authed = await verifyAdmin(request, env, ctx);
     if(!authed){
@@ -82,48 +95,51 @@ async function safeReservationList(request, env, ctx){
     return fail("ADMIN_AUTH_CHECK", err?.message || err);
   }
 
-  // 3) reservations 単体テスト
-  let basicRows = [];
-  try{
-    const basic = await env.DB.prepare(`
-      SELECT *
-      FROM reservations
-      ORDER BY id DESC
-      LIMIT 300
-    `).all();
-    basicRows = Array.isArray(basic?.results) ? basic.results : [];
-  }catch(err){
-    return fail("RESERVATIONS_READ", err?.message || err);
-  }
+  await ensureReadIndexes(env);
 
-  // 4) trainings JOIN テスト
   try{
-    const joined = await env.DB.prepare(`
+    // 画面で即対応が必要な状態を優先。全件読みを避ける。
+    const active = await env.DB.prepare(`
       SELECT
-        r.*,
+        r.id,r.training_id,r.player_name,r.discord_id,r.affiliation,r.note,r.status,
+        r.assigned_instructor,r.preferred_date,r.preferred_time,
+        r.preferred_date2,r.preferred_time2,r.preferred_date3,r.preferred_time3,
+        r.confirmed_date,r.confirmed_time,r.confirmed_preference,
+        r.exam_result,r.exam_score,r.created_at,
         COALESCE(t.title,'研修') AS title,
         COALESCE(t.training_date,'') AS training_date,
         COALESCE(t.start_time,'') AS start_time,
         COALESCE(t.instructor,'') AS instructor
       FROM reservations r
-      LEFT JOIN trainings t ON t.id = r.training_id
-      WHERE COALESCE(r.status,'') IN (
-        'pending','reserved','completed','retake','absent','expired'
-      )
-      ORDER BY
-        CASE COALESCE(r.status,'')
-          WHEN 'pending' THEN 0
-          WHEN 'reserved' THEN 1
-          WHEN 'retake' THEN 2
-          WHEN 'completed' THEN 3
-          WHEN 'absent' THEN 4
-          ELSE 5
-        END,
-        r.id DESC
-      LIMIT 300
+      LEFT JOIN trainings t ON t.id=r.training_id
+      WHERE r.status IN ('pending','reserved','retake','absent','expired')
+      ORDER BY r.id DESC
+      LIMIT 80
     `).all();
 
-    const rows = Array.isArray(joined?.results) ? joined.results : [];
+    // 受講済み履歴は直近だけ。既存UIは履歴表示が長すぎない方針なので20件で十分。
+    const completed = await env.DB.prepare(`
+      SELECT
+        r.id,r.training_id,r.player_name,r.discord_id,r.affiliation,r.note,r.status,
+        r.assigned_instructor,r.preferred_date,r.preferred_time,
+        r.preferred_date2,r.preferred_time2,r.preferred_date3,r.preferred_time3,
+        r.confirmed_date,r.confirmed_time,r.confirmed_preference,
+        r.exam_result,r.exam_score,r.created_at,
+        COALESCE(t.title,'研修') AS title,
+        COALESCE(t.training_date,'') AS training_date,
+        COALESCE(t.start_time,'') AS start_time,
+        COALESCE(t.instructor,'') AS instructor
+      FROM reservations r
+      LEFT JOIN trainings t ON t.id=r.training_id
+      WHERE r.status='completed'
+      ORDER BY r.id DESC
+      LIMIT 20
+    `).all();
+
+    const rows = [
+      ...(Array.isArray(active?.results) ? active.results : []),
+      ...(Array.isArray(completed?.results) ? completed.results : [])
+    ];
 
     return json(rows.map(x => ({
       ...x,
@@ -139,88 +155,63 @@ async function safeReservationList(request, env, ctx){
       confirmed_preference: Number(x.confirmed_preference || 0),
       exam_result: String(x.exam_result || ""),
       exam_score: x.exam_score ?? null,
-      _diagnostic_source: "joined"
+      _d1_saver: true
     })));
-  }catch(joinErr){
-    // 5) JOIN だけ失敗した場合は reservations 単体で返す
-    try{
-      const rows = basicRows
-        .filter(x => ['pending','reserved','completed','retake','absent','expired']
-          .includes(String(x.status || '')))
-        .map(x => ({
-          ...x,
-          title: String(x.title || "研修"),
-          training_date: String(x.training_date || ""),
-          start_time: String(x.start_time || ""),
-          instructor: String(x.instructor || ""),
-          assigned_instructor: String(x.assigned_instructor || ""),
-          preferred_date: String(x.preferred_date || ""),
-          preferred_time: String(x.preferred_time || ""),
-          preferred_date2: String(x.preferred_date2 || ""),
-          preferred_time2: String(x.preferred_time2 || ""),
-          preferred_date3: String(x.preferred_date3 || ""),
-          preferred_time3: String(x.preferred_time3 || ""),
-          confirmed_date: String(x.confirmed_date || ""),
-          confirmed_time: String(x.confirmed_time || ""),
-          confirmed_preference: Number(x.confirmed_preference || 0),
-          exam_result: String(x.exam_result || ""),
-          exam_score: x.exam_score ?? null,
-          _diagnostic_source: "reservations_only",
-          _diagnostic_warning: `JOIN失敗: ${String(joinErr?.message || joinErr).slice(0,300)}`
-        }));
-
-      if(rows.length){
-        return json(rows);
-      }
-
-      return fail(
-        "TRAININGS_JOIN",
-        `reservations は読めました（${basicRows.length}件）が、JOINに失敗しました: ${joinErr?.message || joinErr}`
-      );
-    }catch(fallbackErr){
-      return fail(
-        "FALLBACK_NORMALIZE",
-        `${joinErr?.message || joinErr} / fallback: ${fallbackErr?.message || fallbackErr}`
-      );
-    }
+  }catch(err){
+    return fail("D1_SAVER_READ", err?.message || err);
   }
+}
+
+
+const CACHEABLE_ADMIN_GETS = new Set([
+  "/api/admin/stats",
+  "/api/admin/trainees",
+  "/api/admin/surveys"
+]);
+
+async function fetchWithShortCache(request, env, ctx){
+  const url = new URL(request.url);
+  if(request.method !== "GET" || !CACHEABLE_ADMIN_GETS.has(url.pathname)){
+    return core.fetch(request, env, ctx);
+  }
+
+  const cache = caches.default;
+  const cacheKey = new Request(request.url, {method:"GET", headers:request.headers});
+  const hit = await cache.match(cacheKey);
+  if(hit) return hit;
+
+  const res = await core.fetch(request, env, ctx);
+  if(res.ok){
+    const headers = new Headers(res.headers);
+    headers.set("cache-control","private, max-age=60");
+    const cached = new Response(res.clone().body, {
+      status:res.status,
+      statusText:res.statusText,
+      headers
+    });
+    ctx.waitUntil(cache.put(cacheKey, cached.clone()));
+    return cached;
+  }
+  return res;
 }
 
 async function fetch(request, env, ctx){
   const url = new URL(request.url);
 
   if(url.pathname !== "/api/admin/reservation-control" || request.method !== "GET"){
-    const response = await core.fetch(request, env, ctx);
+    const response = await fetchWithShortCache(request, env, ctx);
     return syncDisplayedVersion(response);
   }
 
   /*
-    まず既存処理を使う。
-    成功していれば従来機能をそのまま維持。
-  */
-  try{
-    const original = await core.fetch(request, env, ctx);
-
-    if(original.status < 500){
-      return syncDisplayedVersion(original);
-    }
-
-    console.error(
-      "reservation-control primary failed; switching to v2.08 diagnostic fallback",
-      original.status
-    );
-  }catch(err){
-    console.error("reservation-control primary exception", err);
-  }
-
-  /*
-    既存処理の自動期限処理・スキーマ補完が失敗しても
-    予約一覧だけは読み取り専用で表示する。
+    D1節約版:
+    予約一覧は既存coreを通さず、必要な件数だけ直接取得。
+    runExpiredPendingReservations / ensure系の連続実行を避ける。
   */
   try{
     return await safeReservationList(request, env, ctx);
   }catch(err){
-    console.error("reservation-control v2.08 diagnostic fallback failed", err);
+    console.error("reservation-control v2.09 saver failed", err);
     const detail = String(err?.message || err || "UNKNOWN_ERROR").slice(0, 800);
     return json({
       error: "【診断:UNHANDLED】 " + detail,
