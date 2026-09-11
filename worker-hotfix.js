@@ -1,7 +1,7 @@
 import core from "./worker.js";
 
 /*
-  Version 2.21 admin utility tools
+  Version 2.23 dashboard instructor availability
 
   v2.05 の復旧取得が失敗する環境向けに、復旧経路をさらに単純化。
   - PRAGMA を使わない
@@ -19,7 +19,7 @@ const json = (data, status = 200) => new Response(JSON.stringify(data), {
   }
 });
 
-const HOTFIX_VERSION = "2.21";
+const HOTFIX_VERSION = "2.23";
 
 async function syncDisplayedVersion(response){
   try{
@@ -256,6 +256,184 @@ async function syncDisplayedVersion(response){
 })();
 
 
+
+
+// v2.23: 教官の空き時間登録を上部ダッシュボードへ常設
+(async()=>{
+  const visible=el=>{
+    if(!el||!el.isConnected)return false;
+    const r=el.getBoundingClientRect();
+    const s=getComputedStyle(el);
+    return r.width>0 && r.height>0 && s.display!=='none' && s.visibility!=='hidden';
+  };
+
+  function findDashboardAnchor(){
+    const candidates=[...document.querySelectorAll('h1,h2,h3,.title,.sectionTitle,header,div')].filter(visible);
+    return candidates.find(el=>{
+      const t=(el.textContent||'').trim();
+      return /ダッシュボード|管理者ダッシュボード/.test(t);
+    }) || document.getElementById('d1StatusInline') || document.querySelector('main') || document.body;
+  }
+
+  async function mountAvailabilityDashboard(){
+    if(document.getElementById('availabilityDashboard223'))return true;
+    const anchor=findDashboardAnchor();
+    if(!anchor)return false;
+
+    const card=document.createElement('div');
+    card.id='availabilityDashboard223';
+    card.style.cssText='margin:7px 0 10px;padding:9px 10px;border:1px solid #d8e2ec;border-radius:12px;background:#fff;box-shadow:0 3px 10px rgba(20,45,70,.05);display:flex;justify-content:space-between;gap:10px;align-items:center';
+    card.innerHTML=
+      '<div style="min-width:0">'+
+        '<div style="font-size:12px;font-weight:1000;color:#163453">📅 教官の空き時間</div>'+
+        '<div id="availabilitySummary223" style="margin-top:2px;font-size:9px;color:#74869a">登録状況を確認中...</div>'+
+      '</div>'+
+      '<button id="availabilityOpen223" style="flex:0 0 auto;border:0;border-radius:9px;background:#0b2d52;color:#fff;padding:8px 10px;font-weight:1000;font-size:10px">時間を登録</button>';
+
+    if(anchor.id==='d1StatusInline'){
+      anchor.insertAdjacentElement('afterend',card);
+    }else if(anchor.tagName && /^H[1-3]$/.test(anchor.tagName)){
+      anchor.insertAdjacentElement('afterend',card);
+    }else{
+      anchor.prepend(card);
+    }
+
+    card.querySelector('#availabilityOpen223').onclick=openAvailability;
+
+    try{
+      const r=await fetch('/api/admin/instructor-availability',{cache:'no-store'});
+      if(r.status===401){card.remove();return false;}
+      const d=await r.json();
+      const rows=Array.isArray(d.availability)?d.availability:[];
+      const summary=card.querySelector('#availabilitySummary223');
+      if(!rows.length){
+        summary.textContent='現在の登録：0件';
+      }else{
+        const today=rows[0];
+        summary.textContent='登録 '+rows.length+'件 ｜ 次 '+(today.available_date||'')+' '+(today.start_time||'')+'〜'+(today.end_time||'')+' '+(today.instructor_name||'');
+      }
+    }catch(_){
+      card.querySelector('#availabilitySummary223').textContent='登録状況を取得できませんでした';
+    }
+    return true;
+  }
+
+  mountAvailabilityDashboard();
+  let tries=0;
+  const timer=setInterval(async()=>{
+    tries++;
+    const ok=await mountAvailabilityDashboard();
+    if(ok||tries>120)clearInterval(timer);
+  },500);
+  const ob=new MutationObserver(()=>mountAvailabilityDashboard());
+  ob.observe(document.documentElement,{childList:true,subtree:true,attributes:true,attributeFilter:['class','style']});
+})();
+
+// v2.22: 研修生予約画面 - 教官の確実枠を優先表示
+(async()=>{
+  const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  let cache=null;
+  async function loadSlots(){
+    if(cache)return cache;
+    try{
+      const r=await fetch('/api/trainee/instructor-availability',{cache:'no-store'});
+      const d=await r.json();
+      cache=Array.isArray(d.availability)?d.availability:[];
+    }catch(_){cache=[];}
+    return cache;
+  }
+
+  function firstField(kind){
+    const sels = kind==='date'
+      ? ['[name="preferred_date"]','#preferred_date','#preferredDate','input[type="date"][data-preference="1"]']
+      : ['[name="preferred_time"]','#preferred_time','#preferredTime','input[type="time"][data-preference="1"]'];
+    for(const s of sels){const el=document.querySelector(s);if(el)return el;}
+    const all=[...document.querySelectorAll(kind==='date'?'input[type="date"]':'input[type="time"]')];
+    return all[0]||null;
+  }
+  function secondDateField(){
+    const sels=['[name="preferred_date2"]','#preferred_date2','#preferredDate2','input[type="date"][data-preference="2"]'];
+    for(const s of sels){const el=document.querySelector(s);if(el)return el;}
+    const all=[...document.querySelectorAll('input[type="date"]')];
+    return all[1]||null;
+  }
+
+  function setValue(el,val){
+    if(!el)return;
+    el.value=val;
+    el.dispatchEvent(new Event('input',{bubbles:true}));
+    el.dispatchEvent(new Event('change',{bubbles:true}));
+  }
+
+  async function mount(){
+    if(document.getElementById('prioritySlots222'))return true;
+    const dateEl=firstField('date'), timeEl=firstField('time');
+    if(!dateEl || !timeEl)return false;
+
+    const slots=await loadSlots();
+    const box=document.createElement('div');
+    box.id='prioritySlots222';
+    box.style.cssText='margin:8px 0 10px;padding:10px;border:1px solid #d9bd61;border-radius:12px;background:#fffdf5';
+    const rows=slots.slice(0,8);
+    let html='<div style="display:flex;justify-content:space-between;gap:8px;align-items:center">'+
+      '<div><b style="font-size:13px;color:#17314d">教官確定枠（優先）</b><div style="font-size:9px;color:#7b6b36;margin-top:2px">教官が対応可能として登録した時間です</div></div>'+
+      '<span style="padding:3px 6px;border-radius:999px;background:#edf7ef;border:1px solid #9bc9a3;color:#28703a;font-size:8px;font-weight:1000">優先</span></div>';
+
+    if(rows.length){
+      html+='<div style="display:grid;gap:5px;margin-top:8px">';
+      rows.forEach((x,i)=>{
+        html+='<button type="button" data-slot="'+i+'" style="text-align:left;padding:8px;border:1px solid #d7e1eb;border-radius:9px;background:#fff;color:#17314d">'+
+          '<b>'+esc(x.available_date)+' '+esc(x.start_time)+'〜'+esc(x.end_time)+'</b>'+
+          '<div style="font-size:9px;color:#6f8091;margin-top:2px">担当可能：'+esc(x.instructor_name)+(x.note?' / '+esc(x.note):'')+'</div></button>';
+      });
+      html+='</div>';
+    }else{
+      html+='<div style="margin-top:8px;padding:8px;border-radius:9px;background:#fff;color:#778797;font-size:10px">現在、教官が登録した確定枠はありません。任意の日程を入力できます。</div>';
+    }
+
+    html+='<button type="button" id="customDate222" style="width:100%;margin-top:7px;padding:8px;border:1px dashed #aebdcb;border-radius:9px;background:#fff;color:#54677b;font-weight:900;font-size:10px">任意で別日を設定する</button>';
+
+    box.innerHTML=html;
+    const host=dateEl.closest('form') || dateEl.parentElement || document.body;
+    const anchor=dateEl.closest('.field,.form-group,.row,div') || dateEl;
+    anchor.parentElement.insertBefore(box,anchor);
+
+    box.querySelectorAll('[data-slot]').forEach(b=>{
+      b.onclick=()=>{
+        const x=rows[Number(b.dataset.slot||0)];
+        if(!x)return;
+        setValue(dateEl,String(x.available_date||''));
+        setValue(timeEl,String(x.start_time||''));
+        box.querySelectorAll('[data-slot]').forEach(z=>z.style.outline='none');
+        b.style.outline='2px solid #d0a93e';
+        b.style.background='#fff9df';
+
+        let info=document.getElementById('prioritySlotInfo222');
+        if(!info){
+          info=document.createElement('div');
+          info.id='prioritySlotInfo222';
+          info.style.cssText='margin-top:6px;padding:7px 8px;border-radius:8px;background:#eef8f0;color:#2d6d3e;font-size:9px;font-weight:800';
+          box.appendChild(info);
+        }
+        info.textContent='優先枠を選択中：'+x.instructor_name+' / '+x.available_date+' '+x.start_time+'〜'+x.end_time;
+      };
+    });
+
+    box.querySelector('#customDate222').onclick=()=>{
+      const d2=secondDateField();
+      if(d2){d2.focus();d2.scrollIntoView({behavior:'smooth',block:'center'});}
+      else{dateEl.focus();dateEl.scrollIntoView({behavior:'smooth',block:'center'});}
+    };
+    return true;
+  }
+
+  mount();
+  let tries=0;
+  const timer=setInterval(async()=>{tries++;const ok=await mount();if(ok||tries>120)clearInterval(timer);},500);
+  const ob=new MutationObserver(()=>{mount();});
+  ob.observe(document.documentElement,{childList:true,subtree:true,attributes:true,attributeFilter:['class','style','open']});
+})();
+
 // v2.21: 「ここは触らない」に管理ユーティリティを集約
 (async()=>{
   const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -344,14 +522,12 @@ async function syncDisplayedVersion(response){
     box.style.cssText='margin:8px 0;padding:9px;border:1px solid #d9c16f;border-radius:12px;background:#fffdf6';
     box.innerHTML='<div style="font-size:10px;color:#806913;font-weight:900;margin-bottom:6px">管理者専用ツール</div>'+
       '<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">'+
-        '<button id="stTest221">🧪 テスト研修生</button><button id="stAvail221">📅 教官の空き時間</button>'+
-        '<button id="stDeadline221" style="grid-column:1/3">⏳ 期限延長</button>'+
+        '<button id="stTest221">🧪 テスト研修生</button><button id="stDeadline221">⏳ 期限延長</button>'+
       '</div>';
     box.querySelectorAll('button').forEach(b=>b.style.cssText='padding:8px;border:1px solid #d4deea;border-radius:9px;background:#fff;color:#102b47;font-weight:1000;font-size:10px');
     const host=h.closest('details,.card,section,div')||h.parentElement||h;
     host.appendChild(box);
     box.querySelector('#stTest221').onclick=()=>document.getElementById('testTraineeLauncher220')?.click();
-    box.querySelector('#stAvail221').onclick=openAvailability;
     box.querySelector('#stDeadline221').onclick=openDeadline;
     return true;
   }
@@ -1288,6 +1464,23 @@ async function fetch(request, env, ctx){
 
 
 
+
+
+  if(url.pathname === "/api/trainee/instructor-availability" && request.method === "GET"){
+    try{
+      await ensureInstructorAvailability(env);
+      const q=await env.DB.prepare(`
+        SELECT id,instructor_id,instructor_name,available_date,start_time,end_time,note
+        FROM instructor_availability
+        WHERE available_date>=date('now','+9 hours')
+        ORDER BY available_date,start_time,instructor_name
+        LIMIT 60
+      `).all();
+      return json({availability:q?.results||[]});
+    }catch(err){
+      return json({availability:[],error:String(err?.message||err)},200);
+    }
+  }
 
   if(url.pathname === "/api/admin/instructor-availability" && request.method === "GET"){
     if(!(await verifyAdmin(request,env,ctx)))return json({error:"unauthorized"},401);
