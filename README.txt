@@ -1,19 +1,26 @@
-LOMITA POLICE Training Reservation - Version 2.16
+LOMITA POLICE Training Reservation - Version 2.17
 
-v2.15のCloudflare Wranglerビルドエラーを修正。
+テスト研修生機能を追加。
 
-原因:
-worker-hotfix.js 内で、HTML/JSを埋め込む外側のテンプレート文字列の中に
-さらにバッククォート形式のテンプレート文字列を入れていたため、
-Wranglerが worker-hotfix.js:197 付近で構文エラーになっていました。
+管理メニュー:
+- 「🧪 テスト研修生」カード
+- 1タップでテスト研修生を作成
+- ログイン名と初回パスワードを表示
+- パスワード再発行
+- 予約/進捗リセット
+- テスト研修生削除
+- 既存テストアカウントがあれば重複作成しない
 
-修正:
-- 予約ページャーのHTML生成
-- Cookie更新
-- 今日の対応パネル
-- GitHub保存表示
-- 障害ログ表示
-- Discordまとめ通知文字列
-を通常の文字列連結へ変更。
+テストアカウント:
+- プレイヤー名: テスト研修生
+- affiliation/rank: TEST
+- admin_memo: [TEST]
+- 実在DiscordユーザーIDを設定しない
+- テスト専用discord_idを使用
 
-Version 2.15の機能は維持。
+安全性:
+- リセット/削除は admin_memo に [TEST] が付いたアカウントだけ実行可能
+- 本番研修生を誤削除しない条件付き処理
+- TESTアカウントの予約だけ削除して初期状態へ戻す
+
+Version 2.16までの機能を維持。
