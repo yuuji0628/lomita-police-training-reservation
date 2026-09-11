@@ -1,7 +1,7 @@
 import core from "./worker.js";
 
 /*
-  Version 2.23 dashboard instructor availability
+  Version 2.24 availability menu placement
 
   v2.05 の復旧取得が失敗する環境向けに、復旧経路をさらに単純化。
   - PRAGMA を使わない
@@ -19,7 +19,7 @@ const json = (data, status = 200) => new Response(JSON.stringify(data), {
   }
 });
 
-const HOTFIX_VERSION = "2.23";
+const HOTFIX_VERSION = "2.24";
 
 async function syncDisplayedVersion(response){
   try{
@@ -258,7 +258,8 @@ async function syncDisplayedVersion(response){
 
 
 
-// v2.23: 教官の空き時間登録を上部ダッシュボードへ常設
+
+// v2.24: 「予約一覧」メニューの直下に空き時間登録ボタンを配置
 (async()=>{
   const visible=el=>{
     if(!el||!el.isConnected)return false;
@@ -267,65 +268,60 @@ async function syncDisplayedVersion(response){
     return r.width>0 && r.height>0 && s.display!=='none' && s.visibility!=='hidden';
   };
 
-  function findDashboardAnchor(){
-    const candidates=[...document.querySelectorAll('h1,h2,h3,.title,.sectionTitle,header,div')].filter(visible);
-    return candidates.find(el=>{
-      const t=(el.textContent||'').trim();
-      return /ダッシュボード|管理者ダッシュボード/.test(t);
-    }) || document.getElementById('d1StatusInline') || document.querySelector('main') || document.body;
+  function findReservationButton(){
+    const buttons=[...document.querySelectorAll('button,a,[role="button"]')].filter(visible);
+    return buttons.find(el=>(el.textContent||'').trim()==='予約一覧') ||
+           buttons.find(el=>/予約一覧/.test((el.textContent||'').trim()));
   }
 
-  async function mountAvailabilityDashboard(){
-    if(document.getElementById('availabilityDashboard223'))return true;
-    const anchor=findDashboardAnchor();
-    if(!anchor)return false;
+  function mountAvailabilityMenu(){
+    if(document.getElementById('availabilityMenu224'))return true;
+    const reservationBtn=findReservationButton();
+    if(!reservationBtn)return false;
 
-    const card=document.createElement('div');
-    card.id='availabilityDashboard223';
-    card.style.cssText='margin:7px 0 10px;padding:9px 10px;border:1px solid #d8e2ec;border-radius:12px;background:#fff;box-shadow:0 3px 10px rgba(20,45,70,.05);display:flex;justify-content:space-between;gap:10px;align-items:center';
-    card.innerHTML=
-      '<div style="min-width:0">'+
-        '<div style="font-size:12px;font-weight:1000;color:#163453">📅 教官の空き時間</div>'+
-        '<div id="availabilitySummary223" style="margin-top:2px;font-size:9px;color:#74869a">登録状況を確認中...</div>'+
-      '</div>'+
-      '<button id="availabilityOpen223" style="flex:0 0 auto;border:0;border-radius:9px;background:#0b2d52;color:#fff;padding:8px 10px;font-weight:1000;font-size:10px">時間を登録</button>';
+    const btn=document.createElement('button');
+    btn.id='availabilityMenu224';
+    btn.type='button';
+    btn.innerHTML='<span style="font-size:14px">📅</span> 空き時間を登録';
+    btn.style.cssText=
+      'width:100%;min-height:56px;border:1px solid #cfd9e5;border-radius:14px;'+
+      'background:#fff;color:#102b47;font-weight:1000;font-size:13px;'+
+      'box-shadow:0 3px 10px rgba(20,45,70,.05);';
 
-    if(anchor.id==='d1StatusInline'){
-      anchor.insertAdjacentElement('afterend',card);
-    }else if(anchor.tagName && /^H[1-3]$/.test(anchor.tagName)){
-      anchor.insertAdjacentElement('afterend',card);
-    }else{
-      anchor.prepend(card);
-    }
-
-    card.querySelector('#availabilityOpen223').onclick=openAvailability;
-
-    try{
-      const r=await fetch('/api/admin/instructor-availability',{cache:'no-store'});
-      if(r.status===401){card.remove();return false;}
-      const d=await r.json();
-      const rows=Array.isArray(d.availability)?d.availability:[];
-      const summary=card.querySelector('#availabilitySummary223');
-      if(!rows.length){
-        summary.textContent='現在の登録：0件';
+    btn.onclick=()=>{
+      if(typeof window.openInstructorAvailability221==='function'){
+        window.openInstructorAvailability221();
       }else{
-        const today=rows[0];
-        summary.textContent='登録 '+rows.length+'件 ｜ 次 '+(today.available_date||'')+' '+(today.start_time||'')+'〜'+(today.end_time||'')+' '+(today.instructor_name||'');
+        alert('空き時間管理を読み込み中です。もう一度押してください。');
       }
-    }catch(_){
-      card.querySelector('#availabilitySummary223').textContent='登録状況を取得できませんでした';
+    };
+
+    const cell=reservationBtn.parentElement;
+    const grid=cell?.parentElement;
+
+    // 予約一覧が2列メニュー内なら、その直下の次行に横幅いっぱいで追加。
+    if(grid && getComputedStyle(grid).display==='grid'){
+      const wrap=document.createElement('div');
+      wrap.id='availabilityMenu224Wrap';
+      wrap.style.cssText='grid-column:1/-1';
+      wrap.appendChild(btn);
+      cell.insertAdjacentElement('afterend',wrap);
+    }else{
+      reservationBtn.insertAdjacentElement('afterend',btn);
+      btn.style.marginTop='8px';
     }
     return true;
   }
 
-  mountAvailabilityDashboard();
+  mountAvailabilityMenu();
   let tries=0;
-  const timer=setInterval(async()=>{
+  const timer=setInterval(()=>{
     tries++;
-    const ok=await mountAvailabilityDashboard();
+    const ok=mountAvailabilityMenu();
     if(ok||tries>120)clearInterval(timer);
   },500);
-  const ob=new MutationObserver(()=>mountAvailabilityDashboard());
+
+  const ob=new MutationObserver(()=>mountAvailabilityMenu());
   ob.observe(document.documentElement,{childList:true,subtree:true,attributes:true,attributeFilter:['class','style']});
 })();
 
@@ -484,6 +480,8 @@ async function syncDisplayedVersion(response){
       };
     }catch(_){body.textContent='空き時間情報を取得できませんでした';}
   }
+
+  window.openInstructorAvailability221=openAvailability;
 
   async function openDeadline(){
     const body=makeModal('deadlineModal221','期限延長','研修生の30日期限を最大90日まで延長できます');
