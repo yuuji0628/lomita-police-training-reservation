@@ -1,7 +1,7 @@
 import core from "./worker.js";
 
 /*
-  Version 2.18 test trainee UI fix
+  Version 2.19 visible admin modal fix
 
   v2.05 の復旧取得が失敗する環境向けに、復旧経路をさらに単純化。
   - PRAGMA を使わない
@@ -19,7 +19,7 @@ const json = (data, status = 200) => new Response(JSON.stringify(data), {
   }
 });
 
-const HOTFIX_VERSION = "2.18";
+const HOTFIX_VERSION = "2.19";
 
 async function syncDisplayedVersion(response){
   try{
@@ -177,10 +177,24 @@ async function syncDisplayedVersion(response){
 
 // v2.18: テスト研修生管理（管理モーダルが後から開かれても表示）
 const mountTestTrainee217=async()=>{
-  const adminTitle=[...document.querySelectorAll('h1,h2,h3')].find(x=>/管理メニュー/.test(x.textContent||''));
-  if(!adminTitle || document.getElementById('testTraineeCard217'))return false;
+  const titles=[...document.querySelectorAll('h1,h2,h3')].filter(x=>/管理メニュー/.test(x.textContent||''));
+  const visible=el=>{
+    if(!el || !el.isConnected)return false;
+    const r=el.getBoundingClientRect();
+    const s=getComputedStyle(el);
+    return r.width>0 && r.height>0 && s.display!=='none' && s.visibility!=='hidden' && Number(s.opacity||1)!==0;
+  };
+  const adminTitle=titles.find(visible) || titles[titles.length-1];
+  if(!adminTitle)return false;
 
-  const card=document.createElement('div');
+  let card=document.getElementById('testTraineeCard217');
+  if(card){
+    // hidden template側へ入っていた場合は、現在表示中の管理メニューへ移動する。
+    if(card.previousElementSibling!==adminTitle) adminTitle.insertAdjacentElement('afterend',card);
+    return true;
+  }
+
+  card=document.createElement('div');
   card.id='testTraineeCard217';
   card.style.cssText='margin:8px 0;padding:10px;border:1px solid #d7e1eb;border-radius:12px;background:#fff;font-size:10px';
   card.innerHTML=
@@ -258,12 +272,13 @@ mountTestTrainee217();
 let testMountTries217=0;
 const testMountTimer217=setInterval(async()=>{
   testMountTries217++;
-  const mounted=await mountTestTrainee217();
-  if(mounted || testMountTries217>60)clearInterval(testMountTimer217);
+  await mountTestTrainee217();
+  if(testMountTries217>240)clearInterval(testMountTimer217);
 },500);
 
 const testObserver217=new MutationObserver(()=>{ mountTestTrainee217(); });
-testObserver217.observe(document.documentElement,{childList:true,subtree:true});
+testObserver217.observe(document.documentElement,{childList:true,subtree:true,attributes:true,attributeFilter:['class','style','open']});
+document.addEventListener('click',()=>setTimeout(()=>mountTestTrainee217(),50),true);
 
 // v2.15: compact operations tools
 (async()=>{
@@ -271,17 +286,15 @@ testObserver217.observe(document.documentElement,{childList:true,subtree:true});
   if(!isAdmin)return;
 
   
-  document.querySelectorAll('div,article,section').forEach(el=>{
-    if(el.children.length>12)return;
+  document.querySelectorAll('.traineeCompactCard,.trainee-card,[data-trainee-id]').forEach(el=>{
     const t=(el.textContent||'').trim();
-    if(t.includes('テスト研修生') && !el.dataset.testBadge217){
-      el.dataset.testBadge217='1';
-      const badge=document.createElement('span');
-      badge.textContent='TEST';
-      badge.style.cssText='display:inline-block;margin-left:5px;padding:2px 5px;border-radius:999px;background:#eef5ff;border:1px solid #9cbbe4;color:#184f88;font-size:8px;font-weight:1000';
-      const target=el.querySelector('b,strong,h3,h4')||el;
-      target.appendChild(badge);
-    }
+    if(!t.includes('テスト研修生') || el.querySelector('.testBadge219'))return;
+    const badge=document.createElement('span');
+    badge.className='testBadge219';
+    badge.textContent='TEST';
+    badge.style.cssText='display:inline-block;margin-left:5px;padding:2px 5px;border-radius:999px;background:#eef5ff;border:1px solid #9cbbe4;color:#184f88;font-size:8px;font-weight:1000';
+    const target=el.querySelector('b,strong,h3,h4,.name')||el;
+    target.appendChild(badge);
   });
 
   // 期限アラート強化: 7/3/1日で強調
