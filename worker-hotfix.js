@@ -1,7 +1,7 @@
 import core from "./worker.js";
 
 /*
-  Version 2.31 auto end time registration
+  Version 2.33 auto end time fix
 
   v2.05 の復旧取得が失敗する環境向けに、復旧経路をさらに単純化。
   - PRAGMA を使わない
@@ -19,7 +19,7 @@ const json = (data, status = 200) => new Response(JSON.stringify(data), {
   }
 });
 
-const HOTFIX_VERSION = "2.31";
+const HOTFIX_VERSION = "2.33";
 
 async function syncDisplayedVersion(response){
   try{
@@ -201,7 +201,7 @@ async function syncDisplayedVersion(response){
     modal.style.cssText='position:fixed;inset:0;z-index:10030;background:rgba(6,24,43,.58);display:flex;align-items:flex-end;justify-content:center;padding:12px';
     modal.innerHTML='<div style="width:min(100%,560px);max-height:82vh;overflow:auto;background:#f7f9fc;border:1px solid #d4dfeb;border-radius:18px 18px 12px 12px;padding:12px;box-shadow:0 18px 50px #0005">'+
       '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px"><div><b style="font-size:17px">🧪 テスト研修生</b><div style="font-size:10px;color:#718397;margin-top:2px">申請・予約・アンケート・期限確認用</div></div><button id="ttClose220" style="border:1px solid #ccd8e4;background:#fff;border-radius:9px;padding:7px 10px;font-weight:900">閉じる</button></div>'+
-      '<div id="ttModalBody220" style="margin-top:10px;background:#fff;border:1px solid #dbe4ed;border-radius:12px;padding:10px;font-size:11px">読み込み中...</div></div>';
+      '<div id="ttModalBody220" style="margin-top:10px;background:#fff;border:1px solid #dbe4ed;border-radius:11px;padding:9px;font-size:11px">読み込み中...</div></div>';
     document.body.appendChild(modal);
     modal.querySelector('#ttClose220').onclick=()=>modal.remove();
     modal.onclick=e=>{if(e.target===modal)modal.remove();};
@@ -547,7 +547,7 @@ async function syncDisplayedVersion(response){
     document.getElementById(id)?.remove();
     const m=document.createElement('div');m.id=id;
     m.style.cssText='position:fixed;inset:0;z-index:10050;background:rgba(7,25,44,.6);display:flex;align-items:flex-end;justify-content:center;padding:10px';
-    m.innerHTML='<div style="width:min(100%,620px);max-height:86vh;overflow:auto;background:#f7f9fc;border-radius:18px 18px 12px 12px;padding:12px;border:1px solid #d4dfeb">'+
+    m.innerHTML='<div style="width:min(94vw,460px);max-height:78vh;overflow:auto;background:#f7f9fc;border-radius:16px;padding:10px;border:1px solid #d4dfeb">'+
       '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center"><div><b style="font-size:17px">'+title+'</b><div style="font-size:10px;color:#718397;margin-top:2px">'+subtitle+'</div></div><button class="close" style="border:1px solid #ced9e4;background:#fff;border-radius:9px;padding:7px 10px;font-weight:900">閉じる</button></div>'+
       '<div class="body" style="margin-top:10px"></div></div>';
     document.body.appendChild(m);
@@ -564,14 +564,17 @@ async function syncDisplayedVersion(response){
       const opts=(d.instructors||[]).map(x=>'<option value="'+Number(x.id||0)+'" data-name="'+esc(x.name)+'">'+esc(x.name)+'</option>').join('');
       body.innerHTML='<div style="background:#fff;border:1px solid #dbe4ed;border-radius:12px;padding:10px">'+
         '<select id="iaInstructor221" style="width:100%;padding:9px;border:1px solid #ccd8e4;border-radius:9px"><option value="">教官を選択</option>'+opts+'</select>'+
-        '<div style="display:grid;grid-template-columns:1.1fr 1fr 1fr;gap:6px;margin-top:7px">'+
-          '<input id="iaDate221" type="date" style="padding:8px;border:1px solid #ccd8e4;border-radius:9px">'+
-          '<select id="iaStart221" style="padding:8px;border:1px solid #ccd8e4;border-radius:9px;background:#fff"></select>'+
-          '<div id="iaEndDisplay221" style="padding:8px;border:1px solid #ccd8e4;border-radius:9px;background:#f4f7fa;color:#40566d;font-weight:900;text-align:center">終了 --:--</div>'+
+        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:7px">'+
+          '<div><div style="font-size:9px;color:#66798d;margin:0 0 3px 2px">日付</div><input id="iaDate221" type="date" style="width:100%;box-sizing:border-box;padding:8px;border:1px solid #ccd8e4;border-radius:9px"></div>'+
+          '<div><div style="font-size:9px;color:#66798d;margin:0 0 3px 2px">開始</div><select id="iaStart221" style="width:100%;box-sizing:border-box;padding:8px;border:1px solid #ccd8e4;border-radius:9px;background:#fff"></select></div>'+
         '</div>'+
-        '<div style="margin-top:5px;font-size:9px;color:#7a8998">開始時刻は15分単位。終了時刻は開始から30分後を自動表示します。</div>'+
-        '<input id="iaNote221" placeholder="メモ（任意）" style="width:100%;margin-top:7px;padding:8px;border:1px solid #ccd8e4;border-radius:9px">'+
-        '<button id="iaSave221" style="width:100%;margin-top:7px;border:0;border-radius:9px;background:#0b2d52;color:#fff;padding:9px;font-weight:1000">空き時間を登録</button></div>'+
+        '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:6px;padding:7px 9px;border:1px solid #dde5ed;border-radius:9px;background:#f5f8fb">'+
+          '<span style="font-size:9px;color:#66798d">終了時刻</span>'+
+          '<strong id="iaEndDisplay221" style="font-size:12px;color:#17314d">--:--</strong>'+
+        '</div>'+
+        '<div style="margin-top:5px;font-size:9px;color:#7a8998">開始は15分刻み。終了は30分後を自動表示。</div>'+
+        '<input id="iaNote221" placeholder="メモ（任意）" style="width:100%;box-sizing:border-box;margin-top:7px;padding:8px;border:1px solid #ccd8e4;border-radius:9px">'+
+        '<button id="iaSave221" style="width:100%;margin-top:7px;border:0;border-radius:9px;background:#0b2d52;color:#fff;padding:9px;font-weight:1000;font-size:11px">空き時間を登録</button></div>'+
         '<div id="iaList221" style="margin-top:8px"></div>';
       const render=rows=>{
         const list=body.querySelector('#iaList221');
@@ -600,17 +603,21 @@ async function syncDisplayedVersion(response){
       };
       const refreshEnd=()=>{
         const end=add30(startSel.value);
-        endDisplay.textContent=end?'終了 '+end:'終了 --:--';
-        endDisplay.dataset.value=end;
+        endDisplay.textContent=end?end:'--:--';
+        endDisplay.dataset.value=end||'';
       };
-      startSel.onchange=refreshEnd;
+      startSel.addEventListener('input',refreshEnd);
+      startSel.addEventListener('change',refreshEnd);
       refreshEnd();
 
       body.querySelector('#iaSave221').onclick=async()=>{
         const sel=body.querySelector('#iaInstructor221');const opt=sel.options[sel.selectedIndex];
-        const payload={instructor_id:Number(sel.value||0),instructor_name:opt?.dataset?.name||'',available_date:body.querySelector('#iaDate221').value,start_time:body.querySelector('#iaStart221').value,end_time:body.querySelector('#iaEndDisplay221').dataset.value||'',note:body.querySelector('#iaNote221').value};
+        const startValue=body.querySelector('#iaStart221').value;
+        const endValue=add30(startValue);
+        const payload={instructor_id:Number(sel.value||0),instructor_name:opt?.dataset?.name||'',available_date:body.querySelector('#iaDate221').value,start_time:startValue,end_time:endValue,note:body.querySelector('#iaNote221').value};
         const valid15=v=>/^\d{2}:(00|15|30|45)$/.test(String(v||''));
-        if(!valid15(payload.start_time)||!valid15(payload.end_time))return alert('開始時刻を15分単位で選択してください');
+        if(!valid15(payload.start_time))return alert('開始時刻を15分単位で選択してください');
+        if(!payload.end_time)return alert('終了時刻を計算できませんでした。開始時刻を選び直してください');
         const rr=await fetch('/api/admin/instructor-availability',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(payload)});const x=await rr.json();
         if(!x.ok)return alert(x.error||'登録できませんでした');
         openAvailability();
@@ -619,6 +626,13 @@ async function syncDisplayedVersion(response){
   }
 
   window.openInstructorAvailability221=openAvailability;
+  // 管理者の空き時間登録モーダルでは研修生向け「教官確定枠」UIを表示しない。
+  const hideTraineePriorityInAdmin=()=>{
+    document.querySelectorAll('#prioritySlots222,#prioritySlots227,#prioritySlots229,#prioritySlots230').forEach(x=>{
+      if(x.closest('#availabilityModal221'))x.remove();
+    });
+  };
+
 
   async function openDeadline(){
     const body=makeModal('deadlineModal221','期限延長','研修生の30日期限を最大90日まで延長できます');
