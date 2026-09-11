@@ -1,7 +1,7 @@
 import core from "./worker.js";
 
 /*
-  Version 2.30 training duration and auto end
+  Version 2.31 auto end time registration
 
   v2.05 の復旧取得が失敗する環境向けに、復旧経路をさらに単純化。
   - PRAGMA を使わない
@@ -19,7 +19,7 @@ const json = (data, status = 200) => new Response(JSON.stringify(data), {
   }
 });
 
-const HOTFIX_VERSION = "2.30";
+const HOTFIX_VERSION = "2.31";
 
 async function syncDisplayedVersion(response){
   try{
@@ -389,7 +389,7 @@ async function syncDisplayedVersion(response){
 // v2.30: 研修生予約画面 - 所要時間連動・終了時刻自動表示
 (()=>{
   const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-  let mounting=false,mounted=false,slotCache=null,duration=60;
+  let mounting=false,mounted=false,slotCache=null,duration=30;
 
   const toMin=t=>{const m=String(t||'').match(/^(\d{2}):(\d{2})$/);return m?Number(m[1])*60+Number(m[2]):null;};
   const fromMin=n=>{n=((Number(n)%1440)+1440)%1440;return String(Math.floor(n/60)).padStart(2,'0')+':'+String(n%60).padStart(2,'0');};
@@ -404,8 +404,8 @@ async function syncDisplayedVersion(response){
     const title=trainingTitle();
     try{
       const r=await fetch('/api/trainee/training-duration?title='+encodeURIComponent(title),{cache:'no-store'});
-      const d=await r.json(); duration=Math.max(15,Number(d.duration_minutes||60));
-    }catch(_){duration=60;}
+      const d=await r.json(); duration=Math.max(15,Number(d.duration_minutes||30));
+    }catch(_){duration=30;}
     return duration;
   }
 
@@ -557,15 +557,19 @@ async function syncDisplayedVersion(response){
   }
 
   async function openAvailability(){
-    const body=makeModal('availabilityModal221','教官の空き時間管理','教官ごとの対応可能日時を登録します');
+    const body=makeModal('availabilityModal221','教官の空き時間管理','開始時刻を選ぶと終了時刻は30分後に自動設定されます');
     body.innerHTML='<div style="color:#75869a">読み込み中...</div>';
     try{
       const r=await fetch('/api/admin/instructor-availability',{cache:'no-store'});const d=await r.json();
       const opts=(d.instructors||[]).map(x=>'<option value="'+Number(x.id||0)+'" data-name="'+esc(x.name)+'">'+esc(x.name)+'</option>').join('');
       body.innerHTML='<div style="background:#fff;border:1px solid #dbe4ed;border-radius:12px;padding:10px">'+
         '<select id="iaInstructor221" style="width:100%;padding:9px;border:1px solid #ccd8e4;border-radius:9px"><option value="">教官を選択</option>'+opts+'</select>'+
-        '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-top:7px"><input id="iaDate221" type="date" style="padding:8px;border:1px solid #ccd8e4;border-radius:9px"><input id="iaStart221" type="time" step="900" style="padding:8px;border:1px solid #ccd8e4;border-radius:9px"><input id="iaEnd221" type="time" step="900" style="padding:8px;border:1px solid #ccd8e4;border-radius:9px"></div>'+
-        '<div style="margin-top:5px;font-size:9px;color:#7a8998">時刻は15分単位（00 / 15 / 30 / 45分）です。</div>'+
+        '<div style="display:grid;grid-template-columns:1.1fr 1fr 1fr;gap:6px;margin-top:7px">'+
+          '<input id="iaDate221" type="date" style="padding:8px;border:1px solid #ccd8e4;border-radius:9px">'+
+          '<select id="iaStart221" style="padding:8px;border:1px solid #ccd8e4;border-radius:9px;background:#fff"></select>'+
+          '<div id="iaEndDisplay221" style="padding:8px;border:1px solid #ccd8e4;border-radius:9px;background:#f4f7fa;color:#40566d;font-weight:900;text-align:center">終了 --:--</div>'+
+        '</div>'+
+        '<div style="margin-top:5px;font-size:9px;color:#7a8998">開始時刻は15分単位。終了時刻は開始から30分後を自動表示します。</div>'+
         '<input id="iaNote221" placeholder="メモ（任意）" style="width:100%;margin-top:7px;padding:8px;border:1px solid #ccd8e4;border-radius:9px">'+
         '<button id="iaSave221" style="width:100%;margin-top:7px;border:0;border-radius:9px;background:#0b2d52;color:#fff;padding:9px;font-weight:1000">空き時間を登録</button></div>'+
         '<div id="iaList221" style="margin-top:8px"></div>';
@@ -575,11 +579,38 @@ async function syncDisplayedVersion(response){
         list.querySelectorAll('[data-del]').forEach(b=>b.onclick=async()=>{await fetch('/api/admin/instructor-availability/delete',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({id:Number(b.dataset.del)})});openAvailability();});
       };
       render(d.availability||[]);
+
+      const startSel=body.querySelector('#iaStart221');
+      const endDisplay=body.querySelector('#iaEndDisplay221');
+      const qopts=[];
+      for(let h=0;h<24;h++){
+        for(const m of [0,15,30,45]){
+          const v=String(h).padStart(2,'0')+':'+String(m).padStart(2,'0');
+          qopts.push('<option value="'+v+'">'+v+'</option>');
+        }
+      }
+      startSel.innerHTML='<option value="">開始時刻</option>'+qopts.join('');
+
+      const add30=v=>{
+        const m=String(v||'').match(/^(\d{2}):(\d{2})$/);
+        if(!m)return '';
+        let total=Number(m[1])*60+Number(m[2])+30;
+        total%=1440;
+        return String(Math.floor(total/60)).padStart(2,'0')+':'+String(total%60).padStart(2,'0');
+      };
+      const refreshEnd=()=>{
+        const end=add30(startSel.value);
+        endDisplay.textContent=end?'終了 '+end:'終了 --:--';
+        endDisplay.dataset.value=end;
+      };
+      startSel.onchange=refreshEnd;
+      refreshEnd();
+
       body.querySelector('#iaSave221').onclick=async()=>{
         const sel=body.querySelector('#iaInstructor221');const opt=sel.options[sel.selectedIndex];
-        const payload={instructor_id:Number(sel.value||0),instructor_name:opt?.dataset?.name||'',available_date:body.querySelector('#iaDate221').value,start_time:body.querySelector('#iaStart221').value,end_time:body.querySelector('#iaEnd221').value,note:body.querySelector('#iaNote221').value};
+        const payload={instructor_id:Number(sel.value||0),instructor_name:opt?.dataset?.name||'',available_date:body.querySelector('#iaDate221').value,start_time:body.querySelector('#iaStart221').value,end_time:body.querySelector('#iaEndDisplay221').dataset.value||'',note:body.querySelector('#iaNote221').value};
         const valid15=v=>/^\d{2}:(00|15|30|45)$/.test(String(v||''));
-        if(!valid15(payload.start_time)||!valid15(payload.end_time))return alert('開始・終了時刻は15分単位で選択してください');
+        if(!valid15(payload.start_time)||!valid15(payload.end_time))return alert('開始時刻を15分単位で選択してください');
         const rr=await fetch('/api/admin/instructor-availability',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(payload)});const x=await rr.json();
         if(!x.ok)return alert(x.error||'登録できませんでした');
         openAvailability();
@@ -1394,7 +1425,7 @@ async function ensureTrainingDurations(env){
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS training_durations(
     training_id INTEGER PRIMARY KEY,
     training_title TEXT NOT NULL DEFAULT '',
-    duration_minutes INTEGER NOT NULL DEFAULT 60,
+    duration_minutes INTEGER NOT NULL DEFAULT 30,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   )`).run();
 }
@@ -1429,7 +1460,7 @@ async function listTrainingDurations(env){
     return {
       training_id:id,
       title:String(p.title||row?.training_title||("研修 "+id)),
-      duration_minutes:Math.max(15,Number(row?.duration_minutes||60))
+      duration_minutes:Math.max(15,Number(row?.duration_minutes||30))
     };
   });
 }
@@ -1455,7 +1486,7 @@ async function saveTrainingDuration(env,b){
 async function getTrainingDurationByTitle(env,title){
   await ensureTrainingDurations(env);
   title=String(title||"").trim();
-  if(!title)return {duration_minutes:60};
+  if(!title)return {duration_minutes:30};
   const row=await env.DB.prepare(`
     SELECT duration_minutes,training_id,training_title
     FROM training_durations
@@ -1476,7 +1507,7 @@ async function getTrainingDurationByTitle(env,title){
     `).bind(title,title,title).first();
     if(p)return {duration_minutes:60,training_id:Number(p.training_id||0),training_title:String(p.title||title)};
   }catch(_){}
-  return {duration_minutes:60,training_title:title};
+  return {duration_minutes:30,training_title:title};
 }
 async function ensureInstructorAvailability(env){
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS instructor_availability(
@@ -1728,7 +1759,7 @@ async function fetch(request, env, ctx){
   if(url.pathname === "/api/trainee/training-duration" && request.method === "GET"){
     try{
       return json(await getTrainingDurationByTitle(env,url.searchParams.get("title")||""));
-    }catch(err){return json({duration_minutes:60,error:String(err?.message||err)},200);}
+    }catch(err){return json({duration_minutes:30,error:String(err?.message||err)},200);}
   }
   if(url.pathname === "/api/admin/instructor-availability" && request.method === "GET"){
     if(!(await verifyAdmin(request,env,ctx)))return json({error:"unauthorized"},401);
