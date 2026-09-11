@@ -1,7 +1,7 @@
 import core from "./worker.js";
 
 /*
-  Version 2.27 priority slot UI fix
+  Version 2.28 15-minute schedule units
 
   v2.05 の復旧取得が失敗する環境向けに、復旧経路をさらに単純化。
   - PRAGMA を使わない
@@ -19,7 +19,7 @@ const json = (data, status = 200) => new Response(JSON.stringify(data), {
   }
 });
 
-const HOTFIX_VERSION = "2.27";
+const HOTFIX_VERSION = "2.28";
 
 async function syncDisplayedVersion(response){
   try{
@@ -346,6 +346,46 @@ async function syncDisplayedVersion(response){
   }
 })();
 
+
+// v2.28: 教官側・研修生側の時刻を15分単位に統一
+(()=>{
+  function applyQuarterHour(){
+    const nowJst=new Date(Date.now()+9*60*60*1000);
+    const today=nowJst.toISOString().slice(0,10);
+    document.querySelectorAll('input[type="time"]').forEach(el=>{
+      el.step='900';
+      if(el.dataset.quarter228)return;
+      el.dataset.quarter228='1';
+      el.addEventListener('change',()=>{
+        const v=String(el.value||'');
+        if(v&&!/^\d{2}:(00|15|30|45)$/.test(v)){
+          alert('時刻は15分単位（00・15・30・45分）で選択してください');
+          el.value='';
+          el.dispatchEvent(new Event('input',{bubbles:true}));
+        }
+      });
+    });
+    document.querySelectorAll('input[type="date"]').forEach(el=>{
+      if(!el.min||el.min<today)el.min=today;
+    });
+    document.querySelectorAll('form').forEach(form=>{
+      if(form.dataset.quarterSubmit228)return;
+      form.dataset.quarterSubmit228='1';
+      form.addEventListener('submit',e=>{
+        const bad=[...form.querySelectorAll('input[type="time"]')].find(el=>el.value&&!/^\d{2}:(00|15|30|45)$/.test(el.value));
+        if(bad){
+          e.preventDefault();
+          alert('申請時刻は15分単位（00・15・30・45分）で選択してください');
+          bad.focus();
+        }
+      },true);
+    });
+  }
+  applyQuarterHour();
+  const ob=new MutationObserver(()=>applyQuarterHour());
+  ob.observe(document.documentElement,{childList:true,subtree:true});
+})();
+
 // v2.27: 研修生予約画面 - 教官確定枠を1つだけ・見やすく表示
 (()=>{
   const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -523,7 +563,8 @@ async function syncDisplayedVersion(response){
       const opts=(d.instructors||[]).map(x=>'<option value="'+Number(x.id||0)+'" data-name="'+esc(x.name)+'">'+esc(x.name)+'</option>').join('');
       body.innerHTML='<div style="background:#fff;border:1px solid #dbe4ed;border-radius:12px;padding:10px">'+
         '<select id="iaInstructor221" style="width:100%;padding:9px;border:1px solid #ccd8e4;border-radius:9px"><option value="">教官を選択</option>'+opts+'</select>'+
-        '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-top:7px"><input id="iaDate221" type="date" style="padding:8px;border:1px solid #ccd8e4;border-radius:9px"><input id="iaStart221" type="time" style="padding:8px;border:1px solid #ccd8e4;border-radius:9px"><input id="iaEnd221" type="time" style="padding:8px;border:1px solid #ccd8e4;border-radius:9px"></div>'+
+        '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-top:7px"><input id="iaDate221" type="date" style="padding:8px;border:1px solid #ccd8e4;border-radius:9px"><input id="iaStart221" type="time" step="900" style="padding:8px;border:1px solid #ccd8e4;border-radius:9px"><input id="iaEnd221" type="time" step="900" style="padding:8px;border:1px solid #ccd8e4;border-radius:9px"></div>'+
+        '<div style="margin-top:5px;font-size:9px;color:#7a8998">時刻は15分単位（00 / 15 / 30 / 45分）です。</div>'+
         '<input id="iaNote221" placeholder="メモ（任意）" style="width:100%;margin-top:7px;padding:8px;border:1px solid #ccd8e4;border-radius:9px">'+
         '<button id="iaSave221" style="width:100%;margin-top:7px;border:0;border-radius:9px;background:#0b2d52;color:#fff;padding:9px;font-weight:1000">空き時間を登録</button></div>'+
         '<div id="iaList221" style="margin-top:8px"></div>';
@@ -536,6 +577,8 @@ async function syncDisplayedVersion(response){
       body.querySelector('#iaSave221').onclick=async()=>{
         const sel=body.querySelector('#iaInstructor221');const opt=sel.options[sel.selectedIndex];
         const payload={instructor_id:Number(sel.value||0),instructor_name:opt?.dataset?.name||'',available_date:body.querySelector('#iaDate221').value,start_time:body.querySelector('#iaStart221').value,end_time:body.querySelector('#iaEnd221').value,note:body.querySelector('#iaNote221').value};
+        const valid15=v=>/^\d{2}:(00|15|30|45)$/.test(String(v||''));
+        if(!valid15(payload.start_time)||!valid15(payload.end_time))return alert('開始・終了時刻は15分単位で選択してください');
         const rr=await fetch('/api/admin/instructor-availability',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(payload)});const x=await rr.json();
         if(!x.ok)return alert(x.error||'登録できませんでした');
         openAvailability();
@@ -1321,6 +1364,30 @@ async function deleteTestTrainee(env,id){
   return {ok:true};
 }
 
+
+function isQuarterHourTime(v){
+  const m=String(v||"").match(/^(\d{2}):(\d{2})$/);
+  if(!m)return false;
+  const hh=Number(m[1]),mm=Number(m[2]);
+  return hh>=0&&hh<=23&&[0,15,30,45].includes(mm);
+}
+async function enforceQuarterHourReservationRequest(request){
+  if(request.method!=="POST")return null;
+  const url=new URL(request.url);
+  if(!/reservation|reserve|booking|apply/i.test(url.pathname))return null;
+  const ct=String(request.headers.get("content-type")||"").toLowerCase();
+  if(!ct.includes("application/json"))return null;
+  let body;
+  try{body=await request.clone().json();}catch(_){return null;}
+  if(!body||typeof body!=="object")return null;
+  const keys=["preferred_time","preferred_time2","preferred_time3","confirmed_time","start_time","time"];
+  for(const k of keys){
+    if(body[k]!==undefined&&String(body[k]||"").trim()!==""&&!isQuarterHourTime(body[k])){
+      return json({error:"時刻は15分単位（00・15・30・45分）で選択してください"},400);
+    }
+  }
+  return null;
+}
 async function ensureInstructorAvailability(env){
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS instructor_availability(
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1356,6 +1423,9 @@ async function saveInstructorAvailability(env,b){
   const note=String(b?.note||"").trim().slice(0,200);
   if(!name || !/^\d{4}-\d{2}-\d{2}$/.test(date) || !/^\d{2}:\d{2}$/.test(start) || !/^\d{2}:\d{2}$/.test(end)){
     return {ok:false,error:"教官・日付・開始/終了時刻を入力してください"};
+  }
+  if(!isQuarterHourTime(start)||!isQuarterHourTime(end)){
+    return {ok:false,error:"開始時刻・終了時刻は15分単位で登録してください"};
   }
   if(start>=end)return {ok:false,error:"終了時刻は開始時刻より後にしてください"};
   const r=await env.DB.prepare(`
@@ -1514,6 +1584,8 @@ async function fetchWithShortCache(request, env, ctx){
 }
 
 async function fetch(request, env, ctx){
+  const quarterError=await enforceQuarterHourReservationRequest(request);
+  if(quarterError)return quarterError;
   const requestUrl = new URL(request.url);
   const accept = String(request.headers.get("accept") || "").toLowerCase();
   const isDocumentRequest =
