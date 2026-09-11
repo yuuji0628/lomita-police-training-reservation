@@ -1,7 +1,7 @@
 import core from "./worker.js";
 
 /*
-  Version 2.19 visible admin modal fix
+  Version 2.21 admin utility tools
 
   v2.05 の復旧取得が失敗する環境向けに、復旧経路をさらに単純化。
   - PRAGMA を使わない
@@ -19,7 +19,7 @@ const json = (data, status = 200) => new Response(JSON.stringify(data), {
   }
 });
 
-const HOTFIX_VERSION = "2.19";
+const HOTFIX_VERSION = "2.21";
 
 async function syncDisplayedVersion(response){
   try{
@@ -174,6 +174,193 @@ async function syncDisplayedVersion(response){
   }
 
 
+
+
+// v2.20: 管理メニューに依存しない常設ランチャー
+(async()=>{
+  if(document.getElementById('testTraineeLauncher220'))return;
+  try{
+    const auth=await fetch('/api/admin/check',{cache:'no-store'});
+    if(!auth.ok)return;
+  }catch(_){return;}
+
+  const btn=document.createElement('button');
+  btn.id='testTraineeLauncher220';
+  btn.textContent='🧪 テスト研修生';
+  btn.style.cssText='position:fixed;right:10px;bottom:86px;z-index:10020;border:0;border-radius:999px;background:#173e69;color:#fff;padding:9px 12px;font-weight:1000;font-size:10px;box-shadow:0 6px 18px rgba(13,43,73,.28)';
+  btn.style.display='none';
+  document.body.appendChild(btn);
+
+  const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+  const openModal=async()=>{
+    let modal=document.getElementById('testTraineeModal220');
+    if(modal){modal.remove();return;}
+    modal=document.createElement('div');
+    modal.id='testTraineeModal220';
+    modal.style.cssText='position:fixed;inset:0;z-index:10030;background:rgba(6,24,43,.58);display:flex;align-items:flex-end;justify-content:center;padding:12px';
+    modal.innerHTML='<div style="width:min(100%,560px);max-height:82vh;overflow:auto;background:#f7f9fc;border:1px solid #d4dfeb;border-radius:18px 18px 12px 12px;padding:12px;box-shadow:0 18px 50px #0005">'+
+      '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px"><div><b style="font-size:17px">🧪 テスト研修生</b><div style="font-size:10px;color:#718397;margin-top:2px">申請・予約・アンケート・期限確認用</div></div><button id="ttClose220" style="border:1px solid #ccd8e4;background:#fff;border-radius:9px;padding:7px 10px;font-weight:900">閉じる</button></div>'+
+      '<div id="ttModalBody220" style="margin-top:10px;background:#fff;border:1px solid #dbe4ed;border-radius:12px;padding:10px;font-size:11px">読み込み中...</div></div>';
+    document.body.appendChild(modal);
+    modal.querySelector('#ttClose220').onclick=()=>modal.remove();
+    modal.onclick=e=>{if(e.target===modal)modal.remove();};
+    const body=modal.querySelector('#ttModalBody220');
+
+    const refresh=async()=>{
+      try{
+        const r=await fetch('/api/admin/test-trainee',{cache:'no-store'});
+        const d=await r.json();
+        if(!d.found){
+          body.innerHTML='<div style="color:#718397">テスト研修生はまだありません。</div><button id="ttCreate220" style="margin-top:9px;width:100%;border:0;border-radius:10px;background:#0b2d52;color:#fff;padding:10px;font-weight:1000">テスト研修生を作成</button>';
+          body.querySelector('#ttCreate220').onclick=async()=>{
+            const b=body.querySelector('#ttCreate220');b.disabled=true;b.textContent='作成中...';
+            try{
+              const rr=await fetch('/api/admin/test-trainee/create',{method:'POST'});
+              const x=await rr.json();
+              if(x.password){alert('テスト研修生を作成しました\\n\\nログイン名：'+x.login_name+'\\nパスワード：'+x.password+'\\n\\n必ず控えてください。');}
+              else if(x.existing){alert('既存のテスト研修生があります。');}
+              else if(x.error){alert(x.error);}
+              await refresh();
+            }finally{b.disabled=false;}
+          };
+          return;
+        }
+        body.innerHTML='<div style="padding:9px;border-radius:10px;background:#f4f8fc;border:1px solid #dbe6f0">'+
+          '<div><span style="display:inline-block;padding:2px 6px;border-radius:999px;background:#eaf3ff;border:1px solid #a9c4e8;color:#194e85;font-size:9px;font-weight:1000">TEST</span> <b>'+esc(d.player_name||'テスト研修生')+'</b></div>'+
+          '<div style="margin-top:6px">ログイン名：<b>'+esc(d.login_name||'')+'</b></div>'+
+          '<div style="margin-top:9px;display:grid;grid-template-columns:1fr 1fr;gap:6px">'+
+            '<button id="ttPass220" style="padding:8px;border:1px solid #cfdbe7;border-radius:9px;background:#fff;font-weight:900">パスワード再発行</button>'+
+            '<button id="ttReset220" style="padding:8px;border:1px solid #d6b352;border-radius:9px;background:#fffdf4;font-weight:900">進捗リセット</button>'+
+            '<button id="ttDelete220" style="grid-column:1/3;padding:8px;border:1px solid #df9992;border-radius:9px;background:#fff8f7;color:#9c3229;font-weight:900">テスト研修生を削除</button>'+
+          '</div></div>';
+        body.querySelector('#ttPass220').onclick=async()=>{
+          const rr=await fetch('/api/admin/test-trainee/reissue-password',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({id:d.id})});
+          const x=await rr.json(); if(x.password)alert('新しいパスワード\\n\\n'+x.password+'\\n\\n必ず控えてください。'); else alert(x.error||'失敗しました');
+        };
+        body.querySelector('#ttReset220').onclick=async()=>{
+          if(!confirm('テスト研修生を初期状態に戻しますか？'))return;
+          const rr=await fetch('/api/admin/test-trainee/reset',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({id:d.id})});
+          const x=await rr.json();alert(x.ok?'初期状態に戻しました':(x.error||'失敗しました'));
+        };
+        body.querySelector('#ttDelete220').onclick=async()=>{
+          if(!confirm('テスト研修生を削除しますか？'))return;
+          const rr=await fetch('/api/admin/test-trainee/delete',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({id:d.id})});
+          const x=await rr.json(); if(x.ok){alert('削除しました');await refresh();} else alert(x.error||'削除に失敗しました');
+        };
+      }catch(_){body.textContent='テスト研修生情報を取得できませんでした';}
+    };
+    await refresh();
+  };
+  btn.onclick=openModal;
+})();
+
+
+// v2.21: 「ここは触らない」に管理ユーティリティを集約
+(async()=>{
+  const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const visible=el=>{if(!el||!el.isConnected)return false;const r=el.getBoundingClientRect();const st=getComputedStyle(el);return r.width>0&&r.height>0&&st.display!=='none'&&st.visibility!=='hidden';};
+
+  function findDoNotTouch(){
+    const all=[...document.querySelectorAll('h1,h2,h3,h4,summary,button,div,span')];
+    return all.filter(visible).find(x=>/ここは触らない/.test((x.textContent||'').trim()));
+  }
+
+  function makeModal(id,title,subtitle){
+    document.getElementById(id)?.remove();
+    const m=document.createElement('div');m.id=id;
+    m.style.cssText='position:fixed;inset:0;z-index:10050;background:rgba(7,25,44,.6);display:flex;align-items:flex-end;justify-content:center;padding:10px';
+    m.innerHTML='<div style="width:min(100%,620px);max-height:86vh;overflow:auto;background:#f7f9fc;border-radius:18px 18px 12px 12px;padding:12px;border:1px solid #d4dfeb">'+
+      '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center"><div><b style="font-size:17px">'+title+'</b><div style="font-size:10px;color:#718397;margin-top:2px">'+subtitle+'</div></div><button class="close" style="border:1px solid #ced9e4;background:#fff;border-radius:9px;padding:7px 10px;font-weight:900">閉じる</button></div>'+
+      '<div class="body" style="margin-top:10px"></div></div>';
+    document.body.appendChild(m);
+    m.querySelector('.close').onclick=()=>m.remove();
+    m.onclick=e=>{if(e.target===m)m.remove();};
+    return m.querySelector('.body');
+  }
+
+  async function openAvailability(){
+    const body=makeModal('availabilityModal221','教官の空き時間管理','教官ごとの対応可能日時を登録します');
+    body.innerHTML='<div style="color:#75869a">読み込み中...</div>';
+    try{
+      const r=await fetch('/api/admin/instructor-availability',{cache:'no-store'});const d=await r.json();
+      const opts=(d.instructors||[]).map(x=>'<option value="'+Number(x.id||0)+'" data-name="'+esc(x.name)+'">'+esc(x.name)+'</option>').join('');
+      body.innerHTML='<div style="background:#fff;border:1px solid #dbe4ed;border-radius:12px;padding:10px">'+
+        '<select id="iaInstructor221" style="width:100%;padding:9px;border:1px solid #ccd8e4;border-radius:9px"><option value="">教官を選択</option>'+opts+'</select>'+
+        '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-top:7px"><input id="iaDate221" type="date" style="padding:8px;border:1px solid #ccd8e4;border-radius:9px"><input id="iaStart221" type="time" style="padding:8px;border:1px solid #ccd8e4;border-radius:9px"><input id="iaEnd221" type="time" style="padding:8px;border:1px solid #ccd8e4;border-radius:9px"></div>'+
+        '<input id="iaNote221" placeholder="メモ（任意）" style="width:100%;margin-top:7px;padding:8px;border:1px solid #ccd8e4;border-radius:9px">'+
+        '<button id="iaSave221" style="width:100%;margin-top:7px;border:0;border-radius:9px;background:#0b2d52;color:#fff;padding:9px;font-weight:1000">空き時間を登録</button></div>'+
+        '<div id="iaList221" style="margin-top:8px"></div>';
+      const render=rows=>{
+        const list=body.querySelector('#iaList221');
+        list.innerHTML=(rows||[]).length?(rows||[]).map(x=>'<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;background:#fff;border:1px solid #dbe4ed;border-radius:10px;padding:8px;margin-top:5px"><div><b>'+esc(x.instructor_name)+'</b><div style="font-size:10px;color:#6f8193">'+esc(x.available_date)+' '+esc(x.start_time)+'〜'+esc(x.end_time)+(x.note?' / '+esc(x.note):'')+'</div></div><button data-del="'+Number(x.id||0)+'" style="border:1px solid #df9992;background:#fff8f7;color:#9c3229;border-radius:8px;padding:5px 7px;font-weight:900">削除</button></div>').join(''):'<div style="padding:10px;color:#7b8a99">登録済みの空き時間はありません。</div>';
+        list.querySelectorAll('[data-del]').forEach(b=>b.onclick=async()=>{await fetch('/api/admin/instructor-availability/delete',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({id:Number(b.dataset.del)})});openAvailability();});
+      };
+      render(d.availability||[]);
+      body.querySelector('#iaSave221').onclick=async()=>{
+        const sel=body.querySelector('#iaInstructor221');const opt=sel.options[sel.selectedIndex];
+        const payload={instructor_id:Number(sel.value||0),instructor_name:opt?.dataset?.name||'',available_date:body.querySelector('#iaDate221').value,start_time:body.querySelector('#iaStart221').value,end_time:body.querySelector('#iaEnd221').value,note:body.querySelector('#iaNote221').value};
+        const rr=await fetch('/api/admin/instructor-availability',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(payload)});const x=await rr.json();
+        if(!x.ok)return alert(x.error||'登録できませんでした');
+        openAvailability();
+      };
+    }catch(_){body.textContent='空き時間情報を取得できませんでした';}
+  }
+
+  async function openDeadline(){
+    const body=makeModal('deadlineModal221','期限延長','研修生の30日期限を最大90日まで延長できます');
+    body.innerHTML='<div style="color:#75869a">読み込み中...</div>';
+    try{
+      const r=await fetch('/api/admin/deadline-extensions',{cache:'no-store'});const rows=await r.json();
+      if(!Array.isArray(rows))throw new Error('load');
+      const opts=rows.map(x=>'<option value="'+Number(x.id||0)+'" data-days="'+Number(x.extra_days||0)+'" data-reason="'+esc(x.reason||'')+'">'+esc(x.player_name||'研修生')+(Number(x.extra_days||0)>0?'（+'+Number(x.extra_days)+'日）':'')+'</option>').join('');
+      body.innerHTML='<div style="background:#fff;border:1px solid #dbe4ed;border-radius:12px;padding:10px">'+
+        '<select id="deProfile221" style="width:100%;padding:9px;border:1px solid #ccd8e4;border-radius:9px"><option value="">研修生を選択</option>'+opts+'</select>'+
+        '<div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:5px;margin-top:7px">'+
+          '<button data-days="3">+3日</button><button data-days="7">+7日</button><button data-days="14">+14日</button><button data-days="30">+30日</button>'+
+        '</div>'+
+        '<input id="deDays221" type="number" min="0" max="90" placeholder="延長日数（0で解除）" style="width:100%;margin-top:7px;padding:8px;border:1px solid #ccd8e4;border-radius:9px">'+
+        '<input id="deReason221" placeholder="延長理由" style="width:100%;margin-top:7px;padding:8px;border:1px solid #ccd8e4;border-radius:9px">'+
+        '<button id="deSave221" style="width:100%;margin-top:7px;border:0;border-radius:9px;background:#0b2d52;color:#fff;padding:9px;font-weight:1000">期限延長を保存</button>'+
+        '<div style="margin-top:7px;font-size:9px;color:#7a8998">※ 延長は表示だけでなく、自動期限リセット判定にも反映されます。</div></div>';
+      body.querySelectorAll('[data-days]').forEach(b=>{b.style.cssText='padding:7px;border:1px solid #d5b356;border-radius:8px;background:#fffdf4;font-weight:900';b.onclick=()=>body.querySelector('#deDays221').value=b.dataset.days;});
+      body.querySelector('#deProfile221').onchange=e=>{const o=e.target.options[e.target.selectedIndex];body.querySelector('#deDays221').value=o?.dataset?.days||0;body.querySelector('#deReason221').value=o?.dataset?.reason||'';};
+      body.querySelector('#deSave221').onclick=async()=>{
+        const payload={profile_id:Number(body.querySelector('#deProfile221').value||0),extra_days:Number(body.querySelector('#deDays221').value||0),reason:body.querySelector('#deReason221').value};
+        if(!payload.profile_id)return alert('研修生を選択してください');
+        const rr=await fetch('/api/admin/deadline-extensions',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(payload)});const x=await rr.json();
+        if(!x.ok)return alert(x.error||'保存できませんでした');
+        alert(payload.extra_days>0?x.player_name+' の期限を +'+x.extra_days+'日 延長しました':'期限延長を解除しました');
+        document.getElementById('deadlineModal221')?.remove();
+        location.reload();
+      };
+    }catch(_){body.textContent='研修生情報を取得できませんでした';}
+  }
+
+  function mountSecureTools(){
+    const h=findDoNotTouch(); if(!h)return false;
+    if(document.getElementById('secureTools221'))return true;
+    const box=document.createElement('div');box.id='secureTools221';
+    box.style.cssText='margin:8px 0;padding:9px;border:1px solid #d9c16f;border-radius:12px;background:#fffdf6';
+    box.innerHTML='<div style="font-size:10px;color:#806913;font-weight:900;margin-bottom:6px">管理者専用ツール</div>'+
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">'+
+        '<button id="stTest221">🧪 テスト研修生</button><button id="stAvail221">📅 教官の空き時間</button>'+
+        '<button id="stDeadline221" style="grid-column:1/3">⏳ 期限延長</button>'+
+      '</div>';
+    box.querySelectorAll('button').forEach(b=>b.style.cssText='padding:8px;border:1px solid #d4deea;border-radius:9px;background:#fff;color:#102b47;font-weight:1000;font-size:10px');
+    const host=h.closest('details,.card,section,div')||h.parentElement||h;
+    host.appendChild(box);
+    box.querySelector('#stTest221').onclick=()=>document.getElementById('testTraineeLauncher220')?.click();
+    box.querySelector('#stAvail221').onclick=openAvailability;
+    box.querySelector('#stDeadline221').onclick=openDeadline;
+    return true;
+  }
+
+  mountSecureTools();
+  const ob=new MutationObserver(()=>mountSecureTools());
+  ob.observe(document.documentElement,{childList:true,subtree:true,attributes:true,attributeFilter:['open','class','style']});
+  document.addEventListener('click',()=>setTimeout(mountSecureTools,80),true);
+})();
 
 // v2.18: テスト研修生管理（管理モーダルが後から開かれても表示）
 const mountTestTrainee217=async()=>{
@@ -894,6 +1081,162 @@ async function deleteTestTrainee(env,id){
   await env.DB.prepare("DELETE FROM trainee_profiles WHERE id=? AND admin_memo LIKE '%[TEST]%'").bind(row.id).run();
   return {ok:true};
 }
+
+async function ensureInstructorAvailability(env){
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS instructor_availability(
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    instructor_id INTEGER NOT NULL DEFAULT 0,
+    instructor_name TEXT NOT NULL DEFAULT '',
+    available_date TEXT NOT NULL,
+    start_time TEXT NOT NULL,
+    end_time TEXT NOT NULL,
+    note TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  )`).run();
+  try{await env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_instructor_availability_date ON instructor_availability(available_date,instructor_name)").run();}catch(_){}
+}
+async function listInstructorAvailability(env){
+  await ensureInstructorAvailability(env);
+  const i=await env.DB.prepare("SELECT id,name FROM instructors ORDER BY name COLLATE NOCASE").all().catch(()=>({results:[]}));
+  const a=await env.DB.prepare(`
+    SELECT id,instructor_id,instructor_name,available_date,start_time,end_time,note,created_at
+    FROM instructor_availability
+    WHERE available_date>=date('now','+9 hours')
+    ORDER BY available_date,start_time,instructor_name
+    LIMIT 120
+  `).all();
+  return {instructors:i?.results||[],availability:a?.results||[]};
+}
+async function saveInstructorAvailability(env,b){
+  await ensureInstructorAvailability(env);
+  const instructorId=Number(b?.instructor_id||0);
+  const name=String(b?.instructor_name||"").trim();
+  const date=String(b?.available_date||"").trim();
+  const start=String(b?.start_time||"").trim();
+  const end=String(b?.end_time||"").trim();
+  const note=String(b?.note||"").trim().slice(0,200);
+  if(!name || !/^\d{4}-\d{2}-\d{2}$/.test(date) || !/^\d{2}:\d{2}$/.test(start) || !/^\d{2}:\d{2}$/.test(end)){
+    return {ok:false,error:"教官・日付・開始/終了時刻を入力してください"};
+  }
+  if(start>=end)return {ok:false,error:"終了時刻は開始時刻より後にしてください"};
+  const r=await env.DB.prepare(`
+    INSERT INTO instructor_availability(instructor_id,instructor_name,available_date,start_time,end_time,note)
+    VALUES(?,?,?,?,?,?)
+  `).bind(instructorId,name,date,start,end,note).run();
+  return {ok:true,id:r?.meta?.last_row_id||null};
+}
+async function deleteInstructorAvailability(env,id){
+  await ensureInstructorAvailability(env);
+  await env.DB.prepare("DELETE FROM instructor_availability WHERE id=?").bind(Number(id||0)).run();
+  return {ok:true};
+}
+
+async function ensureDeadlineExtensions(env){
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS trainee_deadline_extensions(
+    profile_id INTEGER PRIMARY KEY,
+    extra_days INTEGER NOT NULL DEFAULT 0,
+    reason TEXT NOT NULL DEFAULT '',
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  )`).run();
+}
+async function listDeadlineExtensions(env){
+  await ensureDeadlineExtensions(env);
+  const q=await env.DB.prepare(`
+    SELECT p.id,p.player_name,p.discord_id,p.login_name,
+           COALESCE(e.extra_days,0) extra_days,
+           COALESCE(e.reason,'') reason,
+           COALESCE(e.updated_at,'') extension_updated_at
+    FROM trainee_profiles p
+    LEFT JOIN trainee_deadline_extensions e ON e.profile_id=p.id
+    ORDER BY p.player_name COLLATE NOCASE
+    LIMIT 300
+  `).all();
+  return q?.results||[];
+}
+async function setDeadlineExtension(env,b){
+  await ensureDeadlineExtensions(env);
+  const profileId=Number(b?.profile_id||0);
+  const extraDays=Math.max(0,Math.min(90,Number(b?.extra_days||0)));
+  const reason=String(b?.reason||"").trim().slice(0,300);
+  const p=await env.DB.prepare("SELECT id,player_name FROM trainee_profiles WHERE id=? LIMIT 1").bind(profileId).first();
+  if(!p)return {ok:false,error:"研修生が見つかりません"};
+  if(extraDays===0){
+    await env.DB.prepare("DELETE FROM trainee_deadline_extensions WHERE profile_id=?").bind(profileId).run();
+    return {ok:true,player_name:p.player_name,extra_days:0};
+  }
+  await env.DB.prepare(`
+    INSERT INTO trainee_deadline_extensions(profile_id,extra_days,reason,updated_at)
+    VALUES(?,?,?,CURRENT_TIMESTAMP)
+    ON CONFLICT(profile_id) DO UPDATE SET
+      extra_days=excluded.extra_days,
+      reason=excluded.reason,
+      updated_at=CURRENT_TIMESTAMP
+  `).bind(profileId,extraDays,reason).run();
+  return {ok:true,player_name:p.player_name,extra_days:extraDays};
+}
+
+function addDaysToYmd(ymd,days){
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(String(ymd||"")) || !days)return ymd;
+  const [y,m,d]=String(ymd).split("-").map(Number);
+  const dt=new Date(Date.UTC(y,m-1,d));
+  dt.setUTCDate(dt.getUTCDate()+Number(days));
+  return dt.toISOString().slice(0,10);
+}
+
+/*
+  Coreの30日期限計算は「オリエンテーション/最初の修了日」を開始日にする。
+  このProxyは、その開始日SELECTの結果だけに管理者が設定した延長日数を加える。
+  そのため表示だけでなく、自動期限リセット判定にも同じ延長が効く。
+*/
+function envWithDeadlineExtensions(env){
+  if(!env?.DB)return env;
+  const originalDB=env.DB;
+  const dbProxy=new Proxy(originalDB,{
+    get(target,prop,receiver){
+      if(prop!=="prepare")return Reflect.get(target,prop,receiver);
+      return function(sql){
+        const prepared=target.prepare(sql);
+        const deadlineStartQuery=
+          String(sql).includes("SELECT substr(COALESCE(NULLIF(completed_at,''),confirmed_date),1,10) d") &&
+          String(sql).includes("FROM reservations");
+        if(!deadlineStartQuery)return prepared;
+
+        let bound=[];
+        const wrapper={
+          bind(...args){bound=args; prepared.bind(...args); return wrapper;},
+          async first(...args){
+            const row=await prepared.first(...args);
+            if(!row?.d)return row;
+            try{
+              await ensureDeadlineExtensions(env);
+              const key=String(bound[bound.length-1]||"").trim();
+              if(!key)return row;
+              const p=await originalDB.prepare(`
+                SELECT id FROM trainee_profiles
+                WHERE lower(trim(COALESCE(discord_id,'')))=lower(trim(?))
+                   OR lower(trim(COALESCE(login_name,'')))=lower(trim(?))
+                   OR lower(trim(COALESCE(player_name,'')))=lower(trim(?))
+                LIMIT 1
+              `).bind(key,key,key).first();
+              if(!p?.id)return row;
+              const e=await originalDB.prepare(
+                "SELECT extra_days FROM trainee_deadline_extensions WHERE profile_id=? LIMIT 1"
+              ).bind(Number(p.id)).first();
+              const days=Math.max(0,Number(e?.extra_days||0));
+              if(days>0)return {...row,d:addDaysToYmd(row.d,days),_deadline_extension_days:days};
+            }catch(_){}
+            return row;
+          },
+          all:(...args)=>prepared.all(...args),
+          run:(...args)=>prepared.run(...args),
+          raw:(...args)=>prepared.raw(...args)
+        };
+        return wrapper;
+      };
+    }
+  });
+  return {...env,DB:dbProxy};
+}
 const CACHEABLE_ADMIN_GETS = new Set([
   "/api/admin/stats",
   "/api/admin/trainees",
@@ -903,7 +1246,7 @@ const CACHEABLE_ADMIN_GETS = new Set([
 async function fetchWithShortCache(request, env, ctx){
   const url = new URL(request.url);
   if(request.method !== "GET" || !CACHEABLE_ADMIN_GETS.has(url.pathname)){
-    return core.fetch(request, env, ctx);
+    return core.fetch(request, envWithDeadlineExtensions(env), ctx);
   }
 
   const cache = caches.default;
@@ -945,6 +1288,32 @@ async function fetch(request, env, ctx){
 
 
 
+
+  if(url.pathname === "/api/admin/instructor-availability" && request.method === "GET"){
+    if(!(await verifyAdmin(request,env,ctx)))return json({error:"unauthorized"},401);
+    try{return json(await listInstructorAvailability(env));}
+    catch(err){return json({error:String(err?.message||err)},500);}
+  }
+  if(url.pathname === "/api/admin/instructor-availability" && request.method === "POST"){
+    if(!(await verifyAdmin(request,env,ctx)))return json({error:"unauthorized"},401);
+    try{return json(await saveInstructorAvailability(env,await request.json().catch(()=>({}))));}
+    catch(err){return json({error:String(err?.message||err)},500);}
+  }
+  if(url.pathname === "/api/admin/instructor-availability/delete" && request.method === "POST"){
+    if(!(await verifyAdmin(request,env,ctx)))return json({error:"unauthorized"},401);
+    try{const b=await request.json().catch(()=>({}));return json(await deleteInstructorAvailability(env,b.id));}
+    catch(err){return json({error:String(err?.message||err)},500);}
+  }
+  if(url.pathname === "/api/admin/deadline-extensions" && request.method === "GET"){
+    if(!(await verifyAdmin(request,env,ctx)))return json({error:"unauthorized"},401);
+    try{return json(await listDeadlineExtensions(env));}
+    catch(err){return json({error:String(err?.message||err)},500);}
+  }
+  if(url.pathname === "/api/admin/deadline-extensions" && request.method === "POST"){
+    if(!(await verifyAdmin(request,env,ctx)))return json({error:"unauthorized"},401);
+    try{return json(await setDeadlineExtension(env,await request.json().catch(()=>({}))));}
+    catch(err){return json({error:String(err?.message||err)},500);}
+  }
   if(url.pathname === "/api/admin/test-trainee" && request.method === "GET"){
     if(!(await verifyAdmin(request,env,ctx)))return json({error:"unauthorized"},401);
     try{return json(await getTestTrainee(env));}
@@ -1032,7 +1401,7 @@ async function fetch(request, env, ctx){
 async function scheduled(event, env, ctx){
   ctx.waitUntil(sendHourlyDiscordSummary(env));
   if(typeof core.scheduled === "function"){
-    return core.scheduled(event, env, ctx);
+    return core.scheduled(event, envWithDeadlineExtensions(env), ctx);
   }
 }
 
