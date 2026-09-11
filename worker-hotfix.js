@@ -1,7 +1,7 @@
 import core from "./worker.js";
 
 /*
-  Version 2.29 mobile priority schedule UI
+  Version 2.30 training duration and auto end
 
   v2.05 の復旧取得が失敗する環境向けに、復旧経路をさらに単純化。
   - PRAGMA を使わない
@@ -19,7 +19,7 @@ const json = (data, status = 200) => new Response(JSON.stringify(data), {
   }
 });
 
-const HOTFIX_VERSION = "2.29";
+const HOTFIX_VERSION = "2.30";
 
 async function syncDisplayedVersion(response){
   try{
@@ -386,182 +386,139 @@ async function syncDisplayedVersion(response){
   ob.observe(document.documentElement,{childList:true,subtree:true});
 })();
 
-// v2.29: 研修生予約画面 - スマホ向け確定枠UI
+// v2.30: 研修生予約画面 - 所要時間連動・終了時刻自動表示
 (()=>{
   const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-  let slotCache=null, mounting=false, mounted=false;
+  let mounting=false,mounted=false,slotCache=null,duration=60;
+
+  const toMin=t=>{const m=String(t||'').match(/^(\d{2}):(\d{2})$/);return m?Number(m[1])*60+Number(m[2]):null;};
+  const fromMin=n=>{n=((Number(n)%1440)+1440)%1440;return String(Math.floor(n/60)).padStart(2,'0')+':'+String(n%60).padStart(2,'0');};
+
+  function trainingTitle(){
+    const els=[...document.querySelectorAll('h1,h2,h3,h4')];
+    const h=els.find(x=>/申請/.test(x.textContent||'') && /学科|研修|オリエンテーション|テスト/.test(x.textContent||''));
+    return (h?.textContent||'').replace(/\s*申請\s*$/,'').trim();
+  }
+
+  async function loadDuration(){
+    const title=trainingTitle();
+    try{
+      const r=await fetch('/api/trainee/training-duration?title='+encodeURIComponent(title),{cache:'no-store'});
+      const d=await r.json(); duration=Math.max(15,Number(d.duration_minutes||60));
+    }catch(_){duration=60;}
+    return duration;
+  }
 
   async function loadSlots(){
     if(slotCache)return slotCache;
     try{
       const r=await fetch('/api/trainee/instructor-availability',{cache:'no-store'});
-      const d=await r.json();
-      slotCache=Array.isArray(d.availability)?d.availability:[];
+      const d=await r.json();slotCache=Array.isArray(d.availability)?d.availability:[];
     }catch(_){slotCache=[];}
     return slotCache;
   }
 
   function fields(){
-    const dates=[...document.querySelectorAll('input[type="date"]')];
-    const times=[...document.querySelectorAll('input[type="time"]')];
+    const dates=[...document.querySelectorAll('input[type="date"]')],times=[...document.querySelectorAll('input[type="time"]')];
     return {
       date1:document.querySelector('[name="preferred_date"],#preferred_date,#preferredDate')||dates[0]||null,
-      time1:document.querySelector('[name="preferred_time"],#preferred_time,#preferredTime')||times[0]||null,
-      date2:document.querySelector('[name="preferred_date2"],#preferred_date2,#preferredDate2')||dates[1]||null
+      time1:document.querySelector('[name="preferred_time"],#preferred_time,#preferredTime')||times[0]||null
     };
   }
+  function setValue(el,val){if(!el)return;el.value=val;el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}));}
 
-  function setValue(el,val){
-    if(!el)return;
-    el.value=val;
-    el.dispatchEvent(new Event('input',{bubbles:true}));
-    el.dispatchEvent(new Event('change',{bubbles:true}));
-  }
-
-  function firstPreferenceBlock(date1,time1){
-    const dWrap=date1?.closest('.field,.form-group,.row,div');
-    const tWrap=time1?.closest('.field,.form-group,.row,div');
-    if(dWrap && tWrap && dWrap.parentElement===tWrap.parentElement){
-      const parent=dWrap.parentElement;
-      const box=document.createElement('div');
-      box.id='manualFirstPreference229';
-      box.style.cssText='display:none;width:100%;grid-column:1/-1';
-      parent.insertBefore(box,dWrap);
-      box.appendChild(dWrap);
-      box.appendChild(tWrap);
-      return box;
+  function makeStartSlots(windows){
+    const rows=[];
+    for(const w of windows){
+      const s=toMin(w.start_time),e=toMin(w.end_time);
+      if(s==null||e==null||e<=s)continue;
+      for(let cur=s;cur+duration<=e;cur+=15){
+        rows.push({...w,slot_start:fromMin(cur),slot_end:fromMin(cur+duration)});
+        if(rows.length>=8)return rows;
+      }
     }
-    const parent=date1?.parentElement;
-    if(parent){
-      parent.id='manualFirstPreference229';
-      parent.style.display='none';
-      return parent;
-    }
-    return null;
+    return rows;
   }
 
   async function mount(){
-    if(mounted || mounting || document.getElementById('prioritySlots229'))return !!document.getElementById('prioritySlots229');
-
-    const {date1,time1,date2}=fields();
-    if(!date1 || !time1)return false;
-
+    if(mounted||mounting||document.getElementById('prioritySlots230'))return !!document.getElementById('prioritySlots230');
+    const {date1,time1}=fields(); if(!date1||!time1)return false;
     mounting=true;
     try{
-      document.querySelectorAll('#prioritySlots222,#prioritySlots227,#prioritySlots229').forEach(x=>x.remove());
+      await loadDuration();
+      const windows=await loadSlots();
+      const slots=makeStartSlots(windows);
 
-      const slots=(await loadSlots()).slice(0,5);
-      const manual=firstPreferenceBlock(date1,time1);
+      document.querySelectorAll('#prioritySlots222,#prioritySlots227,#prioritySlots229,#prioritySlots230').forEach(x=>x.remove());
 
       const section=document.createElement('section');
-      section.id='prioritySlots229';
+      section.id='prioritySlots230';
       section.style.cssText='display:block;width:100%;box-sizing:border-box;margin:8px 0 12px;padding:11px;border:1px solid #d6bb5d;border-radius:14px;background:#fffdf7;clear:both';
 
-      let html=
-        '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px">'+
-          '<div><div style="font-size:15px;font-weight:1000;color:#17314d">教官確定枠</div>'+
-          '<div style="font-size:10px;line-height:1.45;color:#7d6c3b;margin-top:2px">教官が対応できる時間です。ここから選ぶと確定しやすくなります。</div></div>'+
-          '<span style="flex:0 0 auto;padding:3px 7px;border-radius:999px;background:#edf7ef;border:1px solid #9bc9a3;color:#28703a;font-size:9px;font-weight:1000">優先</span>'+
-        '</div>';
+      let html='<div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start">'+
+        '<div><div style="font-size:15px;font-weight:1000;color:#17314d">教官確定枠</div>'+
+        '<div style="font-size:10px;color:#7d6c3b;margin-top:2px">所要時間 '+duration+'分 ／ 終了時刻は自動計算</div></div>'+
+        '<span style="padding:3px 7px;border-radius:999px;background:#edf7ef;border:1px solid #9bc9a3;color:#28703a;font-size:9px;font-weight:1000">優先</span></div>';
 
       if(slots.length){
         html+='<div style="display:grid;grid-template-columns:1fr;gap:7px;margin-top:9px">';
         slots.forEach((x,i)=>{
-          html+='<button type="button" data-slot229="'+i+'" style="width:100%;text-align:left;padding:10px 11px;border:1px solid #d4dee8;border-radius:11px;background:#fff;color:#17314d;box-sizing:border-box">'+
-            '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px">'+
-              '<div style="min-width:0">'+
-                '<div style="font-size:13px;font-weight:1000;letter-spacing:.01em">'+esc(x.available_date)+'　'+esc(x.start_time)+'〜'+esc(x.end_time)+'</div>'+
-                '<div style="font-size:10px;color:#74869a;margin-top:3px">担当可能：'+esc(x.instructor_name)+'</div>'+
-              '</div>'+
-              '<span style="flex:0 0 auto;font-size:10px;font-weight:1000;color:#826b20">選ぶ</span>'+
-            '</div>'+
-          '</button>';
+          html+='<button type="button" data-slot230="'+i+'" style="width:100%;text-align:left;padding:10px 11px;border:1px solid #d4dee8;border-radius:11px;background:#fff;color:#17314d;box-sizing:border-box">'+
+            '<div style="display:flex;justify-content:space-between;gap:10px;align-items:center"><div>'+
+              '<div style="font-size:13px;font-weight:1000">'+esc(x.available_date)+'　'+esc(x.slot_start)+'〜'+esc(x.slot_end)+'</div>'+
+              '<div style="font-size:10px;color:#74869a;margin-top:3px">担当可能：'+esc(x.instructor_name)+'</div></div>'+
+              '<span style="font-size:10px;font-weight:1000;color:#826b20">選ぶ</span></div></button>';
         });
         html+='</div>';
       }else{
-        html+='<div style="margin-top:9px;padding:9px;border-radius:10px;background:#fff;color:#778797;font-size:10px">現在、教官確定枠はありません。下から希望日を入力してください。</div>';
+        html+='<div style="margin-top:9px;padding:9px;border-radius:10px;background:#fff;color:#778797;font-size:10px">この研修を完了できる教官確定枠はありません。</div>';
       }
 
-      html+=
-        '<div id="selectedSlot229" style="display:none;margin-top:8px;padding:8px 9px;border-radius:9px;background:#eef8f0;color:#2d6d3e;font-size:10px;font-weight:900"></div>'+
-        '<button type="button" id="customDate229" style="width:100%;margin-top:8px;padding:9px;border:1px dashed #aebdcb;border-radius:10px;background:#fff;color:#54677b;font-weight:1000;font-size:11px">別の日程を希望する</button>';
+      html+='<div id="selectedSlot230" style="display:none;margin-top:8px;padding:8px 9px;border-radius:9px;background:#eef8f0;color:#2d6d3e;font-size:10px;font-weight:900"></div>'+
+        '<div id="manualEnd230" style="display:none;margin-top:8px;padding:8px 9px;border-radius:9px;background:#f2f6fa;color:#40566d;font-size:10px;font-weight:900"></div>'+
+        '<button type="button" id="customDate230" style="width:100%;margin-top:8px;padding:9px;border:1px dashed #aebdcb;border-radius:10px;background:#fff;color:#54677b;font-weight:1000;font-size:11px">別の日程を希望する</button>';
 
       section.innerHTML=html;
+      const h=[...document.querySelectorAll('h1,h2,h3,h4,strong,b,div,span')].find(el=>/^第1希望/.test((el.textContent||'').trim()));
+      if(h&&h.parentElement)h.insertAdjacentElement('afterend',section);
+      else date1.parentElement?.insertBefore(section,date1);
 
-      // 第1希望の見出しの直後、手入力欄の前に配置。
-      const h=[...document.querySelectorAll('h1,h2,h3,h4,strong,b,div,span')].find(el=>{
-        const t=(el.textContent||'').trim();
-        return /^第1希望/.test(t);
-      });
-      if(h && h.parentElement){
-        h.insertAdjacentElement('afterend',section);
-      }else if(manual && manual.parentElement){
-        manual.parentElement.insertBefore(section,manual);
-      }else{
-        date1.parentElement?.insertBefore(section,date1);
-      }
-
-      section.querySelectorAll('[data-slot229]').forEach(btn=>{
+      section.querySelectorAll('[data-slot230]').forEach(btn=>{
         btn.onclick=()=>{
-          const x=slots[Number(btn.dataset.slot229||0)];
-          if(!x)return;
-          setValue(date1,String(x.available_date||''));
-          setValue(time1,String(x.start_time||''));
-
-          section.querySelectorAll('[data-slot229]').forEach(z=>{
-            z.style.background='#fff';
-            z.style.borderColor='#d4dee8';
-            z.style.boxShadow='none';
-          });
-          btn.style.background='#fff9df';
-          btn.style.borderColor='#d0a93e';
-          btn.style.boxShadow='0 0 0 2px rgba(208,169,62,.18)';
-
-          const selected=section.querySelector('#selectedSlot229');
-          selected.style.display='block';
-          selected.textContent='✓ 選択中：'+x.instructor_name+' / '+x.available_date+' '+x.start_time+'〜'+x.end_time;
-
-          if(manual)manual.style.display='none';
+          const x=slots[Number(btn.dataset.slot230||0)];if(!x)return;
+          setValue(date1,String(x.available_date||''));setValue(time1,String(x.slot_start||''));
+          section.querySelectorAll('[data-slot230]').forEach(z=>{z.style.background='#fff';z.style.borderColor='#d4dee8';z.style.boxShadow='none';});
+          btn.style.background='#fff9df';btn.style.borderColor='#d0a93e';btn.style.boxShadow='0 0 0 2px rgba(208,169,62,.18)';
+          const sel=section.querySelector('#selectedSlot230');sel.style.display='block';
+          sel.textContent='✓ 選択中：'+x.instructor_name+' / '+x.available_date+' '+x.slot_start+'〜'+x.slot_end;
+          section.querySelector('#manualEnd230').style.display='none';
         };
       });
 
-      section.querySelector('#customDate229').onclick=()=>{
-        section.querySelectorAll('[data-slot229]').forEach(z=>{
-          z.style.background='#fff';
-          z.style.borderColor='#d4dee8';
-          z.style.boxShadow='none';
-        });
-        section.querySelector('#selectedSlot229').style.display='none';
+      function refreshManualEnd(){
+        if(!time1.value)return;
+        const s=toMin(time1.value);if(s==null)return;
+        const box=section.querySelector('#manualEnd230');
+        box.style.display='block';
+        box.textContent='終了予定：'+fromMin(s+duration)+'（所要 '+duration+'分）';
+      }
+      time1.addEventListener('input',refreshManualEnd);
+      time1.addEventListener('change',refreshManualEnd);
 
-        // 手入力を使う時だけ第1希望の日付・時間欄を表示。
-        if(manual){
-          manual.style.display='';
-          manual.style.marginTop='10px';
-        }
-        setValue(date1,'');
-        setValue(time1,'');
-        date1.focus();
-        date1.scrollIntoView({behavior:'smooth',block:'center'});
+      section.querySelector('#customDate230').onclick=()=>{
+        section.querySelectorAll('[data-slot230]').forEach(z=>{z.style.background='#fff';z.style.borderColor='#d4dee8';z.style.boxShadow='none';});
+        section.querySelector('#selectedSlot230').style.display='none';
+        date1.focus();date1.scrollIntoView({behavior:'smooth',block:'center'});
+        refreshManualEnd();
       };
 
-      // 教官確定枠が無い時は最初から手入力欄を表示。
-      if(!slots.length && manual)manual.style.display='';
-
-      mounted=true;
-      return true;
-    }finally{
-      mounting=false;
-    }
+      mounted=true;return true;
+    }finally{mounting=false;}
   }
 
   mount();
   let tries=0;
-  const timer=setInterval(async()=>{
-    tries++;
-    const ok=await mount();
-    if(ok||tries>120)clearInterval(timer);
-  },500);
-
+  const timer=setInterval(async()=>{tries++;const ok=await mount();if(ok||tries>120)clearInterval(timer);},500);
   const ob=new MutationObserver(()=>{if(!mounted)mount();});
   ob.observe(document.documentElement,{childList:true,subtree:true});
 })();
@@ -1432,6 +1389,95 @@ async function enforceQuarterHourReservationRequest(request){
   }
   return null;
 }
+
+async function ensureTrainingDurations(env){
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS training_durations(
+    training_id INTEGER PRIMARY KEY,
+    training_title TEXT NOT NULL DEFAULT '',
+    duration_minutes INTEGER NOT NULL DEFAULT 60,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  )`).run();
+}
+async function listTrainingDurations(env){
+  await ensureTrainingDurations(env);
+  let programs=[];
+  try{
+    const q=await env.DB.prepare(`
+      SELECT training_id, title
+      FROM training_programs
+      WHERE COALESCE(active,1)=1
+      ORDER BY training_id
+    `).all();
+    programs=q?.results||[];
+  }catch(_){
+    try{
+      const q=await env.DB.prepare(`
+        SELECT id AS training_id, title
+        FROM training_programs
+        ORDER BY id
+      `).all();
+      programs=q?.results||[];
+    }catch(__){}
+  }
+  const d=await env.DB.prepare(
+    "SELECT training_id,training_title,duration_minutes,updated_at FROM training_durations"
+  ).all();
+  const map=new Map((d?.results||[]).map(x=>[Number(x.training_id),x]));
+  return programs.map(p=>{
+    const id=Number(p.training_id||p.id||0);
+    const row=map.get(id);
+    return {
+      training_id:id,
+      title:String(p.title||row?.training_title||("研修 "+id)),
+      duration_minutes:Math.max(15,Number(row?.duration_minutes||60))
+    };
+  });
+}
+async function saveTrainingDuration(env,b){
+  await ensureTrainingDurations(env);
+  const trainingId=Number(b?.training_id||0);
+  const title=String(b?.training_title||"").trim();
+  let mins=Number(b?.duration_minutes||0);
+  if(!trainingId)return {ok:false,error:"研修を選択してください"};
+  if(!Number.isFinite(mins)||mins<15||mins>480||mins%15!==0){
+    return {ok:false,error:"所要時間は15分単位・15〜480分で設定してください"};
+  }
+  await env.DB.prepare(`
+    INSERT INTO training_durations(training_id,training_title,duration_minutes,updated_at)
+    VALUES(?,?,?,CURRENT_TIMESTAMP)
+    ON CONFLICT(training_id) DO UPDATE SET
+      training_title=excluded.training_title,
+      duration_minutes=excluded.duration_minutes,
+      updated_at=CURRENT_TIMESTAMP
+  `).bind(trainingId,title,mins).run();
+  return {ok:true,training_id:trainingId,duration_minutes:mins};
+}
+async function getTrainingDurationByTitle(env,title){
+  await ensureTrainingDurations(env);
+  title=String(title||"").trim();
+  if(!title)return {duration_minutes:60};
+  const row=await env.DB.prepare(`
+    SELECT duration_minutes,training_id,training_title
+    FROM training_durations
+    WHERE trim(training_title)=trim(?)
+       OR instr(trim(?),trim(training_title))>0
+       OR instr(trim(training_title),trim(?))>0
+    ORDER BY length(training_title) DESC
+    LIMIT 1
+  `).bind(title,title,title).first();
+  if(row)return {duration_minutes:Math.max(15,Number(row.duration_minutes||60)),training_id:Number(row.training_id||0),training_title:String(row.training_title||title)};
+
+  // 未設定なら training_programs をタイトルで照合し、既定60分。
+  try{
+    const p=await env.DB.prepare(`
+      SELECT training_id,title FROM training_programs
+      WHERE trim(title)=trim(?) OR instr(trim(?),trim(title))>0 OR instr(trim(title),trim(?))>0
+      ORDER BY length(title) DESC LIMIT 1
+    `).bind(title,title,title).first();
+    if(p)return {duration_minutes:60,training_id:Number(p.training_id||0),training_title:String(p.title||title)};
+  }catch(_){}
+  return {duration_minutes:60,training_title:title};
+}
 async function ensureInstructorAvailability(env){
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS instructor_availability(
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1668,6 +1714,22 @@ async function fetch(request, env, ctx){
     }
   }
 
+
+  if(url.pathname === "/api/admin/training-durations" && request.method === "GET"){
+    if(!(await verifyAdmin(request,env,ctx)))return json({error:"unauthorized"},401);
+    try{return json(await listTrainingDurations(env));}
+    catch(err){return json({error:String(err?.message||err)},500);}
+  }
+  if(url.pathname === "/api/admin/training-durations" && request.method === "POST"){
+    if(!(await verifyAdmin(request,env,ctx)))return json({error:"unauthorized"},401);
+    try{return json(await saveTrainingDuration(env,await request.json().catch(()=>({}))));}
+    catch(err){return json({error:String(err?.message||err)},500);}
+  }
+  if(url.pathname === "/api/trainee/training-duration" && request.method === "GET"){
+    try{
+      return json(await getTrainingDurationByTitle(env,url.searchParams.get("title")||""));
+    }catch(err){return json({duration_minutes:60,error:String(err?.message||err)},200);}
+  }
   if(url.pathname === "/api/admin/instructor-availability" && request.method === "GET"){
     if(!(await verifyAdmin(request,env,ctx)))return json({error:"unauthorized"},401);
     try{return json(await listInstructorAvailability(env));}
