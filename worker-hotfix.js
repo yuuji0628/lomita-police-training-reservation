@@ -1,7 +1,7 @@
 import core from "./worker.js";
 
 /*
-  Version 2.17 test trainee wrapper
+  Version 2.18 test trainee UI fix
 
   v2.05 の復旧取得が失敗する環境向けに、復旧経路をさらに単純化。
   - PRAGMA を使わない
@@ -19,7 +19,7 @@ const json = (data, status = 200) => new Response(JSON.stringify(data), {
   }
 });
 
-const HOTFIX_VERSION = "2.17";
+const HOTFIX_VERSION = "2.18";
 
 async function syncDisplayedVersion(response){
   try{
@@ -175,10 +175,10 @@ async function syncDisplayedVersion(response){
 
 
 
-// v2.17: テスト研修生管理
-(async()=>{
+// v2.18: テスト研修生管理（管理モーダルが後から開かれても表示）
+const mountTestTrainee217=async()=>{
   const adminTitle=[...document.querySelectorAll('h1,h2,h3')].find(x=>/管理メニュー/.test(x.textContent||''));
-  if(!adminTitle || document.getElementById('testTraineeCard217'))return;
+  if(!adminTitle || document.getElementById('testTraineeCard217'))return false;
 
   const card=document.createElement('div');
   card.id='testTraineeCard217';
@@ -251,7 +251,19 @@ async function syncDisplayedVersion(response){
     }finally{btn.disabled=false;btn.textContent='作成';}
   };
   await show();
-})();
+  return true;
+};
+
+mountTestTrainee217();
+let testMountTries217=0;
+const testMountTimer217=setInterval(async()=>{
+  testMountTries217++;
+  const mounted=await mountTestTrainee217();
+  if(mounted || testMountTries217>60)clearInterval(testMountTimer217);
+},500);
+
+const testObserver217=new MutationObserver(()=>{ mountTestTrainee217(); });
+testObserver217.observe(document.documentElement,{childList:true,subtree:true});
 
 // v2.15: compact operations tools
 (async()=>{
