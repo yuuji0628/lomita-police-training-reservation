@@ -1,7 +1,7 @@
 import core from "./worker.js";
 
 /*
-  Version 2.33 auto end time fix
+  Version 2.34 iPhone time parser fix
 
   v2.05 の復旧取得が失敗する環境向けに、復旧経路をさらに単純化。
   - PRAGMA を使わない
@@ -19,7 +19,7 @@ const json = (data, status = 200) => new Response(JSON.stringify(data), {
   }
 });
 
-const HOTFIX_VERSION = "2.33";
+const HOTFIX_VERSION = "2.34";
 
 async function syncDisplayedVersion(response){
   try{
@@ -358,7 +358,10 @@ async function syncDisplayedVersion(response){
       el.dataset.quarter228='1';
       el.addEventListener('change',()=>{
         const v=String(el.value||'');
-        if(v&&!/^\d{2}:(00|15|30|45)$/.test(v)){
+        const p=v.split(':');
+        const hh=Number(p[0]),mm=Number(p[1]);
+        const ok=p.length>=2&&Number.isInteger(hh)&&Number.isInteger(mm)&&hh>=0&&hh<=23&&[0,15,30,45].includes(mm);
+        if(v&&!ok){
           alert('時刻は15分単位（00・15・30・45分）で選択してください');
           el.value='';
           el.dispatchEvent(new Event('input',{bubbles:true}));
@@ -372,7 +375,12 @@ async function syncDisplayedVersion(response){
       if(form.dataset.quarterSubmit228)return;
       form.dataset.quarterSubmit228='1';
       form.addEventListener('submit',e=>{
-        const bad=[...form.querySelectorAll('input[type="time"]')].find(el=>el.value&&!/^\d{2}:(00|15|30|45)$/.test(el.value));
+        const bad=[...form.querySelectorAll('input[type="time"]')].find(el=>{
+          if(!el.value)return false;
+          const p=String(el.value).split(':');
+          const hh=Number(p[0]),mm=Number(p[1]);
+          return !(p.length>=2&&Number.isInteger(hh)&&Number.isInteger(mm)&&hh>=0&&hh<=23&&[0,15,30,45].includes(mm));
+        });
         if(bad){
           e.preventDefault();
           alert('申請時刻は15分単位（00・15・30・45分）で選択してください');
@@ -595,9 +603,11 @@ async function syncDisplayedVersion(response){
       startSel.innerHTML='<option value="">開始時刻</option>'+qopts.join('');
 
       const add30=v=>{
-        const m=String(v||'').match(/^(\d{2}):(\d{2})$/);
-        if(!m)return '';
-        let total=Number(m[1])*60+Number(m[2])+30;
+        const parts=String(v||'').split(':');
+        if(parts.length<2)return '';
+        const hh=Number(parts[0]),mm=Number(parts[1]);
+        if(!Number.isInteger(hh)||!Number.isInteger(mm)||hh<0||hh>23||![0,15,30,45].includes(mm))return '';
+        let total=hh*60+mm+30;
         total%=1440;
         return String(Math.floor(total/60)).padStart(2,'0')+':'+String(total%60).padStart(2,'0');
       };
@@ -615,7 +625,12 @@ async function syncDisplayedVersion(response){
         const startValue=body.querySelector('#iaStart221').value;
         const endValue=add30(startValue);
         const payload={instructor_id:Number(sel.value||0),instructor_name:opt?.dataset?.name||'',available_date:body.querySelector('#iaDate221').value,start_time:startValue,end_time:endValue,note:body.querySelector('#iaNote221').value};
-        const valid15=v=>/^\d{2}:(00|15|30|45)$/.test(String(v||''));
+        const valid15=v=>{
+          const p=String(v||'').split(':');
+          if(p.length<2)return false;
+          const hh=Number(p[0]),mm=Number(p[1]);
+          return Number.isInteger(hh)&&Number.isInteger(mm)&&hh>=0&&hh<=23&&[0,15,30,45].includes(mm);
+        };
         if(!valid15(payload.start_time))return alert('開始時刻を15分単位で選択してください');
         if(!payload.end_time)return alert('終了時刻を計算できませんでした。開始時刻を選び直してください');
         const rr=await fetch('/api/admin/instructor-availability',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(payload)});const x=await rr.json();
