@@ -1,7 +1,7 @@
 import core from "./worker.js";
 
 /*
-  Version 2.25 admin-only tools fix
+  Version 2.26 trainee progress fix
 
   v2.05 の復旧取得が失敗する環境向けに、復旧経路をさらに単純化。
   - PRAGMA を使わない
@@ -19,7 +19,7 @@ const json = (data, status = 200) => new Response(JSON.stringify(data), {
   }
 });
 
-const HOTFIX_VERSION = "2.25";
+const HOTFIX_VERSION = "2.26";
 
 async function syncDisplayedVersion(response){
   try{
@@ -333,7 +333,9 @@ async function syncDisplayedVersion(response){
 })();
 
 
-// v2.25: 研修生画面の安全クリーンアップ
+// v2.26: 研修生画面の安全クリーンアップ
+// D1 bind修正により進捗取得エラーも解消
+
 (()=>{
   const txt=(document.body?.innerText||'');
   if(/研修生ポータル|TRAINEE PORTAL/.test(txt) && !/研修管理本部|システム管理者|ADMIN TOOLS/.test(txt)){
@@ -1408,10 +1410,15 @@ function envWithDeadlineExtensions(env){
         if(!deadlineStartQuery)return prepared;
 
         let bound=[];
+        let activeStmt=prepared;
         const wrapper={
-          bind(...args){bound=args; prepared.bind(...args); return wrapper;},
+          bind(...args){
+            bound=args;
+            activeStmt=prepared.bind(...args);
+            return wrapper;
+          },
           async first(...args){
-            const row=await prepared.first(...args);
+            const row=await activeStmt.first(...args);
             if(!row?.d)return row;
             try{
               await ensureDeadlineExtensions(env);
@@ -1433,9 +1440,9 @@ function envWithDeadlineExtensions(env){
             }catch(_){}
             return row;
           },
-          all:(...args)=>prepared.all(...args),
-          run:(...args)=>prepared.run(...args),
-          raw:(...args)=>prepared.raw(...args)
+          all:(...args)=>activeStmt.all(...args),
+          run:(...args)=>activeStmt.run(...args),
+          raw:(...args)=>activeStmt.raw(...args)
         };
         return wrapper;
       };
