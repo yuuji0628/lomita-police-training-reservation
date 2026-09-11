@@ -1,7 +1,7 @@
 import core from "./worker.js";
 
 /*
-  Version 2.16 build fix wrapper
+  Version 2.17 test trainee wrapper
 
   v2.05 の復旧取得が失敗する環境向けに、復旧経路をさらに単純化。
   - PRAGMA を使わない
@@ -19,7 +19,7 @@ const json = (data, status = 200) => new Response(JSON.stringify(data), {
   }
 });
 
-const HOTFIX_VERSION = "2.16";
+const HOTFIX_VERSION = "2.17";
 
 async function syncDisplayedVersion(response){
   try{
@@ -174,10 +174,103 @@ async function syncDisplayedVersion(response){
   }
 
 
+
+// v2.17: テスト研修生管理
+(async()=>{
+  const adminTitle=[...document.querySelectorAll('h1,h2,h3')].find(x=>/管理メニュー/.test(x.textContent||''));
+  if(!adminTitle || document.getElementById('testTraineeCard217'))return;
+
+  const card=document.createElement('div');
+  card.id='testTraineeCard217';
+  card.style.cssText='margin:8px 0;padding:10px;border:1px solid #d7e1eb;border-radius:12px;background:#fff;font-size:10px';
+  card.innerHTML=
+    '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center">'+
+      '<div><b style="font-size:13px">🧪 テスト研修生</b><div style="color:#76879a;margin-top:2px">申請・予約・アンケート・期限確認専用</div></div>'+
+      '<button id="ttCreate217" style="border:0;border-radius:9px;background:#0b2d52;color:#fff;padding:7px 10px;font-weight:900">作成</button>'+
+    '</div>'+
+    '<div id="ttBody217" style="margin-top:8px;color:#53667a">確認中...</div>';
+  adminTitle.insertAdjacentElement('afterend',card);
+
+  const body=card.querySelector('#ttBody217');
+  const btn=card.querySelector('#ttCreate217');
+
+  const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const show=async()=>{
+    try{
+      const r=await fetch('/api/admin/test-trainee',{cache:'no-store'});
+      const d=await r.json();
+      if(!d.found){
+        body.innerHTML='<span style="color:#8291a0">まだ作成されていません。</span>';
+        btn.style.display='';
+        return;
+      }
+      btn.style.display='none';
+      body.innerHTML=
+        '<div style="padding:8px;border-radius:10px;background:#f5f8fb;border:1px solid #e0e7ee">'+
+          '<div><b>TEST</b>　'+esc(d.player_name||'テスト研修生')+'</div>'+
+          '<div style="margin-top:4px">ログイン名：<b>'+esc(d.login_name||'')+'</b></div>'+
+          '<div style="margin-top:7px;display:flex;gap:5px;flex-wrap:wrap">'+
+            '<button id="ttPass217" style="padding:6px 8px;border:1px solid #cfdbe7;border-radius:8px;background:#fff;font-weight:800">パスワード再発行</button>'+
+            '<button id="ttReset217" style="padding:6px 8px;border:1px solid #d6b352;border-radius:8px;background:#fffdf4;font-weight:800">進捗リセット</button>'+
+            '<button id="ttDelete217" style="padding:6px 8px;border:1px solid #df9992;border-radius:8px;background:#fff8f7;color:#9c3229;font-weight:800">削除</button>'+
+          '</div>'+
+        '</div>';
+      body.querySelector('#ttPass217').onclick=async()=>{
+        const rr=await fetch('/api/admin/test-trainee/reissue-password',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({id:d.id})});
+        const x=await rr.json();
+        if(x.password)alert('新しいテスト用パスワード\\n\\n'+x.password+'\\n\\nこの画面を閉じる前に控えてください。');
+        else alert(x.error||'再発行に失敗しました');
+      };
+      body.querySelector('#ttReset217').onclick=async()=>{
+        if(!confirm('テスト研修生の予約・進捗を初期状態に戻しますか？'))return;
+        const rr=await fetch('/api/admin/test-trainee/reset',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({id:d.id})});
+        const x=await rr.json(); alert(x.ok?'テスト研修生を初期状態に戻しました':(x.error||'失敗しました'));
+        if(x.ok)location.reload();
+      };
+      body.querySelector('#ttDelete217').onclick=async()=>{
+        if(!confirm('テスト研修生を削除しますか？'))return;
+        const rr=await fetch('/api/admin/test-trainee/delete',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({id:d.id})});
+        const x=await rr.json(); alert(x.ok?'削除しました':(x.error||'削除に失敗しました'));
+        if(x.ok)location.reload();
+      };
+    }catch(_){body.textContent='テスト研修生情報を取得できませんでした';}
+  };
+  btn.onclick=async()=>{
+    btn.disabled=true;btn.textContent='作成中...';
+    try{
+      const r=await fetch('/api/admin/test-trainee/create',{method:'POST'});
+      const d=await r.json();
+      if(d.password){
+        alert('テスト研修生を作成しました\\n\\nログイン名：'+d.login_name+'\\nパスワード：'+d.password+'\\n\\nパスワードはこの画面でのみ表示されます。控えてください。');
+      }else if(d.existing){
+        alert('既存のテスト研修生があります。必要ならパスワードを再発行してください。');
+      }else if(d.error){
+        alert(d.error);
+      }
+      await show();
+    }finally{btn.disabled=false;btn.textContent='作成';}
+  };
+  await show();
+})();
+
 // v2.15: compact operations tools
 (async()=>{
   const isAdmin = !!document.querySelector('body');
   if(!isAdmin)return;
+
+  
+  document.querySelectorAll('div,article,section').forEach(el=>{
+    if(el.children.length>12)return;
+    const t=(el.textContent||'').trim();
+    if(t.includes('テスト研修生') && !el.dataset.testBadge217){
+      el.dataset.testBadge217='1';
+      const badge=document.createElement('span');
+      badge.textContent='TEST';
+      badge.style.cssText='display:inline-block;margin-left:5px;padding:2px 5px;border-radius:999px;background:#eef5ff;border:1px solid #9cbbe4;color:#184f88;font-size:8px;font-weight:1000';
+      const target=el.querySelector('b,strong,h3,h4')||el;
+      target.appendChild(badge);
+    }
+  });
 
   // 期限アラート強化: 7/3/1日で強調
   document.querySelectorAll('.traineeCompactDeadline').forEach(el=>{
@@ -632,6 +725,150 @@ async function sendHourlyDiscordSummary(env){
     return {ok:true};
   }catch(err){await logIncident(env,"discord",String(err?.message||err));return {ok:false};}
 }
+
+function testRandomText(len=10){
+  const chars="ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
+  const a=new Uint8Array(len);
+  crypto.getRandomValues(a);
+  let s="";
+  for(let i=0;i<len;i++)s+=chars[a[i]%chars.length];
+  return s;
+}
+async function testPasswordHash(password,salt){
+  const data=new TextEncoder().encode("lomita-trainee:"+salt+":"+password);
+  const digest=await crypto.subtle.digest("SHA-256",data);
+  return btoa(String.fromCharCode(...new Uint8Array(digest)))
+    .replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
+}
+async function ensureTestTraineeColumns(env){
+  // Core側の trainee_profiles を前提にしつつ、不足列だけ安全に補完。
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS trainee_profiles(
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    player_name TEXT NOT NULL,
+    discord_id TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    affiliation TEXT DEFAULT '',
+    rank TEXT DEFAULT '',
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+  )`).run();
+  const q=await env.DB.prepare("PRAGMA table_info(trainee_profiles)").all();
+  const cols=(q.results||[]).map(x=>String(x.name||"").toLowerCase());
+  for(const [name,def] of [
+    ["login_name","TEXT DEFAULT ''"],
+    ["password_hash","TEXT DEFAULT ''"],
+    ["password_salt","TEXT DEFAULT ''"],
+    ["discord_user_id","TEXT DEFAULT ''"],
+    ["admin_memo","TEXT DEFAULT ''"],
+    ["all_completed_at","TEXT DEFAULT ''"]
+  ]){
+    if(!cols.includes(name)){
+      try{await env.DB.prepare("ALTER TABLE trainee_profiles ADD COLUMN "+name+" "+def).run();}catch(_){}
+    }
+  }
+}
+async function createTestTrainee(env){
+  await ensureTestTraineeColumns(env);
+
+  // 同名の既存テストアカウントがある場合はそのまま返し、乱立を防止。
+  const existing=await env.DB.prepare(
+    "SELECT id,player_name,login_name,discord_id FROM trainee_profiles WHERE admin_memo LIKE '%[TEST]%' ORDER BY id DESC LIMIT 1"
+  ).first();
+  if(existing){
+    return {
+      ok:true,
+      existing:true,
+      id:existing.id,
+      player_name:existing.player_name,
+      login_name:existing.login_name,
+      discord_id:existing.discord_id,
+      note:"既存のテスト研修生を使用します。パスワード再発行が必要な場合は「パスワード再発行」を押してください。"
+    };
+  }
+
+  const suffix=String(Date.now()).slice(-6);
+  const login="test-"+suffix;
+  const password="Test-"+testRandomText(10);
+  const salt=testRandomText(24);
+  const hash=await testPasswordHash(password,salt);
+  const discord="TEST-"+suffix+"-"+testRandomText(5);
+
+  const r=await env.DB.prepare(`
+    INSERT INTO trainee_profiles(
+      player_name,discord_id,affiliation,rank,login_name,password_hash,password_salt,
+      discord_user_id,admin_memo,all_completed_at,created_at,updated_at
+    ) VALUES(?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
+  `).bind(
+    "テスト研修生",
+    discord,
+    "TEST",
+    "TEST",
+    login,
+    hash,
+    salt,
+    "",
+    "[TEST] 動作確認専用アカウント。実運用集計・通知対象外。",
+    ""
+  ).run();
+
+  return {
+    ok:true,
+    existing:false,
+    id:r?.meta?.last_row_id || null,
+    player_name:"テスト研修生",
+    login_name:login,
+    password,
+    discord_id:discord,
+    test:true
+  };
+}
+async function getTestTrainee(env){
+  await ensureTestTraineeColumns(env);
+  const r=await env.DB.prepare(`
+    SELECT id,player_name,login_name,discord_id,created_at,updated_at
+    FROM trainee_profiles
+    WHERE admin_memo LIKE '%[TEST]%'
+    ORDER BY id DESC LIMIT 1
+  `).first();
+  return r?{ok:true,found:true,...r}:{ok:true,found:false};
+}
+async function resetTestTrainee(env,id){
+  await ensureTestTraineeColumns(env);
+  const row=await env.DB.prepare(
+    "SELECT id,discord_id FROM trainee_profiles WHERE id=? AND admin_memo LIKE '%[TEST]%' LIMIT 1"
+  ).bind(Number(id)).first();
+  if(!row)return {ok:false,error:"テスト研修生が見つかりません"};
+
+  // TESTアカウントだけに限定して予約履歴をリセット。
+  try{await env.DB.prepare("DELETE FROM reservations WHERE discord_id=?").bind(row.discord_id).run();}catch(_){}
+  try{await env.DB.prepare("UPDATE trainee_profiles SET all_completed_at='', updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(row.id).run();}catch(_){}
+  return {ok:true};
+}
+async function reissueTestPassword(env,id){
+  await ensureTestTraineeColumns(env);
+  const row=await env.DB.prepare(
+    "SELECT id FROM trainee_profiles WHERE id=? AND admin_memo LIKE '%[TEST]%' LIMIT 1"
+  ).bind(Number(id)).first();
+  if(!row)return {ok:false,error:"テスト研修生が見つかりません"};
+
+  const password="Test-"+testRandomText(10);
+  const salt=testRandomText(24);
+  const hash=await testPasswordHash(password,salt);
+  await env.DB.prepare(
+    "UPDATE trainee_profiles SET password_hash=?,password_salt=?,updated_at=CURRENT_TIMESTAMP WHERE id=?"
+  ).bind(hash,salt,row.id).run();
+  return {ok:true,password};
+}
+async function deleteTestTrainee(env,id){
+  await ensureTestTraineeColumns(env);
+  const row=await env.DB.prepare(
+    "SELECT id,discord_id FROM trainee_profiles WHERE id=? AND admin_memo LIKE '%[TEST]%' LIMIT 1"
+  ).bind(Number(id)).first();
+  if(!row)return {ok:false,error:"テスト研修生が見つかりません"};
+
+  try{await env.DB.prepare("DELETE FROM reservations WHERE discord_id=?").bind(row.discord_id).run();}catch(_){}
+  await env.DB.prepare("DELETE FROM trainee_profiles WHERE id=? AND admin_memo LIKE '%[TEST]%'").bind(row.id).run();
+  return {ok:true};
+}
 const CACHEABLE_ADMIN_GETS = new Set([
   "/api/admin/stats",
   "/api/admin/trainees",
@@ -682,6 +919,38 @@ async function fetch(request, env, ctx){
   const url = new URL(request.url);
 
 
+
+  if(url.pathname === "/api/admin/test-trainee" && request.method === "GET"){
+    if(!(await verifyAdmin(request,env,ctx)))return json({error:"unauthorized"},401);
+    try{return json(await getTestTrainee(env));}
+    catch(err){return json({error:String(err?.message||err)},500);}
+  }
+  if(url.pathname === "/api/admin/test-trainee/create" && request.method === "POST"){
+    if(!(await verifyAdmin(request,env,ctx)))return json({error:"unauthorized"},401);
+    try{return json(await createTestTrainee(env));}
+    catch(err){return json({error:String(err?.message||err)},500);}
+  }
+  if(url.pathname === "/api/admin/test-trainee/reset" && request.method === "POST"){
+    if(!(await verifyAdmin(request,env,ctx)))return json({error:"unauthorized"},401);
+    try{
+      const b=await request.json().catch(()=>({}));
+      return json(await resetTestTrainee(env,b.id));
+    }catch(err){return json({error:String(err?.message||err)},500);}
+  }
+  if(url.pathname === "/api/admin/test-trainee/reissue-password" && request.method === "POST"){
+    if(!(await verifyAdmin(request,env,ctx)))return json({error:"unauthorized"},401);
+    try{
+      const b=await request.json().catch(()=>({}));
+      return json(await reissueTestPassword(env,b.id));
+    }catch(err){return json({error:String(err?.message||err)},500);}
+  }
+  if(url.pathname === "/api/admin/test-trainee/delete" && request.method === "POST"){
+    if(!(await verifyAdmin(request,env,ctx)))return json({error:"unauthorized"},401);
+    try{
+      const b=await request.json().catch(()=>({}));
+      return json(await deleteTestTrainee(env,b.id));
+    }catch(err){return json({error:String(err?.message||err)},500);}
+  }
   if(url.pathname === "/api/admin/ops-overview" && request.method === "GET"){
     if(!(await verifyAdmin(request,env,ctx)))return json({error:"unauthorized"},401);
     try{return json(await getOpsOverview(env));}catch(err){await logIncident(env,"d1",String(err?.message||err));return json({error:"現在メンテナンス中です"},503);}
