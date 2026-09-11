@@ -1,7 +1,7 @@
 import core from "./worker.js";
 
 /*
-  Version 2.15 operations suite wrapper
+  Version 2.16 build fix wrapper
 
   v2.05 の復旧取得が失敗する環境向けに、復旧経路をさらに単純化。
   - PRAGMA を使わない
@@ -19,7 +19,7 @@ const json = (data, status = 200) => new Response(JSON.stringify(data), {
   }
 });
 
-const HOTFIX_VERSION = "2.15";
+const HOTFIX_VERSION = "2.16";
 
 async function syncDisplayedVersion(response){
   try{
@@ -194,10 +194,10 @@ async function syncDisplayedVersion(response){
     const m=(document.cookie.match(/(?:^|;\s*)reservation_page=(\d+)/)||[])[1];
     const page=Math.max(1,Number(m||1));
     const p=document.createElement('div');p.id='reservationPager215';p.style.cssText='display:flex;gap:6px;align-items:center;margin:6px 0 10px;font-size:10px';
-    p.innerHTML=`<button id="rpPrev" style="padding:6px 10px;border:1px solid #d7e1eb;border-radius:8px;background:#fff">← 前</button><b>予約 ${page}ページ目</b><button id="rpNext" style="padding:6px 10px;border:1px solid #d7e1eb;border-radius:8px;background:#fff">次 →</button><span style="color:#8593a2">20件ずつ</span>`;
+    p.innerHTML='<button id="rpPrev" style="padding:6px 10px;border:1px solid #d7e1eb;border-radius:8px;background:#fff">← 前</button><b>予約 '+page+'ページ目</b><button id="rpNext" style="padding:6px 10px;border:1px solid #d7e1eb;border-radius:8px;background:#fff">次 →</button><span style="color:#8593a2">20件ずつ</span>';
     resHeading.insertAdjacentElement('afterend',p);
-    p.querySelector('#rpPrev').onclick=()=>{document.cookie=`reservation_page=${Math.max(1,page-1)};path=/;SameSite=Lax`;location.reload()};
-    p.querySelector('#rpNext').onclick=()=>{document.cookie=`reservation_page=${page+1};path=/;SameSite=Lax`;location.reload()};
+    p.querySelector('#rpPrev').onclick=()=>{document.cookie='reservation_page='+Math.max(1,page-1)+';path=/;SameSite=Lax';location.reload()};
+    p.querySelector('#rpNext').onclick=()=>{document.cookie='reservation_page='+(page+1)+';path=/;SameSite=Lax';location.reload()};
   }
 
   // 本日の対応だけ表示する簡易モード
@@ -211,7 +211,7 @@ async function syncDisplayedVersion(response){
       panel=document.createElement('div');panel.id='todayPanel215';panel.style.cssText='position:fixed;left:10px;right:10px;bottom:128px;z-index:9998;background:#fff;border:1px solid #d7e1eb;border-radius:14px;padding:10px;box-shadow:0 14px 40px #102b4730;font-size:12px';
       panel.innerHTML='<b>今日の対応</b><div id="todayPanelBody" style="margin-top:7px;color:#65778a">読み込み中...</div>';
       document.body.appendChild(panel);
-      try{const r=await fetch('/api/admin/ops-overview',{cache:'no-store'});const d=await r.json();panel.querySelector('#todayPanelBody').innerHTML=`今日の研修 <b>${d.today||0}</b>　承認待ち <b>${d.pending||0}</b>　再受講 <b>${d.retake||0}</b>`;}catch(_){panel.querySelector('#todayPanelBody').textContent='現在メンテナンス中です';}
+      try{const r=await fetch('/api/admin/ops-overview',{cache:'no-store'});const d=await r.json();panel.querySelector('#todayPanelBody').innerHTML='今日の研修 <b>'+(d.today||0)+'</b>　承認待ち <b>'+(d.pending||0)+'</b>　再受講 <b>'+(d.retake||0)+'</b>';}catch(_){panel.querySelector('#todayPanelBody').textContent='現在メンテナンス中です';}
     };
   }
 
@@ -221,8 +221,8 @@ async function syncDisplayedVersion(response){
     const card=document.createElement('div');card.id='opsCard215';card.style.cssText='margin:8px 0;padding:9px;border:1px solid #d7e1eb;border-radius:12px;background:#fff;font-size:10px';
     card.innerHTML='<div style="display:flex;justify-content:space-between;gap:8px"><b>運用状況</b><span id="backup215">保存確認中</span></div><details style="margin-top:6px"><summary style="font-weight:900;cursor:pointer">障害ログ</summary><div id="incidents215" style="margin-top:6px;max-height:160px;overflow:auto;color:#697a8c">開くと読み込みます</div></details>';
     adminTitle.insertAdjacentElement('afterend',card);
-    fetch('/api/admin/backup-status',{cache:'no-store'}).then(r=>r.json()).then(d=>{const el=document.getElementById('backup215');if(el)el.textContent=d.ok?`GitHub保存 ${d.sha||''}`:(d.label||'保存未設定')}).catch(()=>{});
-    const det=card.querySelector('details');det.addEventListener('toggle',()=>{if(!det.open)return;fetch('/api/admin/incidents',{cache:'no-store'}).then(r=>r.json()).then(a=>{const el=document.getElementById('incidents215');if(!el)return;el.innerHTML=(Array.isArray(a)&&a.length)?a.map(x=>`<div style="padding:5px 0;border-bottom:1px solid #edf1f5"><b>${x.kind}</b> ${x.message}<br><small>${x.created_at}</small></div>`).join(''):'障害ログはありません';}).catch(()=>{});},{once:true});
+    fetch('/api/admin/backup-status',{cache:'no-store'}).then(r=>r.json()).then(d=>{const el=document.getElementById('backup215');if(el)el.textContent=d.ok?('GitHub保存 '+(d.sha||'')):(d.label||'保存未設定')}).catch(()=>{});
+    const det=card.querySelector('details');det.addEventListener('toggle',()=>{if(!det.open)return;fetch('/api/admin/incidents',{cache:'no-store'}).then(r=>r.json()).then(a=>{const el=document.getElementById('incidents215');if(!el)return;el.innerHTML=(Array.isArray(a)&&a.length)?a.map(x=>'<div style="padding:5px 0;border-bottom:1px solid #edf1f5"><b>'+x.kind+'</b> '+x.message+'<br><small>'+x.created_at+'</small></div>').join(''):'障害ログはありません';}).catch(()=>{});},{once:true});
   }
 })();
 })();
@@ -626,7 +626,7 @@ async function sendHourlyDiscordSummary(env){
   try{
     const o=await getOpsOverview(env);
     if(!(o.pending||o.retake||o.today))return {ok:true,skipped:"nothing"};
-    const content=`📋 研修管理まとめ\n本日の研修：${o.today}件\n承認待ち：${o.pending}件\n再受講：${o.retake}件`;
+    const content='📋 研修管理まとめ\n本日の研修：'+o.today+'件\n承認待ち：'+o.pending+'件\n再受講：'+o.retake+'件';
     const r=await fetch(hook,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({content})});
     if(!r.ok){await logIncident(env,"discord",`まとめ通知失敗 ${r.status}`);return {ok:false,status:r.status};}
     return {ok:true};
