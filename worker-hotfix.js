@@ -1,7 +1,7 @@
 import core from "./worker.js";
 
 /*
-  Version 2.24 availability menu placement
+  Version 2.25 admin-only tools fix
 
   v2.05 の復旧取得が失敗する環境向けに、復旧経路をさらに単純化。
   - PRAGMA を使わない
@@ -19,7 +19,7 @@ const json = (data, status = 200) => new Response(JSON.stringify(data), {
   }
 });
 
-const HOTFIX_VERSION = "2.24";
+const HOTFIX_VERSION = "2.25";
 
 async function syncDisplayedVersion(response){
   try{
@@ -259,8 +259,15 @@ async function syncDisplayedVersion(response){
 
 
 
-// v2.24: 「予約一覧」メニューの直下に空き時間登録ボタンを配置
+// v2.25: 「予約一覧」直下の空き時間登録は管理者画面だけ
 (async()=>{
+  try{
+    const adminCheck=await fetch('/api/admin/check',{cache:'no-store',credentials:'same-origin'});
+    if(!adminCheck.ok)return;
+  }catch(_){return;}
+  const txt=(document.body?.innerText||'');
+  if(/研修生ポータル|TRAINEE PORTAL/.test(txt) && !/研修管理本部|システム管理者|ADMIN TOOLS/.test(txt))return;
+
   const visible=el=>{
     if(!el||!el.isConnected)return false;
     const r=el.getBoundingClientRect();
@@ -323,6 +330,18 @@ async function syncDisplayedVersion(response){
 
   const ob=new MutationObserver(()=>mountAvailabilityMenu());
   ob.observe(document.documentElement,{childList:true,subtree:true,attributes:true,attributeFilter:['class','style']});
+})();
+
+
+// v2.25: 研修生画面の安全クリーンアップ
+(()=>{
+  const txt=(document.body?.innerText||'');
+  if(/研修生ポータル|TRAINEE PORTAL/.test(txt) && !/研修管理本部|システム管理者|ADMIN TOOLS/.test(txt)){
+    document.getElementById('secureTools221')?.remove();
+    document.getElementById('availabilityMenu224')?.remove();
+    document.getElementById('availabilityMenu224Wrap')?.remove();
+    document.getElementById('testTraineeLauncher220')?.remove();
+  }
 })();
 
 // v2.22: 研修生予約画面 - 教官の確実枠を優先表示
@@ -430,8 +449,18 @@ async function syncDisplayedVersion(response){
   ob.observe(document.documentElement,{childList:true,subtree:true,attributes:true,attributeFilter:['class','style','open']});
 })();
 
-// v2.21: 「ここは触らない」に管理ユーティリティを集約
+// v2.25: 「ここは触らない」の管理ユーティリティは管理者画面だけに限定
 (async()=>{
+  try{
+    const adminCheck=await fetch('/api/admin/check',{cache:'no-store',credentials:'same-origin'});
+    if(!adminCheck.ok)return;
+  }catch(_){return;}
+
+  const bodyText=(document.body?.innerText||'');
+  const traineePortal=/研修生ポータル|TRAINEE PORTAL/.test(bodyText);
+  const adminPortal=/研修管理本部|システム管理者|ADMIN TOOLS/.test(bodyText);
+  if(traineePortal && !adminPortal)return;
+
   const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const visible=el=>{if(!el||!el.isConnected)return false;const r=el.getBoundingClientRect();const st=getComputedStyle(el);return r.width>0&&r.height>0&&st.display!=='none'&&st.visibility!=='hidden';};
 
@@ -514,6 +543,9 @@ async function syncDisplayedVersion(response){
   }
 
   function mountSecureTools(){
+    const txt=(document.body?.innerText||'');
+    if(/研修生ポータル|TRAINEE PORTAL/.test(txt) && !/研修管理本部|システム管理者|ADMIN TOOLS/.test(txt))return false;
+    if(!/研修管理本部|システム管理者|ADMIN TOOLS/.test(txt))return false;
     const h=findDoNotTouch(); if(!h)return false;
     if(document.getElementById('secureTools221'))return true;
     const box=document.createElement('div');box.id='secureTools221';
