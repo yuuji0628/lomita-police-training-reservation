@@ -1,7 +1,7 @@
 import core from "./worker.js";
 
 /*
-  Version 2.28 15-minute schedule units
+  Version 2.29 mobile priority schedule UI
 
   v2.05 の復旧取得が失敗する環境向けに、復旧経路をさらに単純化。
   - PRAGMA を使わない
@@ -19,7 +19,7 @@ const json = (data, status = 200) => new Response(JSON.stringify(data), {
   }
 });
 
-const HOTFIX_VERSION = "2.28";
+const HOTFIX_VERSION = "2.29";
 
 async function syncDisplayedVersion(response){
   try{
@@ -386,12 +386,10 @@ async function syncDisplayedVersion(response){
   ob.observe(document.documentElement,{childList:true,subtree:true});
 })();
 
-// v2.27: 研修生予約画面 - 教官確定枠を1つだけ・見やすく表示
+// v2.29: 研修生予約画面 - スマホ向け確定枠UI
 (()=>{
   const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-  let slotCache=null;
-  let mounting=false;
-  let mounted=false;
+  let slotCache=null, mounting=false, mounted=false;
 
   async function loadSlots(){
     if(slotCache)return slotCache;
@@ -403,13 +401,14 @@ async function syncDisplayedVersion(response){
     return slotCache;
   }
 
-  function findFields(){
+  function fields(){
     const dates=[...document.querySelectorAll('input[type="date"]')];
     const times=[...document.querySelectorAll('input[type="time"]')];
-    const dateEl=document.querySelector('[name="preferred_date"],#preferred_date,#preferredDate,input[type="date"][data-preference="1"]') || dates[0] || null;
-    const timeEl=document.querySelector('[name="preferred_time"],#preferred_time,#preferredTime,input[type="time"][data-preference="1"]') || times[0] || null;
-    const date2=document.querySelector('[name="preferred_date2"],#preferred_date2,#preferredDate2,input[type="date"][data-preference="2"]') || dates[1] || null;
-    return {dateEl,timeEl,date2};
+    return {
+      date1:document.querySelector('[name="preferred_date"],#preferred_date,#preferredDate')||dates[0]||null,
+      time1:document.querySelector('[name="preferred_time"],#preferred_time,#preferredTime')||times[0]||null,
+      date2:document.querySelector('[name="preferred_date2"],#preferred_date2,#preferredDate2')||dates[1]||null
+    };
   }
 
   function setValue(el,val){
@@ -419,89 +418,134 @@ async function syncDisplayedVersion(response){
     el.dispatchEvent(new Event('change',{bubbles:true}));
   }
 
+  function firstPreferenceBlock(date1,time1){
+    const dWrap=date1?.closest('.field,.form-group,.row,div');
+    const tWrap=time1?.closest('.field,.form-group,.row,div');
+    if(dWrap && tWrap && dWrap.parentElement===tWrap.parentElement){
+      const parent=dWrap.parentElement;
+      const box=document.createElement('div');
+      box.id='manualFirstPreference229';
+      box.style.cssText='display:none;width:100%;grid-column:1/-1';
+      parent.insertBefore(box,dWrap);
+      box.appendChild(dWrap);
+      box.appendChild(tWrap);
+      return box;
+    }
+    const parent=date1?.parentElement;
+    if(parent){
+      parent.id='manualFirstPreference229';
+      parent.style.display='none';
+      return parent;
+    }
+    return null;
+  }
+
   async function mount(){
-    if(mounted || mounting || document.getElementById('prioritySlots227'))return !!document.getElementById('prioritySlots227');
-    const {dateEl,timeEl,date2}=findFields();
-    if(!dateEl || !timeEl)return false;
+    if(mounted || mounting || document.getElementById('prioritySlots229'))return !!document.getElementById('prioritySlots229');
+
+    const {date1,time1,date2}=fields();
+    if(!date1 || !time1)return false;
 
     mounting=true;
     try{
-      document.querySelectorAll('#prioritySlots222,#prioritySlots227').forEach(x=>x.remove());
+      document.querySelectorAll('#prioritySlots222,#prioritySlots227,#prioritySlots229').forEach(x=>x.remove());
 
-      const slots=await loadSlots();
-      const rows=slots.slice(0,6);
+      const slots=(await loadSlots()).slice(0,5);
+      const manual=firstPreferenceBlock(date1,time1);
 
-      const box=document.createElement('section');
-      box.id='prioritySlots227';
-      box.style.cssText='margin:8px 0 12px;padding:10px;border:1px solid #d7bd66;border-radius:13px;background:#fffdf7;display:block;width:100%;box-sizing:border-box;clear:both';
+      const section=document.createElement('section');
+      section.id='prioritySlots229';
+      section.style.cssText='display:block;width:100%;box-sizing:border-box;margin:8px 0 12px;padding:11px;border:1px solid #d6bb5d;border-radius:14px;background:#fffdf7;clear:both';
 
       let html=
-        '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center">'+
-          '<div style="min-width:0"><div style="font-size:14px;font-weight:1000;color:#17314d">教官確定枠</div>'+
-          '<div style="font-size:9px;color:#7d6b37;margin-top:2px">教官が対応可能として登録した時間です。優先して選べます。</div></div>'+
-          '<span style="flex:0 0 auto;padding:3px 7px;border-radius:999px;background:#edf7ef;border:1px solid #9bc9a3;color:#28703a;font-size:8px;font-weight:1000">優先</span>'+
+        '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px">'+
+          '<div><div style="font-size:15px;font-weight:1000;color:#17314d">教官確定枠</div>'+
+          '<div style="font-size:10px;line-height:1.45;color:#7d6c3b;margin-top:2px">教官が対応できる時間です。ここから選ぶと確定しやすくなります。</div></div>'+
+          '<span style="flex:0 0 auto;padding:3px 7px;border-radius:999px;background:#edf7ef;border:1px solid #9bc9a3;color:#28703a;font-size:9px;font-weight:1000">優先</span>'+
         '</div>';
 
-      if(rows.length){
-        html+='<div style="display:grid;grid-template-columns:1fr;gap:6px;margin-top:8px">';
-        rows.forEach((x,i)=>{
-          html+='<button type="button" data-slot227="'+i+'" style="width:100%;text-align:left;padding:9px 10px;border:1px solid #d6e0ea;border-radius:10px;background:#fff;color:#17314d;box-sizing:border-box">'+
-            '<div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start">'+
-              '<div style="min-width:0"><b style="font-size:12px">'+esc(x.available_date)+'　'+esc(x.start_time)+'〜'+esc(x.end_time)+'</b>'+
-              '<div style="font-size:9px;color:#728396;margin-top:2px">担当可能：'+esc(x.instructor_name)+(x.note?' / '+esc(x.note):'')+'</div></div>'+
-              '<span style="font-size:8px;color:#7d6b37;white-space:nowrap">選択</span>'+
+      if(slots.length){
+        html+='<div style="display:grid;grid-template-columns:1fr;gap:7px;margin-top:9px">';
+        slots.forEach((x,i)=>{
+          html+='<button type="button" data-slot229="'+i+'" style="width:100%;text-align:left;padding:10px 11px;border:1px solid #d4dee8;border-radius:11px;background:#fff;color:#17314d;box-sizing:border-box">'+
+            '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px">'+
+              '<div style="min-width:0">'+
+                '<div style="font-size:13px;font-weight:1000;letter-spacing:.01em">'+esc(x.available_date)+'　'+esc(x.start_time)+'〜'+esc(x.end_time)+'</div>'+
+                '<div style="font-size:10px;color:#74869a;margin-top:3px">担当可能：'+esc(x.instructor_name)+'</div>'+
+              '</div>'+
+              '<span style="flex:0 0 auto;font-size:10px;font-weight:1000;color:#826b20">選ぶ</span>'+
             '</div>'+
           '</button>';
         });
         html+='</div>';
       }else{
-        html+='<div style="margin-top:8px;padding:8px;border-radius:9px;background:#fff;color:#778797;font-size:10px">現在、教官確定枠はありません。</div>';
+        html+='<div style="margin-top:9px;padding:9px;border-radius:10px;background:#fff;color:#778797;font-size:10px">現在、教官確定枠はありません。下から希望日を入力してください。</div>';
       }
 
-      html+='<button type="button" id="customDate227" style="width:100%;margin-top:7px;padding:8px;border:1px dashed #aebdcb;border-radius:9px;background:#fff;color:#54677b;font-weight:900;font-size:10px">別の日程を希望する</button>'+
-            '<div id="prioritySlotInfo227" style="display:none;margin-top:6px;padding:7px 8px;border-radius:8px;background:#eef8f0;color:#2d6d3e;font-size:9px;font-weight:800"></div>';
+      html+=
+        '<div id="selectedSlot229" style="display:none;margin-top:8px;padding:8px 9px;border-radius:9px;background:#eef8f0;color:#2d6d3e;font-size:10px;font-weight:900"></div>'+
+        '<button type="button" id="customDate229" style="width:100%;margin-top:8px;padding:9px;border:1px dashed #aebdcb;border-radius:10px;background:#fff;color:#54677b;font-weight:1000;font-size:11px">別の日程を希望する</button>';
 
-      box.innerHTML=html;
+      section.innerHTML=html;
 
-      const row=dateEl.closest('.row,.field,.form-group') || dateEl.parentElement;
-      const form=dateEl.closest('form') || document.body;
-      if(row && row.parentElement){
-        row.parentElement.insertBefore(box,row);
+      // 第1希望の見出しの直後、手入力欄の前に配置。
+      const h=[...document.querySelectorAll('h1,h2,h3,h4,strong,b,div,span')].find(el=>{
+        const t=(el.textContent||'').trim();
+        return /^第1希望/.test(t);
+      });
+      if(h && h.parentElement){
+        h.insertAdjacentElement('afterend',section);
+      }else if(manual && manual.parentElement){
+        manual.parentElement.insertBefore(section,manual);
       }else{
-        form.insertBefore(box,form.firstChild);
+        date1.parentElement?.insertBefore(section,date1);
       }
 
-      box.querySelectorAll('[data-slot227]').forEach(b=>{
-        b.onclick=()=>{
-          const x=rows[Number(b.dataset.slot227||0)];
+      section.querySelectorAll('[data-slot229]').forEach(btn=>{
+        btn.onclick=()=>{
+          const x=slots[Number(btn.dataset.slot229||0)];
           if(!x)return;
-          setValue(dateEl,String(x.available_date||''));
-          setValue(timeEl,String(x.start_time||''));
+          setValue(date1,String(x.available_date||''));
+          setValue(time1,String(x.start_time||''));
 
-          box.querySelectorAll('[data-slot227]').forEach(z=>{
-            z.style.outline='none';
+          section.querySelectorAll('[data-slot229]').forEach(z=>{
             z.style.background='#fff';
+            z.style.borderColor='#d4dee8';
+            z.style.boxShadow='none';
           });
-          b.style.outline='2px solid #d0a93e';
-          b.style.background='#fff9df';
+          btn.style.background='#fff9df';
+          btn.style.borderColor='#d0a93e';
+          btn.style.boxShadow='0 0 0 2px rgba(208,169,62,.18)';
 
-          const info=box.querySelector('#prioritySlotInfo227');
-          info.style.display='block';
-          info.textContent='選択中：'+x.instructor_name+' / '+x.available_date+' '+x.start_time+'〜'+x.end_time;
+          const selected=section.querySelector('#selectedSlot229');
+          selected.style.display='block';
+          selected.textContent='✓ 選択中：'+x.instructor_name+' / '+x.available_date+' '+x.start_time+'〜'+x.end_time;
+
+          if(manual)manual.style.display='none';
         };
       });
 
-      box.querySelector('#customDate227').onclick=()=>{
-        box.querySelectorAll('[data-slot227]').forEach(z=>{
-          z.style.outline='none';
+      section.querySelector('#customDate229').onclick=()=>{
+        section.querySelectorAll('[data-slot229]').forEach(z=>{
           z.style.background='#fff';
+          z.style.borderColor='#d4dee8';
+          z.style.boxShadow='none';
         });
-        const info=box.querySelector('#prioritySlotInfo227');
-        info.style.display='none';
-        const target=date2 || dateEl;
-        target.focus();
-        target.scrollIntoView({behavior:'smooth',block:'center'});
+        section.querySelector('#selectedSlot229').style.display='none';
+
+        // 手入力を使う時だけ第1希望の日付・時間欄を表示。
+        if(manual){
+          manual.style.display='';
+          manual.style.marginTop='10px';
+        }
+        setValue(date1,'');
+        setValue(time1,'');
+        date1.focus();
+        date1.scrollIntoView({behavior:'smooth',block:'center'});
       };
+
+      // 教官確定枠が無い時は最初から手入力欄を表示。
+      if(!slots.length && manual)manual.style.display='';
 
       mounted=true;
       return true;
@@ -515,10 +559,10 @@ async function syncDisplayedVersion(response){
   const timer=setInterval(async()=>{
     tries++;
     const ok=await mount();
-    if(ok || tries>120)clearInterval(timer);
+    if(ok||tries>120)clearInterval(timer);
   },500);
 
-  const ob=new MutationObserver(()=>{ if(!mounted) mount(); });
+  const ob=new MutationObserver(()=>{if(!mounted)mount();});
   ob.observe(document.documentElement,{childList:true,subtree:true});
 })();
 
@@ -1613,6 +1657,8 @@ async function fetch(request, env, ctx){
         SELECT id,instructor_id,instructor_name,available_date,start_time,end_time,note
         FROM instructor_availability
         WHERE available_date>=date('now','+9 hours')
+          AND substr(start_time,4,2) IN ('00','15','30','45')
+          AND substr(end_time,4,2) IN ('00','15','30','45')
         ORDER BY available_date,start_time,instructor_name
         LIMIT 60
       `).all();
