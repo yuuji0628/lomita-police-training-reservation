@@ -1,7 +1,7 @@
 import core from "./worker.js";
 
 /*
-  Version 2.36 instructor slot sync fix
+  Version 2.37 trainee priority anchor fix
 
   v2.05 の復旧取得が失敗する環境向けに、復旧経路をさらに単純化。
   - PRAGMA を使わない
@@ -19,7 +19,7 @@ const json = (data, status = 200) => new Response(JSON.stringify(data), {
   }
 });
 
-const HOTFIX_VERSION = "2.36";
+const HOTFIX_VERSION = "2.37";
 
 async function syncDisplayedVersion(response){
   try{
@@ -394,11 +394,12 @@ async function syncDisplayedVersion(response){
   ob.observe(document.documentElement,{childList:true,subtree:true});
 })();
 
-// v2.36: 研修生予約画面 - 登録済み教官枠との同期を強化
+// v2.37: 研修生申請モーダルの「第1希望」を基準に確実に表示
 (()=>{
   const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-  let mounting=false;
-  let lastKey='';
+  let busy=false;
+  let lastDate='';
+  let lastTitle='';
 
   const toMin=t=>{
     const p=String(t||'').split(':');
@@ -412,32 +413,51 @@ async function syncDisplayedVersion(response){
     return String(Math.floor(n/60)).padStart(2,'0')+':'+String(n%60).padStart(2,'0');
   };
 
-  function ctx(){
-    const candidates=[...document.querySelectorAll('div,section,form')].filter(el=>{
-      const t=(el.textContent||'');
-      return /第1希望/.test(t)&&/申請する/.test(t)&&/日付/.test(t)&&/時間/.test(t);
-    });
-    const modal=candidates.sort((a,b)=>a.getBoundingClientRect().width-b.getBoundingClientRect().width)[0];
-    if(!modal)return null;
+  function visible(el){
+    if(!el||!el.isConnected)return false;
+    const r=el.getBoundingClientRect();
+    const s=getComputedStyle(el);
+    return r.width>0&&r.height>0&&s.display!=='none'&&s.visibility!=='hidden';
+  }
 
-    const dates=[...modal.querySelectorAll('input[type="date"]')];
-    const times=[...modal.querySelectorAll('input[type="time"]')];
+  function findContext(){
+    // 「第1希望」見出しを起点に、最も近い申請モーダル/フォームを探す。
+    const heading=[...document.querySelectorAll('h1,h2,h3,h4,strong,b,div,span')]
+      .filter(visible)
+      .find(el=>/^第1希望/.test((el.textContent||'').trim()));
+    if(!heading)return null;
+
+    let root=heading.closest('form');
+    if(!root){
+      let p=heading.parentElement;
+      while(p && p!==document.body){
+        const t=(p.textContent||'');
+        if(/申請する/.test(t) && p.querySelector('input[type="date"]') && p.querySelector('input[type="time"]')){
+          root=p;
+          break;
+        }
+        p=p.parentElement;
+      }
+    }
+    if(!root)return null;
+
+    const dates=[...root.querySelectorAll('input[type="date"]')];
+    const times=[...root.querySelectorAll('input[type="time"]')];
     if(!dates.length||!times.length)return null;
 
-    const titleEl=[...modal.querySelectorAll('h1,h2,h3,h4,strong,b')].find(el=>{
-      const t=(el.textContent||'').trim();
-      return /申請$/.test(t)&&/学科|研修|オリエンテーション|テスト/.test(t);
-    });
+    const titleEl=[...root.querySelectorAll('h1,h2,h3,h4,strong,b')]
+      .find(el=>/申請/.test((el.textContent||'').trim()) && /学科|研修|オリエンテーション|テスト/.test((el.textContent||'')));
 
     return {
-      modal,
-      date1:modal.querySelector('[name="preferred_date"],#preferred_date,#preferredDate')||dates[0],
-      time1:modal.querySelector('[name="preferred_time"],#preferred_time,#preferredTime')||times[0],
+      root,
+      heading,
+      date1:root.querySelector('[name="preferred_date"],#preferred_date,#preferredDate')||dates[0],
+      time1:root.querySelector('[name="preferred_time"],#preferred_time,#preferredTime')||times[0],
       title:(titleEl?.textContent||'').replace(/\s*申請\s*$/,'').trim()
     };
   }
 
-  async function durationFor(title){
+  async function getDuration(title){
     try{
       const r=await fetch('/api/trainee/training-duration?title='+encodeURIComponent(title||''),{cache:'no-store'});
       const d=await r.json();
@@ -445,7 +465,7 @@ async function syncDisplayedVersion(response){
     }catch(_){return 30;}
   }
 
-  async function availability(){
+  async function getAvailability(){
     try{
       const r=await fetch('/api/trainee/instructor-availability',{cache:'no-store'});
       const d=await r.json();
@@ -453,14 +473,15 @@ async function syncDisplayedVersion(response){
     }catch(_){return [];}
   }
 
-  function slotsFor(windows,duration,dateFilter){
+  function buildSlots(windows,duration,dateValue){
     const rows=[];
     for(const w of windows){
-      if(dateFilter && String(w.available_date||'')!==dateFilter)continue;
+      const d=String(w.available_date||'');
+      if(dateValue && d!==dateValue)continue;
+
       const s=toMin(w.start_time),e=toMin(w.end_time);
       if(s==null||e==null||e<=s)continue;
 
-      // 「確実な枠」なので所要時間が収まる場合だけ候補化。
       if(e-s<duration)continue;
 
       for(let cur=s;cur+duration<=e;cur+=15){
@@ -479,37 +500,36 @@ async function syncDisplayedVersion(response){
   }
 
   async function render(force=false){
-    if(mounting)return;
-    const c=ctx();
+    if(busy)return;
+    const c=findContext();
     if(!c)return;
 
     const dateValue=String(c.date1.value||'');
-    const key=(c.title||'')+'|'+dateValue;
-    if(!force && key===lastKey && c.modal.querySelector('#prioritySlots236'))return;
+    if(!force && dateValue===lastDate && c.title===lastTitle && c.root.querySelector('#prioritySlots237'))return;
 
-    mounting=true;
+    busy=true;
     try{
-      const duration=await durationFor(c.title);
-      const windows=await availability();
-      const filtered=slotsFor(windows,duration,dateValue);
+      const duration=await getDuration(c.title);
+      const windows=await getAvailability();
+      const slots=buildSlots(windows,duration,dateValue);
 
-      c.modal.querySelectorAll('#prioritySlots222,#prioritySlots227,#prioritySlots229,#prioritySlots230,#prioritySlots235,#prioritySlots236').forEach(x=>x.remove());
+      c.root.querySelectorAll('#prioritySlots222,#prioritySlots227,#prioritySlots229,#prioritySlots230,#prioritySlots235,#prioritySlots236,#prioritySlots237').forEach(x=>x.remove());
 
       const box=document.createElement('section');
-      box.id='prioritySlots236';
+      box.id='prioritySlots237';
       box.style.cssText='display:block;width:100%;box-sizing:border-box;margin:8px 0 12px;padding:10px;border:1px solid #d6bb5d;border-radius:13px;background:#fffdf7';
 
       let html=
         '<div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start">'+
           '<div><div style="font-size:14px;font-weight:1000;color:#17314d">教官確定枠</div>'+
-          '<div style="font-size:9px;color:#7d6c3b;margin-top:2px">所要時間 '+duration+'分 ／ 登録済みの教官枠を優先表示</div></div>'+
+          '<div style="font-size:9px;color:#7d6c3b;margin-top:2px">所要時間 '+duration+'分 ／ 教官登録済み枠を優先</div></div>'+
           '<span style="padding:3px 6px;border-radius:999px;background:#edf7ef;border:1px solid #9bc9a3;color:#28703a;font-size:8px;font-weight:1000">優先</span>'+
         '</div>';
 
-      if(filtered.length){
+      if(slots.length){
         html+='<div style="display:grid;grid-template-columns:1fr;gap:6px;margin-top:8px">';
-        filtered.forEach((x,i)=>{
-          html+='<button type="button" data-slot236="'+i+'" style="width:100%;text-align:left;padding:9px 10px;border:1px solid #d4dee8;border-radius:10px;background:#fff;color:#17314d">'+
+        slots.forEach((x,i)=>{
+          html+='<button type="button" data-slot237="'+i+'" style="width:100%;text-align:left;padding:9px 10px;border:1px solid #d4dee8;border-radius:10px;background:#fff;color:#17314d">'+
             '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center">'+
               '<div><div style="font-size:12px;font-weight:1000">'+esc(x.available_date)+'　'+esc(x.slot_start)+'〜'+esc(x.slot_end)+'</div>'+
               '<div style="font-size:9px;color:#74869a;margin-top:2px">担当可能：'+esc(x.instructor_name)+'</div></div>'+
@@ -524,57 +544,62 @@ async function syncDisplayedVersion(response){
         html+='<div style="margin-top:8px;padding:8px;border-radius:9px;background:#fff;color:#778797;font-size:10px">'+esc(msg)+'</div>';
       }
 
-      html+='<div id="selected236" style="display:none;margin-top:7px;padding:7px 8px;border-radius:8px;background:#eef8f0;color:#2d6d3e;font-size:9px;font-weight:900"></div>'+
-        '<button type="button" id="custom236" style="width:100%;margin-top:7px;padding:8px;border:1px dashed #aebdcb;border-radius:9px;background:#fff;color:#54677b;font-weight:900;font-size:10px">別の日程を希望する</button>';
+      html+='<div id="selected237" style="display:none;margin-top:7px;padding:7px 8px;border-radius:8px;background:#eef8f0;color:#2d6d3e;font-size:9px;font-weight:900"></div>'+
+        '<button type="button" id="custom237" style="width:100%;margin-top:7px;padding:8px;border:1px dashed #aebdcb;border-radius:9px;background:#fff;color:#54677b;font-weight:900;font-size:10px">別の日程を希望する</button>';
 
       box.innerHTML=html;
 
-      const heading=[...c.modal.querySelectorAll('h1,h2,h3,h4,strong,b,div,span')].find(el=>/^第1希望/.test((el.textContent||'').trim()));
-      if(heading)heading.insertAdjacentElement('afterend',box);
-      else{
-        const wrap=c.date1.closest('.row,.field,.form-group,div')||c.date1;
-        wrap.parentElement?.insertBefore(box,wrap);
-      }
+      // 第1希望見出しの直後に強制挿入
+      c.heading.insertAdjacentElement('afterend',box);
 
-      box.querySelectorAll('[data-slot236]').forEach(btn=>{
+      box.querySelectorAll('[data-slot237]').forEach(btn=>{
         btn.onclick=()=>{
-          const x=filtered[Number(btn.dataset.slot236||0)];
+          const x=slots[Number(btn.dataset.slot237||0)];
           if(!x)return;
           setValue(c.date1,String(x.available_date||''));
           setValue(c.time1,String(x.slot_start||''));
-          box.querySelectorAll('[data-slot236]').forEach(z=>{z.style.background='#fff';z.style.borderColor='#d4dee8';z.style.boxShadow='none';});
+          box.querySelectorAll('[data-slot237]').forEach(z=>{
+            z.style.background='#fff';
+            z.style.borderColor='#d4dee8';
+            z.style.boxShadow='none';
+          });
           btn.style.background='#fff9df';
           btn.style.borderColor='#d0a93e';
           btn.style.boxShadow='0 0 0 2px rgba(208,169,62,.18)';
-          const s=box.querySelector('#selected236');
+          const s=box.querySelector('#selected237');
           s.style.display='block';
           s.textContent='✓ 選択中：'+x.instructor_name+' / '+x.available_date+' '+x.slot_start+'〜'+x.slot_end;
         };
       });
 
-      box.querySelector('#custom236').onclick=()=>{
-        box.querySelectorAll('[data-slot236]').forEach(z=>{z.style.background='#fff';z.style.borderColor='#d4dee8';z.style.boxShadow='none';});
-        box.querySelector('#selected236').style.display='none';
-        c.time1.focus();
+      box.querySelector('#custom237').onclick=()=>{
+        box.querySelectorAll('[data-slot237]').forEach(z=>{
+          z.style.background='#fff';
+          z.style.borderColor='#d4dee8';
+          z.style.boxShadow='none';
+        });
+        box.querySelector('#selected237').style.display='none';
+        c.date1.focus();
       };
 
-      if(!c.date1.dataset.slotSync236){
-        c.date1.dataset.slotSync236='1';
-        c.date1.addEventListener('input',()=>setTimeout(()=>render(true),20));
-        c.date1.addEventListener('change',()=>setTimeout(()=>render(true),20));
+      if(!c.date1.dataset.priority237){
+        c.date1.dataset.priority237='1';
+        c.date1.addEventListener('input',()=>setTimeout(()=>render(true),30));
+        c.date1.addEventListener('change',()=>setTimeout(()=>render(true),30));
       }
 
-      lastKey=key;
+      lastDate=dateValue;
+      lastTitle=c.title;
     }finally{
-      mounting=false;
+      busy=false;
     }
   }
 
   render(true);
   const ob=new MutationObserver(()=>render(false));
   ob.observe(document.documentElement,{childList:true,subtree:true,attributes:true,attributeFilter:['class','style','open']});
-  document.addEventListener('click',()=>setTimeout(()=>render(false),60),true);
-  setInterval(()=>render(false),1000);
+  document.addEventListener('click',()=>setTimeout(()=>render(false),80),true);
+  setInterval(()=>render(false),800);
 })();
 
 // v2.25: 「ここは触らない」の管理ユーティリティは管理者画面だけに限定
