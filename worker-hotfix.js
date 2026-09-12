@@ -1,7 +1,7 @@
 import core from "./worker.js";
 
 /*
-  Version 2.38 trainee injected-script fix
+  Version 2.39 robust quarter-hour validation
 
   v2.05 の復旧取得が失敗する環境向けに、復旧経路をさらに単純化。
   - PRAGMA を使わない
@@ -19,7 +19,7 @@ const json = (data, status = 200) => new Response(JSON.stringify(data), {
   }
 });
 
-const HOTFIX_VERSION = "2.38";
+const HOTFIX_VERSION = "2.39";
 
 async function syncDisplayedVersion(response){
   try{
@@ -1501,11 +1501,22 @@ async function deleteTestTrainee(env,id){
 }
 
 
+function parseQuarterHourTime(v){
+  const s=String(v||"").trim();
+  const parts=s.split(":");
+  if(parts.length<2)return null;
+  const hh=Number(parts[0]);
+  const mm=Number(parts[1]);
+  const ss=parts.length>=3 ? Number(parts[2]||0) : 0;
+  if(!Number.isInteger(hh)||!Number.isInteger(mm)||!Number.isInteger(ss))return null;
+  if(hh<0||hh>23||![0,15,30,45].includes(mm)||ss!==0)return null;
+  return {
+    hh,mm,
+    normalized:String(hh).padStart(2,"0")+":"+String(mm).padStart(2,"0")
+  };
+}
 function isQuarterHourTime(v){
-  const m=String(v||"").match(/^(\d{2}):(\d{2})$/);
-  if(!m)return false;
-  const hh=Number(m[1]),mm=Number(m[2]);
-  return hh>=0&&hh<=23&&[0,15,30,45].includes(mm);
+  return !!parseQuarterHourTime(v);
 }
 async function enforceQuarterHourReservationRequest(request){
   if(request.method!=="POST")return null;
@@ -1517,12 +1528,30 @@ async function enforceQuarterHourReservationRequest(request){
   try{body=await request.clone().json();}catch(_){return null;}
   if(!body||typeof body!=="object")return null;
   const keys=["preferred_time","preferred_time2","preferred_time3","confirmed_time","start_time","time"];
+  let changed=false;
   for(const k of keys){
-    if(body[k]!==undefined&&String(body[k]||"").trim()!==""&&!isQuarterHourTime(body[k])){
+    if(body[k]===undefined||String(body[k]||"").trim()==="")continue;
+    const parsed=parseQuarterHourTime(body[k]);
+    if(!parsed){
       return json({error:"時刻は15分単位（00・15・30・45分）で選択してください"},400);
     }
+    if(String(body[k])!==parsed.normalized){
+      body[k]=parsed.normalized;
+      changed=true;
+    }
   }
-  return null;
+  if(!changed)return null;
+
+  const headers=new Headers(request.headers);
+  headers.set("content-type","application/json");
+  headers.delete("content-length");
+  const normalizedRequest=new Request(request.url,{
+    method:request.method,
+    headers,
+    body:JSON.stringify(body),
+    redirect:request.redirect
+  });
+  return {normalizedRequest};
 }
 
 async function ensureTrainingDurations(env){
@@ -1643,8 +1672,10 @@ async function saveInstructorAvailability(env,b){
   const instructorId=Number(b?.instructor_id||0);
   const name=String(b?.instructor_name||"").trim();
   const date=String(b?.available_date||"").trim();
-  const start=String(b?.start_time||"").trim();
-  const end=String(b?.end_time||"").trim();
+  const startParsed=parseQuarterHourTime(b?.start_time);
+  const endParsed=parseQuarterHourTime(b?.end_time);
+  const start=startParsed?.normalized||String(b?.start_time||"").trim();
+  const end=endParsed?.normalized||String(b?.end_time||"").trim();
   const note=String(b?.note||"").trim().slice(0,200);
   if(!name || !/^\d{4}-\d{2}-\d{2}$/.test(date) || !/^\d{2}:\d{2}$/.test(start) || !/^\d{2}:\d{2}$/.test(end)){
     return {ok:false,error:"教官・日付・開始/終了時刻を入力してください"};
@@ -1809,8 +1840,9 @@ async function fetchWithShortCache(request, env, ctx){
 }
 
 async function fetch(request, env, ctx){
-  const quarterError=await enforceQuarterHourReservationRequest(request);
-  if(quarterError)return quarterError;
+  const quarterCheck=await enforceQuarterHourReservationRequest(request);
+  if(quarterCheck instanceof Response)return quarterCheck;
+  if(quarterCheck?.normalizedRequest)request=quarterCheck.normalizedRequest;
   const requestUrl = new URL(request.url);
   const accept = String(request.headers.get("accept") || "").toLowerCase();
   const isDocumentRequest =
