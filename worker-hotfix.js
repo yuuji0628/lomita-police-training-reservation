@@ -1,7 +1,7 @@
 import core from "./worker.js";
 
 /*
-  Version 2.37 trainee priority anchor fix
+  Version 2.38 trainee injected-script fix
 
   v2.05 の復旧取得が失敗する環境向けに、復旧経路をさらに単純化。
   - PRAGMA を使わない
@@ -19,7 +19,7 @@ const json = (data, status = 200) => new Response(JSON.stringify(data), {
   }
 });
 
-const HOTFIX_VERSION = "2.37";
+const HOTFIX_VERSION = "2.38";
 
 async function syncDisplayedVersion(response){
   try{
@@ -153,13 +153,17 @@ async function syncDisplayedVersion(response){
   if(!box||!text||!reset)return;
   try{
     const r=await fetch("/api/admin/d1-status",{credentials:"same-origin",cache:"no-store"});
-    if(r.status===401){ box.remove(); return; }
+    if(r.status===401){ box.remove(); }
     const d=await r.json().catch(()=>({}));
-    box.classList.remove("warn","err");
-    if(d.status==="maintenance")box.classList.add("warn");
-    if(d.status==="error")box.classList.add("err");
+    if(r.status!==401){
+      box.classList.remove("warn","err");
+      if(d.status==="maintenance")box.classList.add("warn");
+      if(d.status==="error")box.classList.add("err");
+    }
 
-    if(d.status==="normal"){
+    if(r.status===401){
+      // 研修生画面: D1表示だけ消し、後続の研修生用JSは必ず続行。
+    }else if(d.status==="normal"){
       text.textContent="D1 正常・読込節約中";
       reset.textContent="次回 "+(d.reset_at_jst||"09:00");
     }else if(d.status==="maintenance"){
