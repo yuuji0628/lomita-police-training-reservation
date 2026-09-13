@@ -1,7 +1,7 @@
 import core from "./worker.js";
 
 /*
-  Version 2.39 robust quarter-hour validation
+  Version 2.40 D1 status mount fix
 
   v2.05 の復旧取得が失敗する環境向けに、復旧経路をさらに単純化。
   - PRAGMA を使わない
@@ -19,7 +19,7 @@ const json = (data, status = 200) => new Response(JSON.stringify(data), {
   }
 });
 
-const HOTFIX_VERSION = "2.39";
+const HOTFIX_VERSION = "2.40";
 
 async function syncDisplayedVersion(response){
   try{
@@ -179,6 +179,92 @@ async function syncDisplayedVersion(response){
 
 
 
+
+
+// v2.40: ログイン直後でもD1ステータスを確実に表示
+(async()=>{
+  async function adminOk(){
+    try{
+      const r=await fetch('/api/admin/check',{cache:'no-store',credentials:'same-origin'});
+      return r.ok;
+    }catch(_){return false;}
+  }
+
+  function visible(el){
+    if(!el||!el.isConnected)return false;
+    const r=el.getBoundingClientRect();
+    const s=getComputedStyle(el);
+    return r.width>0&&r.height>0&&s.display!=='none'&&s.visibility!=='hidden';
+  }
+
+  function findJstHost(){
+    const candidates=[...document.querySelectorAll('div,section,header')].filter(visible);
+    return candidates.find(el=>{
+      const t=(el.textContent||'').trim();
+      return /\bJST\b/.test(t) && /\d{2}:\d{2}/.test(t);
+    }) || null;
+  }
+
+  async function mountD1Status240(){
+    if(!(await adminOk()))return false;
+    const host=findJstHost();
+    if(!host)return false;
+
+    let box=document.getElementById('d1StatusInline');
+    if(!box){
+      box=document.createElement('div');
+      box.id='d1StatusInline';
+      box.innerHTML='<div class="left"><span class="dot"></span><span class="label" id="d1StatusInlineText">D1確認中</span></div><span class="reset" id="d1StatusInlineReset"></span>';
+    }
+
+    if(!box.isConnected || !host.contains(box)){
+      const timeLike=[...host.children].find(x=>/\d{2}:\d{2}/.test((x.textContent||'')));
+      if(timeLike)host.insertBefore(box,timeLike);
+      else host.appendChild(box);
+    }
+
+    const text=box.querySelector('#d1StatusInlineText');
+    const reset=box.querySelector('#d1StatusInlineReset');
+    if(!text||!reset)return false;
+
+    try{
+      const r=await fetch('/api/admin/d1-status',{credentials:'same-origin',cache:'no-store'});
+      if(r.status===401){ box.remove(); return false; }
+      const d=await r.json().catch(()=>({}));
+      box.classList.remove('warn','err');
+      if(d.status==='maintenance')box.classList.add('warn');
+      if(d.status==='error')box.classList.add('err');
+
+      if(d.status==='normal'){
+        text.textContent='D1 正常・読込節約中';
+        reset.textContent='次回 '+(d.reset_at_jst||'09:00');
+      }else if(d.status==='maintenance'){
+        text.textContent='メンテナンス中';
+        reset.textContent=d.remaining_label||'';
+      }else{
+        text.textContent='D1 確認エラー';
+        reset.textContent='';
+      }
+      return true;
+    }catch(_){
+      return false;
+    }
+  }
+
+  mountD1Status240();
+  let tries=0;
+  const timer=setInterval(async()=>{
+    tries++;
+    const ok=await mountD1Status240();
+    if(ok||tries>=40)clearInterval(timer);
+  },500);
+
+  const ob=new MutationObserver(()=>{ mountD1Status240(); });
+  ob.observe(document.documentElement,{childList:true,subtree:true,attributes:true,attributeFilter:['class','style']});
+
+  document.addEventListener('click',()=>setTimeout(()=>mountD1Status240(),100),true);
+  window.addEventListener('pageshow',()=>setTimeout(()=>mountD1Status240(),100));
+})();
 
 // v2.20: 管理メニューに依存しない常設ランチャー
 (async()=>{
