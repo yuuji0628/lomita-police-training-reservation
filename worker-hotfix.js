@@ -1,7 +1,7 @@
 import core from "./worker.js";
 
 /*
-  Version 2.43 overdue processed-status warning fix
+  Version 2.44 selected slot visibility improvement
 
   v2.05 の復旧取得が失敗する環境向けに、復旧経路をさらに単純化。
   - PRAGMA を使わない
@@ -19,7 +19,7 @@ const json = (data, status = 200) => new Response(JSON.stringify(data), {
   }
 });
 
-const HOTFIX_VERSION = "2.43";
+const HOTFIX_VERSION = "2.44";
 
 async function syncDisplayedVersion(response){
   try{
@@ -538,6 +538,30 @@ async function syncDisplayedVersion(response){
   let busy=false;
   let lastDate='';
   let lastTitle='';
+  let selectedSlot237=null;
+
+  const slotKey237=x=>[
+    String(x?.available_date||''),
+    String(x?.slot_start||''),
+    String(x?.slot_end||''),
+    String(x?.instructor_name||'')
+  ].join('|');
+
+  function styleSelectedSlot237(box,key){
+    if(!box)return;
+    box.querySelectorAll('[data-slot237]').forEach(btn=>{
+      const active=String(btn.dataset.slotKey237||'')===String(key||'');
+      btn.style.background=active?'#fff7d8':'#fff';
+      btn.style.borderColor=active?'#c89b18':'#d4dee8';
+      btn.style.boxShadow=active?'0 0 0 3px rgba(200,155,24,.18)':'none';
+      btn.style.transform=active?'scale(1.01)':'none';
+      const lab=btn.querySelector('[data-pick-label237]');
+      if(lab){
+        lab.textContent=active?'✓ 選択中':'選ぶ';
+        lab.style.color=active?'#0b7138':'#826b20';
+      }
+    });
+  }
 
   const toMin=t=>{
     const p=String(t||'').split(':');
@@ -667,11 +691,12 @@ async function syncDisplayedVersion(response){
       if(slots.length){
         html+='<div style="display:grid;grid-template-columns:1fr;gap:6px;margin-top:8px">';
         slots.forEach((x,i)=>{
-          html+='<button type="button" data-slot237="'+i+'" style="width:100%;text-align:left;padding:9px 10px;border:1px solid #d4dee8;border-radius:10px;background:#fff;color:#17314d">'+
+          const key=slotKey237(x);
+          html+='<button type="button" data-slot237="'+i+'" data-slot-key237="'+esc(key)+'" style="width:100%;text-align:left;padding:9px 10px;border:1px solid #d4dee8;border-radius:10px;background:#fff;color:#17314d;transition:.12s ease">'+
             '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center">'+
               '<div><div style="font-size:12px;font-weight:1000">'+esc(x.available_date)+'　'+esc(x.slot_start)+'〜'+esc(x.slot_end)+'</div>'+
               '<div style="font-size:9px;color:#74869a;margin-top:2px">担当可能：'+esc(x.instructor_name)+'</div></div>'+
-              '<span style="font-size:9px;font-weight:1000;color:#826b20">選ぶ</span>'+
+              '<span data-pick-label237 style="font-size:9px;font-weight:1000;color:#826b20">選ぶ</span>'+
             '</div></button>';
         });
         html+='</div>';
@@ -682,7 +707,7 @@ async function syncDisplayedVersion(response){
         html+='<div style="margin-top:8px;padding:8px;border-radius:9px;background:#fff;color:#778797;font-size:10px">'+esc(msg)+'</div>';
       }
 
-      html+='<div id="selected237" style="display:none;margin-top:7px;padding:7px 8px;border-radius:8px;background:#eef8f0;color:#2d6d3e;font-size:9px;font-weight:900"></div>'+
+      html+='<div id="selected237" style="display:none;margin-top:8px;padding:9px 10px;border:2px solid #d0a93e;border-radius:10px;background:#fffdf4;color:#17314d;font-size:9px;font-weight:900"></div>'+
         '<button type="button" id="custom237" style="width:100%;margin-top:7px;padding:8px;border:1px dashed #aebdcb;border-radius:9px;background:#fff;color:#54677b;font-weight:900;font-size:10px">別の日程を希望する</button>';
 
       box.innerHTML=html;
@@ -694,31 +719,57 @@ async function syncDisplayedVersion(response){
         btn.onclick=()=>{
           const x=slots[Number(btn.dataset.slot237||0)];
           if(!x)return;
-          setValue(c.date1,String(x.available_date||''));
-          setValue(c.time1,String(x.slot_start||''));
-          box.querySelectorAll('[data-slot237]').forEach(z=>{
-            z.style.background='#fff';
-            z.style.borderColor='#d4dee8';
-            z.style.boxShadow='none';
-          });
-          btn.style.background='#fff9df';
-          btn.style.borderColor='#d0a93e';
-          btn.style.boxShadow='0 0 0 2px rgba(208,169,62,.18)';
-          const s=box.querySelector('#selected237');
-          s.style.display='block';
-          s.textContent='✓ 選択中：'+x.instructor_name+' / '+x.available_date+' '+x.slot_start+'〜'+x.slot_end;
+
+          selectedSlot237={
+            key:slotKey237(x),
+            available_date:String(x.available_date||''),
+            slot_start:String(x.slot_start||''),
+            slot_end:String(x.slot_end||''),
+            instructor_name:String(x.instructor_name||'')
+          };
+
+          styleSelectedSlot237(box,selectedSlot237.key);
+
+          const selected=box.querySelector('#selected237');
+          selected.style.display='block';
+          selected.innerHTML=
+            '<div style="font-size:8px;color:#6b7785;font-weight:900">現在の選択</div>'+
+            '<div style="margin-top:2px;font-size:12px;font-weight:1000;color:#102b47">'+
+              esc(selectedSlot237.available_date)+' '+esc(selectedSlot237.slot_start)+'〜'+esc(selectedSlot237.slot_end)+
+            '</div>'+
+            '<div style="margin-top:2px;font-size:9px;color:#6d7d8d">担当可能：'+esc(selectedSlot237.instructor_name)+'</div>';
+
+          setValue(c.date1,selectedSlot237.available_date);
+          setValue(c.time1,selectedSlot237.slot_start);
         };
       });
 
       box.querySelector('#custom237').onclick=()=>{
-        box.querySelectorAll('[data-slot237]').forEach(z=>{
-          z.style.background='#fff';
-          z.style.borderColor='#d4dee8';
-          z.style.boxShadow='none';
-        });
-        box.querySelector('#selected237').style.display='none';
+        selectedSlot237=null;
+        styleSelectedSlot237(box,'');
+        const selected=box.querySelector('#selected237');
+        selected.style.display='block';
+        selected.innerHTML=
+          '<div style="font-size:8px;color:#6b7785;font-weight:900">入力方法</div>'+
+          '<div style="margin-top:2px;font-size:11px;font-weight:1000;color:#102b47">別の日程を手入力しています</div>';
         c.date1.focus();
       };
+
+      // 日付・時刻欄への自動反映で再描画されても、選択状態を復元する。
+      if(selectedSlot237){
+        const stillExists=slots.some(x=>slotKey237(x)===selectedSlot237.key);
+        if(stillExists){
+          styleSelectedSlot237(box,selectedSlot237.key);
+          const selected=box.querySelector('#selected237');
+          selected.style.display='block';
+          selected.innerHTML=
+            '<div style="font-size:8px;color:#6b7785;font-weight:900">現在の選択</div>'+
+            '<div style="margin-top:2px;font-size:12px;font-weight:1000;color:#102b47">'+
+              esc(selectedSlot237.available_date)+' '+esc(selectedSlot237.slot_start)+'〜'+esc(selectedSlot237.slot_end)+
+            '</div>'+
+            '<div style="margin-top:2px;font-size:9px;color:#6d7d8d">担当可能：'+esc(selectedSlot237.instructor_name)+'</div>';
+        }
+      }
 
       if(!c.date1.dataset.priority237){
         c.date1.dataset.priority237='1';
