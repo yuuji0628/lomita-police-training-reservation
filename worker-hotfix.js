@@ -1,7 +1,7 @@
 import core from "./worker.js";
 
 /*
-  Version 2.40 D1 status mount fix
+  Version 2.41 initial admin mount / ranking fix
 
   v2.05 の復旧取得が失敗する環境向けに、復旧経路をさらに単純化。
   - PRAGMA を使わない
@@ -19,7 +19,7 @@ const json = (data, status = 200) => new Response(JSON.stringify(data), {
   }
 });
 
-const HOTFIX_VERSION = "2.40";
+const HOTFIX_VERSION = "2.41";
 
 async function syncDisplayedVersion(response){
   try{
@@ -349,14 +349,24 @@ async function syncDisplayedVersion(response){
 
 
 
-// v2.25: 「予約一覧」直下の空き時間登録は管理者画面だけ
+// v2.41: 「予約一覧」直下の空き時間登録を初回表示から確実に出す
 (async()=>{
-  try{
-    const adminCheck=await fetch('/api/admin/check',{cache:'no-store',credentials:'same-origin'});
-    if(!adminCheck.ok)return;
-  }catch(_){return;}
-  const txt=(document.body?.innerText||'');
-  if(/研修生ポータル|TRAINEE PORTAL/.test(txt) && !/研修管理本部|システム管理者|ADMIN TOOLS/.test(txt))return;
+  let adminAuthed=false;
+  let authChecking=false;
+
+  async function refreshAdminAuth(){
+    if(authChecking)return adminAuthed;
+    authChecking=true;
+    try{
+      const r=await fetch('/api/admin/check',{cache:'no-store',credentials:'same-origin'});
+      adminAuthed=r.ok;
+    }catch(_){
+      adminAuthed=false;
+    }finally{
+      authChecking=false;
+    }
+    return adminAuthed;
+  }
 
   const visible=el=>{
     if(!el||!el.isConnected)return false;
@@ -365,14 +375,21 @@ async function syncDisplayedVersion(response){
     return r.width>0 && r.height>0 && s.display!=='none' && s.visibility!=='hidden';
   };
 
+  function isAdminScreen(){
+    const txt=(document.body?.innerText||'');
+    return /研修管理本部|システム管理者|ADMIN TOOLS/.test(txt);
+  }
+
   function findReservationButton(){
     const buttons=[...document.querySelectorAll('button,a,[role="button"]')].filter(visible);
     return buttons.find(el=>(el.textContent||'').trim()==='予約一覧') ||
            buttons.find(el=>/予約一覧/.test((el.textContent||'').trim()));
   }
 
-  function mountAvailabilityMenu(){
+  function mountAvailabilityMenuNow(){
+    if(!adminAuthed || !isAdminScreen())return false;
     if(document.getElementById('availabilityMenu224'))return true;
+
     const reservationBtn=findReservationButton();
     if(!reservationBtn)return false;
 
@@ -396,7 +413,6 @@ async function syncDisplayedVersion(response){
     const cell=reservationBtn.parentElement;
     const grid=cell?.parentElement;
 
-    // 予約一覧が2列メニュー内なら、その直下の次行に横幅いっぱいで追加。
     if(grid && getComputedStyle(grid).display==='grid'){
       const wrap=document.createElement('div');
       wrap.id='availabilityMenu224Wrap';
@@ -410,16 +426,36 @@ async function syncDisplayedVersion(response){
     return true;
   }
 
-  mountAvailabilityMenu();
-  let tries=0;
-  const timer=setInterval(()=>{
-    tries++;
-    const ok=mountAvailabilityMenu();
-    if(ok||tries>120)clearInterval(timer);
-  },500);
+  async function ensureAvailabilityMenu(){
+    if(document.getElementById('availabilityMenu224'))return true;
+    if(!adminAuthed)await refreshAdminAuth();
+    return mountAvailabilityMenuNow();
+  }
 
-  const ob=new MutationObserver(()=>mountAvailabilityMenu());
-  ob.observe(document.documentElement,{childList:true,subtree:true,attributes:true,attributeFilter:['class','style']});
+  // 管理者セッション復元や管理画面描画より先にこのJSが走っても、
+  // 認証とDOMの準備が整うまで自動で再試行する。
+  await ensureAvailabilityMenu();
+
+  let tries=0;
+  const timer=setInterval(async()=>{
+    tries++;
+    const ok=await ensureAvailabilityMenu();
+    if(ok||tries>=120)clearInterval(timer);
+  },250);
+
+  const ob=new MutationObserver(()=>{ ensureAvailabilityMenu(); });
+  ob.observe(document.documentElement,{
+    childList:true,
+    subtree:true,
+    attributes:true,
+    attributeFilter:['class','style']
+  });
+
+  document.addEventListener('click',()=>setTimeout(()=>ensureAvailabilityMenu(),60),true);
+  window.addEventListener('pageshow',()=>setTimeout(()=>ensureAvailabilityMenu(),60));
+  document.addEventListener('visibilitychange',()=>{
+    if(!document.hidden)setTimeout(()=>ensureAvailabilityMenu(),60);
+  });
 })();
 
 
