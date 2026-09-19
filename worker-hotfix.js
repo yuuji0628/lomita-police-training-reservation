@@ -1,7 +1,7 @@
 import core from "./worker.js";
 
 /*
-  Version 2.41 initial admin mount / ranking fix
+  Version 2.42 availability loader auth race fix
 
   v2.05 の復旧取得が失敗する環境向けに、復旧経路をさらに単純化。
   - PRAGMA を使わない
@@ -19,7 +19,7 @@ const json = (data, status = 200) => new Response(JSON.stringify(data), {
   }
 });
 
-const HOTFIX_VERSION = "2.41";
+const HOTFIX_VERSION = "2.42";
 
 async function syncDisplayedVersion(response){
   try{
@@ -402,12 +402,24 @@ async function syncDisplayedVersion(response){
       'background:#fff;color:#102b47;font-weight:1000;font-size:13px;'+
       'box-shadow:0 3px 10px rgba(20,45,70,.05);';
 
-    btn.onclick=()=>{
-      if(typeof window.openInstructorAvailability221==='function'){
-        window.openInstructorAvailability221();
-      }else{
-        alert('空き時間管理を読み込み中です。もう一度押してください。');
+    btn.onclick=async()=>{
+      btn.disabled=true;
+      const original=btn.innerHTML;
+      btn.innerHTML='<span style="font-size:14px">⏳</span> 読み込み中...';
+
+      for(let i=0;i<40;i++){
+        if(typeof window.openInstructorAvailability221==='function'){
+          btn.disabled=false;
+          btn.innerHTML=original;
+          window.openInstructorAvailability221();
+          return;
+        }
+        await new Promise(r=>setTimeout(r,100));
       }
+
+      btn.disabled=false;
+      btn.innerHTML=original;
+      alert('空き時間管理を読み込めませんでした。画面を開き直してください。');
     };
 
     const cell=reservationBtn.parentElement;
@@ -728,12 +740,28 @@ async function syncDisplayedVersion(response){
   setInterval(()=>render(false),800);
 })();
 
-// v2.25: 「ここは触らない」の管理ユーティリティは管理者画面だけに限定
+// v2.42: 管理ユーティリティ初期化
+// 初回描画時に管理者セッション復元が終わっていなくても、認証完了まで再試行して初期化する。
 (async()=>{
-  try{
-    const adminCheck=await fetch('/api/admin/check',{cache:'no-store',credentials:'same-origin'});
-    if(!adminCheck.ok)return;
-  }catch(_){return;}
+  let adminOk=false;
+  for(let i=0;i<80;i++){
+    try{
+      const adminCheck=await fetch('/api/admin/check',{cache:'no-store',credentials:'same-origin'});
+      if(adminCheck.ok){
+        adminOk=true;
+        break;
+      }
+    }catch(_){}
+    await new Promise(r=>setTimeout(r,250));
+  }
+  if(!adminOk)return;
+
+  // 管理画面DOMの描画も少し待つ。
+  for(let i=0;i<80;i++){
+    const txt=(document.body?.innerText||'');
+    if(/研修管理本部|システム管理者|ADMIN TOOLS/.test(txt))break;
+    await new Promise(r=>setTimeout(r,100));
+  }
 
   const bodyText=(document.body?.innerText||'');
   const traineePortal=/研修生ポータル|TRAINEE PORTAL/.test(bodyText);
