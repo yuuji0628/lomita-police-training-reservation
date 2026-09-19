@@ -4101,7 +4101,7 @@ const ADMIN_BODY = `
      <div class="between">
        <div>
          <div class="title" style="font-size:16px">予約ステータス管理</div>
-         <div class="sub" style="margin-top:5px">新規申請は承認待ちで表示されます。受講済みにすると下の「受講済み履歴」へ移動します。</div>
+         <div class="sub" style="margin-top:5px">新規申請は承認待ちで表示されます。受講済みは「受講済み履歴」、再受講は「再受講履歴」へ移動します。</div>
        </div>
        <button class="btn small" type="button" onclick="loadReservationControl()">更新</button>
      </div>
@@ -4112,6 +4112,11 @@ const ADMIN_BODY = `
      <div class="completedAdminHead"><div class="completedAdminTitle">受講済み履歴</div><div id="completedAdminCount" class="completedAdminCount">0</div></div>
      <div id="completedAdminList"><div class="empty">受講済み履歴はありません。</div></div>
    </div>
+   <div class="completedAdminBox" id="retakeHistoryBox">
+     <div class="completedAdminHead"><div class="completedAdminTitle">再受講履歴</div><div id="retakeAdminCount" class="completedAdminCount">0</div></div>
+     <div class="sub" style="margin-bottom:8px">再受講で処理した過去の受講記録です。再申請後は、新しい申請だけを上の予約一覧で操作します。</div>
+     <div id="retakeAdminList"><div class="empty">再受講履歴はありません。</div></div>
+   </div>
    <div class="completedAdminBox">
      <div class="completedAdminHead"><div class="completedAdminTitle">希望日時超過履歴</div><div id="expiredAdminCount" class="completedAdminCount">0</div></div>
      <div class="sub" style="margin-bottom:8px">期限切れになった過去申請です。再申請後は新しい申請だけが上の予約一覧に表示されます。</div>
@@ -4119,7 +4124,7 @@ const ADMIN_BODY = `
    </div>
    <div class="completedAdminBox">
      <div class="completedAdminHead"><div class="completedAdminTitle">教官 講師回数ランキング</div></div>
-     <div class="sub">受講済みになった研修を担当教官ごとに自動集計</div>
+     <div class="sub">実際に担当した研修（受講済み・再受講）を教官ごとに自動集計</div>
      <div id="instructorRankingList" class="instructorRanking"><div class="empty">まだ実績はありません。</div></div>
    </div>
    <div class="completedAdminBox" style="display:none">
@@ -4459,7 +4464,9 @@ async function openDashboardReservations(filter){
 
  const targetId=adminReservationFilter==='expired'
    ?'expiredAdminList'
-   :'reservationsSection';
+   :adminReservationFilter==='retake'
+     ?'retakeHistoryBox'
+     :'reservationsSection';
 
  setTimeout(()=>{
    const target=document.getElementById(targetId);
@@ -4579,6 +4586,8 @@ async function loadReservationControl(){
  const e=document.getElementById('reservationControlList');
  const completedEl=document.getElementById('completedAdminList');
  const completedCount=document.getElementById('completedAdminCount');
+ const retakeEl=document.getElementById('retakeAdminList');
+ const retakeCount=document.getElementById('retakeAdminCount');
  const expiredEl=document.getElementById('expiredAdminList');
  const expiredCount=document.getElementById('expiredAdminCount');
  const rankingEl=document.getElementById('instructorRankingList');
@@ -4602,8 +4611,10 @@ async function loadReservationControl(){
  }
  const all=Array.isArray(d)?d:[];
  const completed=all.filter(x=>x.status==='completed');
+ const retakeHistory=all.filter(x=>x.status==='retake');
  const expiredHistory=all.filter(x=>x.status==='expired');
- const active=all.filter(x=>x.status!=='completed' && x.status!=='expired');
+ // 処理済みの再受講は操作対象から外し、履歴として扱う。
+ const active=all.filter(x=>!['completed','retake','expired'].includes(String(x.status||'')));
 
  let displayActive=active;
  if(adminReservationFilter==='today'){
@@ -4611,13 +4622,13 @@ async function loadReservationControl(){
  }else if(adminReservationFilter==='week'){
    displayActive=active.filter(x=>x.status==='reserved' && String(x.confirmed_date||'')>=dashboardToday && String(x.confirmed_date||'')<=dashboardWeekEnd);
  }else if(adminReservationFilter==='needsAction'){
-   displayActive=active.filter(x=>x.status==='pending' || x.status==='retake' || (x.status==='reserved' && isPastConfirmedReservation(x)));
+   displayActive=active.filter(x=>x.status==='pending' || (x.status==='reserved' && isPastConfirmedReservation(x)));
  }else if(adminReservationFilter==='pending'){
    displayActive=active.filter(x=>x.status==='pending');
  }else if(adminReservationFilter==='unassigned'){
    displayActive=active.filter(x=>x.status==='pending' && !String(x.assigned_instructor||'').trim());
  }else if(adminReservationFilter==='retake'){
-   displayActive=active.filter(x=>x.status==='retake');
+   displayActive=[];
  }else if(adminReservationFilter==='overdue'){
    displayActive=active.filter(x=>x.status==='reserved' && isPastConfirmedReservation(x));
  }else if(adminReservationFilter==='expired'){
@@ -4626,6 +4637,7 @@ async function loadReservationControl(){
  updateReservationFilterBar();
 
  if(completedCount)completedCount.textContent=String(completed.length);
+ if(retakeCount)retakeCount.textContent=String(retakeHistory.length);
  if(expiredCount)expiredCount.textContent=String(expiredHistory.length);
 
  if(completedEl){
@@ -4645,6 +4657,20 @@ async function loadReservationControl(){
        '<button type="button" class="btn small danger undoCompletedBtn" data-id="'+x.id+'" data-kind="'+undoKind+'" style="margin-top:9px">'+undoLabel+'</button>'+
        '</div>';
    },'受講済み履歴はありません。','completedHistory');
+ }
+
+ if(retakeEl){
+   retakeEl.innerHTML=renderCompactHistory(retakeHistory,(x)=>{
+     const confirmed=[x.confirmed_date||'',x.confirmed_time||''].filter(Boolean).join(' ');
+     return '<div class="completedHistoryRow">'+
+       '<div class="name">'+esc(x.title||'研修')+'</div>'+
+       '<div class="meta">研修生：'+esc(x.player_name||'')+
+       (x.assigned_instructor?' ／ 担当教官：'+esc(x.assigned_instructor):'')+
+       (confirmed?' ／ 受講日時：'+esc(confirmed):'')+
+       '</div>'+
+       '<div class="sub" style="margin-top:5px">再受講判定済み・再申請待ち</div>'+
+       '</div>';
+   },'再受講履歴はありません。','retakeHistory');
  }
 
  if(expiredEl){
@@ -4693,7 +4719,9 @@ async function loadReservationControl(){
  if(!displayActive.length){
    e.innerHTML=adminReservationFilter==='expired'
      ?'<div class="empty">希望日時超過は下の履歴で確認できます。</div>'
-     :'<div class="empty">この条件に該当する予約はありません。</div>';
+     :adminReservationFilter==='retake'
+       ?'<div class="empty">再受講で処理した記録は下の「再受講履歴」で確認できます。再申請が届くと、新しい承認待ちだけがここに表示されます。</div>'
+       :'<div class="empty">この条件に該当する予約はありません。</div>';
    return;
  }
 
