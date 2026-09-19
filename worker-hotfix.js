@@ -1,7 +1,7 @@
 import core from "./worker.js";
 
 /*
-  Version 2.42 availability loader auth race fix
+  Version 2.43 overdue processed-status warning fix
 
   v2.05 の復旧取得が失敗する環境向けに、復旧経路をさらに単純化。
   - PRAGMA を使わない
@@ -19,7 +19,7 @@ const json = (data, status = 200) => new Response(JSON.stringify(data), {
   }
 });
 
-const HOTFIX_VERSION = "2.42";
+const HOTFIX_VERSION = "2.43";
 
 async function syncDisplayedVersion(response){
   try{
