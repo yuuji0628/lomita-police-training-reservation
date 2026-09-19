@@ -4644,7 +4644,7 @@ async function loadReservationControl(){
        '</div>'+
        '<button type="button" class="btn small danger undoCompletedBtn" data-id="'+x.id+'" data-kind="'+undoKind+'" style="margin-top:9px">'+undoLabel+'</button>'+
        '</div>';
-   },'<div class="empty">受講済み履歴はありません。</div>','completedHistory');
+   },'受講済み履歴はありません。','completedHistory');
  }
 
  if(expiredEl){
@@ -4658,24 +4658,36 @@ async function loadReservationControl(){
        '</div>'+
        '<div class="sub" style="margin-top:5px">期限切れ・過去申請</div>'+
        '</div>';
-   },'<div class="empty">希望日時超過の履歴はありません。</div>','expiredHistory');
+   },'希望日時超過の履歴はありません。','expiredHistory');
  }
 
  if(rankingEl){
    const counts=new Map();
-   completed.forEach(x=>{
+
+   // 講師回数は「実際に研修を担当した回数」。
+   // 修了(completed)だけでなく、受講後に再受講(retake)となった研修も講師実績に含める。
+   // 既修了認定・欠席・承認待ち・予約中は含めない。
+   const taughtRows=all.filter(x=>{
+     const status=String(x.status||'');
+     return status==='completed' || status==='retake';
+   });
+
+   taughtRows.forEach(x=>{
      const name=String(x.assigned_instructor||'').trim();
      const recognition=
        String(x.note||'')==='途中参加による既修了認定' ||
        name==='既修了認定';
-     if(!recognition && name)counts.set(name,(counts.get(name)||0)+1);
+     if(!recognition && name){
+       counts.set(name,(counts.get(name)||0)+1);
+     }
    });
+
    const ranking=[...counts.entries()].sort((a,b)=>b[1]-a[1]||a[0].localeCompare(b[0],'ja'));
    rankingEl.innerHTML=ranking.length?ranking.map(([name,count],i)=>
      '<div class="instructorRankRow"><div class="instructorRankNo">'+(i+1)+'</div>'+
      '<div class="instructorRankName">'+esc(name)+'</div>'+
      '<div class="instructorRankCount">'+count+'件</div></div>'
-   ).join(''):'<div class="empty">まだ実績はありません。</div>';
+   ).join(''):'<div class="empty">講師実績はまだありません。</div>';
  }
 
  if(!displayActive.length){
