@@ -4698,7 +4698,8 @@ async function loadReservationControl(){
  }
 
  e.innerHTML=displayActive.map(x=>{
-   const overdue=isPastConfirmedReservation(x);
+   const overdueBase=isPastConfirmedReservation(x);
+   const overdue=!['completed','retake','absent','cancelled'].includes(String(x.status||'')) && overdueBase;
    const preferredText=[x.preferred_date||'',x.preferred_time||''].filter(Boolean).join(' ');
    const preferredText2=[x.preferred_date2||'',x.preferred_time2||''].filter(Boolean).join(' ');
    const preferredText3=[x.preferred_date3||'',x.preferred_time3||''].filter(Boolean).join(' ');
