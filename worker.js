@@ -4124,7 +4124,7 @@ const ADMIN_BODY = `
    </div>
    <div class="completedAdminBox">
      <div class="completedAdminHead"><div class="completedAdminTitle">教官 講師回数ランキング</div></div>
-     <div class="sub">実際に担当した研修（受講済み・再受講）を教官ごとに自動集計</div>
+     <div class="sub">現在＋過去履歴を含む実際の担当研修（受講済み・再受講）を自動集計</div>
      <div id="instructorRankingList" class="instructorRanking"><div class="empty">まだ実績はありません。</div></div>
    </div>
    <div class="completedAdminBox" style="display:none">
@@ -4688,32 +4688,25 @@ async function loadReservationControl(){
  }
 
  if(rankingEl){
-   const counts=new Map();
-
-   // 講師回数は「実際に研修を担当した回数」。
-   // 修了(completed)だけでなく、受講後に再受講(retake)となった研修も講師実績に含める。
-   // 既修了認定・欠席・承認待ち・予約中は含めない。
-   const taughtRows=all.filter(x=>{
-     const status=String(x.status||'');
-     return status==='completed' || status==='retake';
-   });
-
-   taughtRows.forEach(x=>{
-     const name=String(x.assigned_instructor||'').trim();
-     const recognition=
-       String(x.note||'')==='途中参加による既修了認定' ||
-       name==='既修了認定';
-     if(!recognition && name){
-       counts.set(name,(counts.get(name)||0)+1);
+   rankingEl.innerHTML='<div class="empty">講師実績を集計しています...</div>';
+   try{
+     const rr=await fetch('/api/admin/instructor-ranking',{headers:auth(),cache:'no-store'});
+     const rd=await rr.json().catch(()=>({}));
+     if(!rr.ok){
+       rankingEl.innerHTML='<div class="notice error">講師回数ランキングを取得できませんでした。</div>';
+     }else{
+       const ranking=Array.isArray(rd.rows)?rd.rows:[];
+       rankingEl.innerHTML=ranking.length?ranking.map((x,i)=>
+         '<div class="instructorRankRow">'+
+           '<div class="instructorRankNo">'+(i+1)+'</div>'+
+           '<div class="instructorRankName">'+esc(x.name||'')+'</div>'+
+           '<div class="instructorRankCount">'+Number(x.count||0)+'件</div>'+
+         '</div>'
+       ).join(''):'<div class="empty">講師実績はまだありません。</div>';
      }
-   });
-
-   const ranking=[...counts.entries()].sort((a,b)=>b[1]-a[1]||a[0].localeCompare(b[0],'ja'));
-   rankingEl.innerHTML=ranking.length?ranking.map(([name,count],i)=>
-     '<div class="instructorRankRow"><div class="instructorRankNo">'+(i+1)+'</div>'+
-     '<div class="instructorRankName">'+esc(name)+'</div>'+
-     '<div class="instructorRankCount">'+count+'件</div></div>'
-   ).join(''):'<div class="empty">講師実績はまだありません。</div>';
+   }catch(_){
+     rankingEl.innerHTML='<div class="notice error">講師回数ランキングの集計に失敗しました。</div>';
+   }
  }
 
  if(!displayActive.length){
@@ -7091,6 +7084,88 @@ async function handle(request, env) {
  }
 
 
+
+ if(path==="/api/admin/instructor-ranking" && method==="GET"){
+   if(!(await isAdmin()))return json({error:"unauthorized"},401);
+
+   await ensureTrainingSurveys(env);
+   await ensureTrainingCycleResetTables(env);
+   await ensureReservationNotifications(env);
+
+   const currentQ=await env.DB.prepare(`
+     SELECT
+       r.id AS reservation_id,
+       COALESCE(r.assigned_instructor,'') AS assigned_instructor,
+       COALESCE(r.status,'') AS status,
+       COALESCE(r.note,'') AS note
+     FROM reservations r
+     WHERE r.status IN ('completed','retake')
+   `).all();
+
+   const archivedQ=await env.DB.prepare(`
+     SELECT
+       reservation_id,
+       COALESCE(assigned_instructor,'') AS assigned_instructor,
+       COALESCE(status,'') AS status,
+       COALESCE(note,'') AS note
+     FROM training_cycle_reset_items
+     WHERE status IN ('completed','retake')
+   `).all();
+
+   const surveyQ=await env.DB.prepare(`
+     SELECT
+       reservation_id,
+       COALESCE(assigned_instructor,'') AS assigned_instructor
+     FROM training_surveys
+     WHERE trim(COALESCE(assigned_instructor,''))<>''
+   `).all();
+
+   // reservation_id 単位で統合し、同じ研修実績を二重カウントしない。
+   // 優先順位: 現在予約 > アーカイブ > アンケート補完
+   const byReservation=new Map();
+
+   const accept=(row,source)=>{
+     const id=Number(row?.reservation_id||0);
+     const instructor=String(row?.assigned_instructor||'').trim();
+     const status=String(row?.status||'').trim();
+     const note=String(row?.note||'').trim();
+
+     if(!id || !instructor)return;
+     if(instructor==='既修了認定' || note==='途中参加による既修了認定')return;
+
+     const prev=byReservation.get(id);
+     const priority={survey:1,archive:2,current:3};
+     if(!prev || priority[source]>priority[prev.source]){
+       byReservation.set(id,{reservation_id:id,instructor,status,source});
+     }
+   };
+
+   for(const row of (surveyQ.results||[]))accept(row,'survey');
+   for(const row of (archivedQ.results||[]))accept(row,'archive');
+   for(const row of (currentQ.results||[]))accept(row,'current');
+
+   const counts=new Map();
+   for(const row of byReservation.values()){
+     const name=String(row.instructor||'').trim();
+     if(!name)continue;
+     counts.set(name,(counts.get(name)||0)+1);
+   }
+
+   const rows=[...counts.entries()]
+     .map(([name,count])=>({name,count}))
+     .sort((a,b)=>b.count-a.count || a.name.localeCompare(b.name,'ja'));
+
+   return json({
+     ok:true,
+     rows,
+     total_sessions:byReservation.size,
+     sources:{
+       current:(currentQ.results||[]).length,
+       archived:(archivedQ.results||[]).length,
+       survey:(surveyQ.results||[]).length
+     }
+   });
+ }
 
  if(path==="/api/admin/instructors" && method==="GET"){
    await ensureInstructors(env);
