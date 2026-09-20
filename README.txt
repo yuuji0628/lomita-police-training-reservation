@@ -1,3 +1,29 @@
+LOMITA POLICE 研修管理システム Version 2.46
+
+重要修正：教官 講師回数ランキング
+
+原因
+- これまでランキングは現在の reservations テーブルだけを集計していた
+- 30日リセット等で過去予約が training_cycle_reset_items へ退避されると
+  過去の担当実績がランキングから消えていた
+- そのため最近の1件だけが表示されるケースがあった
+
+Version 2.46
+- ランキング専用APIを追加
+- 以下3種類の履歴を統合
+  1. 現在の reservations（受講済み・再受講）
+  2. training_cycle_reset_items の過去履歴
+  3. training_surveys に残っている担当教官情報
+- reservation_id 単位で重複除外
+- 同じ研修をアンケート・予約履歴の両方から二重カウントしない
+- 「既修了認定」は講師回数から除外
+- 過去サイクルの研修実績もランキングへ復元
+- 再受講で実際に担当した研修も1回として集計
+
+Version 2.45までの修正も維持
+
+元README
+----------------
 LOMITA POLICE 研修管理システム Version 2.45
 
 変更
@@ -116,6 +142,7 @@ LOMITA POLICE Training Reservation - Version 2.40
 - pageshow / click 後も再確認
 - JST欄生成後に自動挿入
 - Version 2.39までの機能を維持
+
 
 
 
