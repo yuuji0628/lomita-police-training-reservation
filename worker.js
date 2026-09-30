@@ -5331,7 +5331,7 @@ async function deleteTrainee(id,name){
  await loadTrainees();
  await loadAdmin();
 }
-function adminProgressStamp(x){
+function adminProgressStamp(x,discord){
  const status=String(x.status||'');
  if(status!=="completed"){
    return '<div class="adminProgressPending">未</div>';
@@ -5339,9 +5339,43 @@ function adminProgressStamp(x){
  const date=String(x.completed_at||x.confirmed_date||'').replaceAll('-','/');
  const instructor=String(x.assigned_instructor||'担当教官');
  const recognized=String(x.note||'')==='途中参加による既修了認定' || instructor==='既修了認定';
+ const reservationId=Number(x.reservation_id||0);
+ const revokeBtn=reservationId
+   ?'<button type="button" onclick="undoProgressCompletion('+reservationId+','+JSON.stringify(String(discord||''))+')" '+
+     'style="margin-top:5px;padding:4px 6px;border:1px solid #d98179;border-radius:7px;background:#fff;color:#a62a20;font-size:8px;font-weight:900;white-space:nowrap">修了を取り消す</button>'
+   :'';
  return '<div class="adminProgressStamp"><b>'+(recognized?'既修了':'修了印')+'</b><span>'+esc((recognized?'認定':instructor).slice(0,12))+'</span><span>承認</span></div>'+
         '<div class="adminProgressDate">'+esc(date||(recognized?'認定日未入力':'日付未記録'))+'</div>'+
-        '<div class="adminProgressInstructor">'+esc(instructor)+'</div>';
+        '<div class="adminProgressInstructor">'+esc(instructor)+'</div>'+
+        revokeBtn;
+}
+
+async function undoProgressCompletion(id,discord){
+ if(!id)return;
+ if(!confirm(
+   'この修了スタンプを取り消しますか？\n\n'+
+   '修了記録を未修了へ戻し、進捗を再計算します。\n'+
+   '本人へのDiscord DMは送信しません。'
+ ))return;
+
+ const r=await fetch('/api/admin/reservations/'+id+'/undo-completed',{
+   method:'POST',
+   headers:auth()
+ });
+ const d=await r.json().catch(()=>({}));
+ if(!r.ok){
+   alert(d.error||'修了を取り消せませんでした');
+   return;
+ }
+
+ alert(d.message||'修了を取り消しました。');
+ await openAdminProgress(discord);
+ await loadReservationControl();
+ await loadAdmin();
+
+ if(document.getElementById('traineeSection')?.style.display!=='none'){
+   await loadTrainees();
+ }
 }
 
 function adminProgressResult(x){
@@ -5401,7 +5435,7 @@ async function openAdminProgress(discord){
          '<div class="adminProgressLedger">'+
            '<table class="adminProgressTable">'+
              '<tr><th>月日<br>修了印</th>'+
-               group.map(x=>'<td>'+adminProgressStamp(x)+'</td>').join('')+
+               group.map(x=>'<td>'+adminProgressStamp(x,discord)+'</td>').join('')+
              '</tr>'+
              '<tr><th>研修項目名</th>'+
                group.map(x=>'<td><div class="adminProgressItem">'+esc(x.title||'研修')+'</div>'+adminProgressResult(x)+'</td>').join('')+
@@ -6833,6 +6867,7 @@ async function handle(request, env) {
        SELECT
          p.id AS program_id,
          p.training_id,
+         COALESCE(r.id,0) AS reservation_id,
          COALESCE(t.title,p.name) AS title,
          COALESCE(r.status,'') AS status,
          COALESCE(r.completed_at,'') AS completed_at,
