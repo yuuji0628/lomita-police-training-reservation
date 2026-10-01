@@ -3224,6 +3224,21 @@ textarea{min-height:90px}
 }
 #adminProgressModal #adminProgressBody{min-height:0;overflow:visible}
 #adminProgressModal .progressUndoBtn{pointer-events:auto!important;cursor:pointer}
+#adminProgressModal .progressUndoListBtn{pointer-events:auto!important;touch-action:manipulation;cursor:pointer}
+.adminProgressRevokePanel{
+  margin:12px 0 16px;padding:12px;border:1px solid #e3bc62;border-radius:14px;background:#fffaf0
+}
+.adminProgressRevokeTitle{font-size:14px;font-weight:1000;color:#7b5600}
+.adminProgressRevokeHelp{font-size:11px;color:#6f7480;margin:4px 0 9px}
+.adminProgressRevokePanel .progressUndoListBtn{
+  width:100%;display:flex;justify-content:space-between;align-items:center;gap:10px;
+  border:1px solid #e4b3ae;background:#fff;border-radius:10px;padding:11px 12px;margin-top:7px;
+  color:#1c2c40;font-weight:900;text-align:left
+}
+.adminProgressRevokePanel .progressUndoListBtn b{
+  color:#a62a20;font-size:11px;white-space:nowrap
+}
+
 </style>
 </style></head><body>${body}<script>${script}</script></body></html>`, {headers:{"content-type":"text/html; charset=utf-8"}});
 
@@ -5414,7 +5429,7 @@ async function handleProgressUndoButton(btn){
  }
 }
 document.addEventListener('click',e=>{
- const btn=e.target?.closest?.('.progressUndoBtn');
+ const btn=e.target?.closest?.('.progressUndoBtn, .progressUndoListBtn');
  if(!btn)return;
  e.preventDefault();
  e.stopPropagation();
@@ -5422,7 +5437,7 @@ document.addEventListener('click',e=>{
  handleProgressUndoButton(btn);
 },true);
 document.addEventListener('touchend',e=>{
- const btn=e.target?.closest?.('.progressUndoBtn');
+ const btn=e.target?.closest?.('.progressUndoBtn, .progressUndoListBtn');
  if(!btn)return;
  e.preventDefault();
  e.stopPropagation();
@@ -5477,6 +5492,19 @@ async function openAdminProgress(discord){
        '</div>'+
      '</div>';
 
+   const completedRows=rows.filter(x=>String(x.status||'')==='completed' && Number(x.reservation_id||0)>0);
+   const revokePanel=completedRows.length
+     ?'<div class="adminProgressRevokePanel">'+
+        '<div class="adminProgressRevokeTitle">修了取消</div>'+
+        '<div class="adminProgressRevokeHelp">間違えて修了にした研修は、ここから取り消せます。</div>'+
+        completedRows.map(x=>
+          '<button type="button" class="progressUndoListBtn" data-reservation-id="'+Number(x.reservation_id||0)+'" data-discord="'+esc(String(discord||''))+'">'+
+            '<span>'+esc(x.title||'研修')+'</span><b>修了を取り消す</b>'+
+          '</button>'
+        ).join('')+
+       '</div>'
+     :'';
+
    const groups=[];
    for(let i=0;i<rows.length;i+=4)groups.push(rows.slice(i,i+4));
 
@@ -5501,7 +5529,7 @@ async function openAdminProgress(discord){
        '</div>';
    });
 
-   body.innerHTML=summary+ledger;
+   body.innerHTML=summary+revokePanel+ledger;
  }catch(_){
    body.innerHTML='<div class="notice error">研修進捗表を取得できませんでした。再読み込みしてください。</div>';
  }
