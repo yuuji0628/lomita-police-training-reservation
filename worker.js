@@ -3205,6 +3205,25 @@ textarea{min-height:90px}
 .instructorRankNo{width:27px;height:27px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:#f1f4f8;font-size:11px;font-weight:950}
 .instructorRankRow:nth-child(1) .instructorRankNo{background:#f7e6a7;color:#6e5200}.instructorRankRow:nth-child(2) .instructorRankNo{background:#e8edf3;color:#52606f}.instructorRankRow:nth-child(3) .instructorRankNo{background:#efd5bf;color:#7a3f18}
 .instructorRankName{font-size:12px;font-weight:900;color:#0d223c;word-break:break-word}.instructorRankCount{text-align:right;font-size:11px;font-weight:950;color:#0a2b50}
+
+<style>
+#adminProgressModal{align-items:flex-end;overflow:hidden;overscroll-behavior:contain}
+#adminProgressModal .modalCard{
+  width:min(100%,760px);
+  max-height:calc(100vh - 16px);
+  max-height:calc(100dvh - 16px);
+  overflow-y:auto;
+  overflow-x:hidden;
+  -webkit-overflow-scrolling:touch;
+  overscroll-behavior-y:contain;
+  touch-action:pan-y;
+  padding-bottom:calc(28px + env(safe-area-inset-bottom));
+}
+#adminProgressModal .adminProgressTop{
+  position:sticky;top:0;z-index:20;background:#f7f9fc;padding-bottom:10px
+}
+#adminProgressModal #adminProgressBody{min-height:0;overflow:visible}
+</style>
 </style></head><body>${body}<script>${script}</script></body></html>`, {headers:{"content-type":"text/html; charset=utf-8"}});
 
 
@@ -5393,6 +5412,8 @@ async function openAdminProgress(discord){
  const modal=document.getElementById('adminProgressModal');
  const body=document.getElementById('adminProgressBody');
  modal.classList.add('open');
+ const card=modal.querySelector('.modalCard');
+ if(card)card.scrollTop=0;
  body.innerHTML='<div class="empty">読み込み中...</div>';
 
  try{
