@@ -3223,6 +3223,7 @@ textarea{min-height:90px}
   position:sticky;top:0;z-index:20;background:#f7f9fc;padding-bottom:10px
 }
 #adminProgressModal #adminProgressBody{min-height:0;overflow:visible}
+#adminProgressModal .progressUndoBtn{pointer-events:auto!important;cursor:pointer}
 </style>
 </style></head><body>${body}<script>${script}</script></body></html>`, {headers:{"content-type":"text/html; charset=utf-8"}});
 
@@ -5360,8 +5361,8 @@ function adminProgressStamp(x,discord){
  const recognized=String(x.note||'')==='途中参加による既修了認定' || instructor==='既修了認定';
  const reservationId=Number(x.reservation_id||0);
  const revokeBtn=reservationId
-   ?'<button type="button" onclick="undoProgressCompletion('+reservationId+','+JSON.stringify(String(discord||''))+')" '+
-     'style="margin-top:5px;padding:4px 6px;border:1px solid #d98179;border-radius:7px;background:#fff;color:#a62a20;font-size:8px;font-weight:900;white-space:nowrap">修了を取り消す</button>'
+   ?'<button type="button" class="progressUndoBtn" data-reservation-id="'+reservationId+'" data-discord="'+esc(String(discord||''))+'" '+
+     'style="margin-top:5px;padding:6px 8px;border:1px solid #d98179;border-radius:7px;background:#fff;color:#a62a20;font-size:9px;font-weight:900;white-space:nowrap;position:relative;z-index:50;touch-action:manipulation;-webkit-tap-highlight-color:rgba(165,45,40,.12)">修了を取り消す</button>'
    :'';
  return '<div class="adminProgressStamp"><b>'+(recognized?'既修了':'修了印')+'</b><span>'+esc((recognized?'認定':instructor).slice(0,12))+'</span><span>承認</span></div>'+
         '<div class="adminProgressDate">'+esc(date||(recognized?'認定日未入力':'日付未記録'))+'</div>'+
@@ -5396,6 +5397,39 @@ async function undoProgressCompletion(id,discord){
    await loadTrainees();
  }
 }
+
+// v2.49: iPhone/Safari で inline onclick が反応しない場合に備え、
+// document 委譲で click / touchend の両方を確実に処理する。
+let progressUndoTouchLock=0;
+async function handleProgressUndoButton(btn){
+ if(!btn || btn.disabled)return;
+ const id=Number(btn.dataset.reservationId||0);
+ const discord=String(btn.dataset.discord||'');
+ if(!id)return;
+ btn.disabled=true;
+ try{
+   await undoProgressCompletion(id,discord);
+ }finally{
+   btn.disabled=false;
+ }
+}
+document.addEventListener('click',e=>{
+ const btn=e.target?.closest?.('.progressUndoBtn');
+ if(!btn)return;
+ e.preventDefault();
+ e.stopPropagation();
+ if(Date.now()-progressUndoTouchLock<700)return;
+ handleProgressUndoButton(btn);
+},true);
+document.addEventListener('touchend',e=>{
+ const btn=e.target?.closest?.('.progressUndoBtn');
+ if(!btn)return;
+ e.preventDefault();
+ e.stopPropagation();
+ progressUndoTouchLock=Date.now();
+ handleProgressUndoButton(btn);
+},{capture:true,passive:false});
+
 
 function adminProgressResult(x){
  const result=String(x.exam_result||'');
