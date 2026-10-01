@@ -1,3 +1,14 @@
+LOMITA POLICE 研修管理システム Version 2.49
+
+修正内容
+- 研修進捗表の「修了を取り消す」ボタンがiPhone/Safariで反応しない問題を修正
+- inline onclick 依存を廃止し、documentイベント委譲へ変更
+- click と touchend の両方に対応
+- 二重発火防止を追加
+- ボタンの pointer-events / touch-action を明示
+- v2.48の縦スクロール修正を維持
+- v2.47の修了取消APIと進捗再計算を維持
+
 LOMITA POLICE 研修管理システム Version 2.48
 
 - iPhone/Safariで研修進捗表が下へスクロールできない問題を修正
