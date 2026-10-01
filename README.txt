@@ -1,3 +1,11 @@
+LOMITA POLICE 研修管理システム Version 2.48
+
+- iPhone/Safariで研修進捗表が下へスクロールできない問題を修正
+- モーダル内部を独立縦スクロール化
+- iOS慣性スクロール / Safe Area対応
+- 上部ヘッダー固定
+- v2.47の修了取消機能を維持
+
 LOMITA POLICE 研修管理システム Version 2.47
 
 追加
