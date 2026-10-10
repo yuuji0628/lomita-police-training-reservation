@@ -664,36 +664,44 @@ async function getTraineeCycleInfo(env,profile){
     };
   }
 
+  const today=jstTodayYmd();
   const orientation=await getOrientationTraining(env);
-  let startRow=null;
 
+  let orientationDate="";
   if(orientation?.training_id){
-    startRow=await env.DB.prepare(`
+    const orientationRow=await env.DB.prepare(`
       SELECT substr(COALESCE(NULLIF(completed_at,''),confirmed_date),1,10) d
       FROM reservations
       WHERE training_id=?
         AND status='completed'
         AND lower(trim(COALESCE(discord_id,'')))=lower(trim(?))
         AND trim(COALESCE(NULLIF(completed_at,''),confirmed_date,''))<>''
-      ORDER BY id ASC
-      LIMIT 1
-    `).bind(Number(orientation.training_id),key).first();
-  }
-
-  // 途中参加などでオリエンテーション記録がない場合は、最初の修了日を開始日にする。
-  if(!String(startRow?.d||"").match(/^\d{4}-\d{2}-\d{2}$/)){
-    startRow=await env.DB.prepare(`
-      SELECT substr(COALESCE(NULLIF(completed_at,''),confirmed_date),1,10) d
-      FROM reservations
-      WHERE status='completed'
-        AND lower(trim(COALESCE(discord_id,'')))=lower(trim(?))
-        AND trim(COALESCE(NULLIF(completed_at,''),confirmed_date,''))<>''
       ORDER BY COALESCE(NULLIF(completed_at,''),confirmed_date) ASC,id ASC
       LIMIT 1
-    `).bind(key).first();
+    `).bind(Number(orientation.training_id),key).first();
+    const d=String(orientationRow?.d||"");
+    if(/^\d{4}-\d{2}-\d{2}$/.test(d) && d<=today)orientationDate=d;
   }
 
-  const startDate=String(startRow?.d||"");
+  // 実際に存在する全修了記録のうち、未来日を除いた最古の日付も取得する。
+  const firstCompletedRow=await env.DB.prepare(`
+    SELECT substr(COALESCE(NULLIF(completed_at,''),confirmed_date),1,10) d
+    FROM reservations
+    WHERE status='completed'
+      AND lower(trim(COALESCE(discord_id,'')))=lower(trim(?))
+      AND trim(COALESCE(NULLIF(completed_at,''),confirmed_date,''))<>''
+      AND substr(COALESCE(NULLIF(completed_at,''),confirmed_date),1,10)<=?
+    ORDER BY substr(COALESCE(NULLIF(completed_at,''),confirmed_date),1,10) ASC,id ASC
+    LIMIT 1
+  `).bind(key,today).first();
+
+  const firstCompletedDate=String(firstCompletedRow?.d||"");
+  const candidates=[orientationDate,firstCompletedDate]
+    .filter(d=>/^\d{4}-\d{2}-\d{2}$/.test(d) && d<=today)
+    .sort();
+
+  // オリエンテーションの日付が誤って未来日でも、実績上の最古の有効修了日を優先する。
+  const startDate=candidates[0]||"";
   if(!startDate.match(/^\d{4}-\d{2}-\d{2}$/)){
     return {
       started:false,
@@ -707,7 +715,6 @@ async function getTraineeCycleInfo(env,profile){
   }
 
   const deadlineDate=addCalendarDaysYmd(startDate,30);
-  const today=jstTodayYmd();
   const daysRemaining=calendarDaysBetweenYmd(today,deadlineDate);
 
   return {
@@ -3672,10 +3679,16 @@ function renderTrainingLimitNotice(cycle){
    return;
  }
 
- const start=String(c.start_date||'').replaceAll('-','/');
- const deadline=String(c.deadline_date||'').replaceAll('-','/');
+ const rawStart=String(c.start_date||'');
+ const rawDeadline=String(c.deadline_date||'');
+ const start=rawStart.replaceAll('-','/');
+ const deadline=rawDeadline.replaceAll('-','/');
  const left=Number(c.days_remaining);
 
+ if(rawStart && rawStart>new Intl.DateTimeFormat('sv-SE',{timeZone:'Asia/Tokyo',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date())){
+   text.innerHTML='研修期限情報を再計算しています。画面を更新してください。';
+   return;
+ }
  if(Number.isFinite(left) && left<=7)box.classList.add('urgent');
 
  text.innerHTML=
