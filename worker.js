@@ -4896,7 +4896,7 @@ async function undoCompletedReservation(id,kind='completed'){
  const messages={
    recognition:'この「既修了認定」を取り消しますか？\n\nこの研修は未修了へ戻り、進捗も再計算されます。',
    orientation:'オリエンテーションの受講済みを取り消して「未」に戻しますか？\n\n進捗も再計算されます。',
-   completed:'この研修の「受講済み」を取り消しますか？\n\n予約確定へ戻し、修了印・受講日・試験判定を解除します。\n本人へのDiscord DMは送信しません。'
+   completed:'この研修の「受講済み」を取り消しますか？\n\n未修了へ戻し、研修生が再申請できる状態にします。\n修了印・受講日・試験判定を解除します。\n本人へのDiscord DMは送信しません。'
  };
  if(!confirm(messages[kind]||messages.completed))return;
 
@@ -5407,6 +5407,7 @@ async function undoProgressCompletion(id,discord,trainingTitle='研修'){
  if(!confirm(
    '「'+title+'」だけ修了を取り消しますか？\n\n'+
    'この学科だけを未修了へ戻します。\n'+
+   '研修生側からこの研修を再申請できるようになります。\n'+
    'ほかの学科・実技・試験の修了状態は変更しません。\n'+
    '進捗は自動で再計算されます。\n'+
    '本人へのDiscord DMは送信しません。'
@@ -7828,13 +7829,18 @@ async function handle(request, env) {
    }else{
      await env.DB.prepare(`
        UPDATE reservations
-       SET status='reserved',
+       SET status='retake',
            completed_at='',
            exam_result='',
            exam_score=NULL,
-           pending_announce_sent_at=''
+           pending_announce_sent_at='',
+           note=CASE
+             WHEN trim(COALESCE(note,''))='' THEN '修了取消・再申請可'
+             ELSE note || ' / 修了取消・再申請可'
+           END
        WHERE id=? AND status='completed'
      `).bind(reservationId).run();
+     action="reapply_enabled";
    }
 
    await refreshTraineeFullCompletionByDiscord(env,String(before.discord_id||""));
@@ -7842,13 +7848,14 @@ async function handle(request, env) {
    return json({
      ok:true,
      action,
-     status:action==="reserved"?"reserved":"removed",
+     status:action==="reapply_enabled"?"retake":"removed",
+     reapply_enabled:action==="reapply_enabled",
      message:
        action==="recognition_removed"
          ?"既修了認定を取り消しました。未修了として進捗を再計算しました。"
        :action==="orientation_uncompleted"
          ?"オリエンテーションを「未」に戻しました。"
-         :"受講済みを取り消し、予約確定へ戻しました。",
+         :"受講済みを取り消しました。研修生はこの研修を再申請できます。",
      dm_sent:false
    });
  }
