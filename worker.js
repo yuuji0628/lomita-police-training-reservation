@@ -3238,6 +3238,22 @@ textarea{min-height:90px}
 .adminProgressRevokePanel .progressUndoListBtn b{
   color:#a62a20;font-size:11px;white-space:nowrap
 }
+.adminProgressCompletePanel{
+  margin:12px 0 16px;padding:12px;border:1px solid #9fb9d2;border-radius:14px;background:#f5f9fd
+}
+.adminProgressCompleteTitle{font-size:14px;font-weight:1000;color:#173a5b}
+.adminProgressCompleteHelp{font-size:11px;color:#6f7480;margin:4px 0 9px}
+.progressCompleteRow{
+  background:#fff;border:1px solid #dce5ee;border-radius:11px;padding:10px;margin-top:8px
+}
+.progressCompleteName{font-size:12px;font-weight:1000;color:#17304c;margin-bottom:7px}
+.progressCompleteRow select,.progressCompleteRow input{width:100%;margin-top:6px}
+.progressCompleteBtn{
+  width:100%;margin-top:7px;padding:10px 9px;border:1px solid #315f89;border-radius:9px;
+  background:#0c3155;color:#fff;font-size:11px;font-weight:1000;
+  pointer-events:auto!important;touch-action:manipulation;cursor:pointer
+}
+
 
 </style>
 </style></head><body>${body}<script>${script}</script></body></html>`, {headers:{"content-type":"text/html; charset=utf-8"}});
@@ -5450,6 +5466,69 @@ document.addEventListener('touchend',e=>{
 },{capture:true,passive:false});
 
 
+async function completeOneProgressTraining(btn){
+ if(!btn || btn.disabled)return;
+ const trainingId=Number(btn.dataset.trainingId||0);
+ const reservationId=Number(btn.dataset.reservationId||0);
+ const discord=String(btn.dataset.discord||'');
+ const title=String(btn.dataset.trainingTitle||'研修');
+ const instructor=document.getElementById('progressCompleteInstructor_'+trainingId)?.value||'';
+ const completedDate=document.getElementById('progressCompleteDate_'+trainingId)?.value||'';
+
+ if(!instructor){alert('担当教官を選択してください。');return}
+ if(!completedDate){alert('受講日を選択してください。');return}
+
+ if(!confirm(
+   '「'+title+'」だけ受講済みにしますか？\n\n'+
+   '担当教官：'+instructor+'\n'+
+   '受講日：'+completedDate+'\n\n'+
+   'この研修だけ修了として登録します。\n'+
+   'ほかの未修了項目は変更しません。\n'+
+   '本人へのDiscord DMは送信しません。'
+ ))return;
+
+ btn.disabled=true;
+ const original=btn.textContent;
+ btn.textContent='登録中...';
+ try{
+   const r=await fetch('/api/admin/trainee-progress/complete-one',{
+     method:'POST',
+     headers:auth(),
+     body:JSON.stringify({
+       discord_id:discord,
+       training_id:trainingId,
+       reservation_id:reservationId,
+       assigned_instructor:instructor,
+       completed_date:completedDate
+     })
+   });
+   const d=await r.json().catch(()=>({}));
+   if(!r.ok){
+     alert(d.error||'受講済みにできませんでした');
+     return;
+   }
+   alert('「'+title+'」を受講済みにしました。');
+   await openAdminProgress(discord);
+   await loadReservationControl();
+   await loadAdmin();
+   if(document.getElementById('traineeSection')?.style.display!=='none'){
+     await loadTrainees();
+   }
+ }finally{
+   btn.disabled=false;
+   btn.textContent=original;
+ }
+}
+
+document.addEventListener('click',e=>{
+ const btn=e.target?.closest?.('.progressCompleteBtn');
+ if(!btn)return;
+ e.preventDefault();
+ e.stopPropagation();
+ completeOneProgressTraining(btn);
+},true);
+
+
 function adminProgressResult(x){
  const result=String(x.exam_result||'');
  const score=(x.exam_score===null||x.exam_score===undefined)?'':String(x.exam_score);
@@ -5509,6 +5588,37 @@ async function openAdminProgress(discord){
        '</div>'
      :'';
 
+   if(!instructorRows.length){
+     try{
+       const ir=await fetch('/api/admin/instructors',{headers:auth(),cache:'no-store'});
+       const id=await ir.json().catch(()=>[]);
+       if(ir.ok && Array.isArray(id))instructorRows=id;
+     }catch(_){}
+   }
+   const todayJst=new Intl.DateTimeFormat('en-CA',{
+     timeZone:'Asia/Tokyo',year:'numeric',month:'2-digit',day:'2-digit'
+   }).format(new Date());
+
+   const incompleteRows=rows.filter(x=>String(x.status||'')!=='completed');
+   const completePanel=incompleteRows.length
+     ?'<div class="adminProgressCompletePanel">'+
+        '<div class="adminProgressCompleteTitle">個別で受講済みにする</div>'+
+        '<div class="adminProgressCompleteHelp">対象の研修だけ受講済みにできます。担当教官と受講日を選んでください。</div>'+
+        incompleteRows.map(x=>{
+          const tid=Number(x.training_id||0);
+          const rid=Number(x.reservation_id||0);
+          const options='<option value="">担当教官を選択</option>'+
+            instructorRows.map(i=>'<option value="'+esc(i.name||'')+'">'+esc(i.name||'')+'</option>').join('');
+          return '<div class="progressCompleteRow">'+
+            '<div class="progressCompleteName">'+esc(x.title||'研修')+'</div>'+
+            '<select class="progressCompleteInstructor" id="progressCompleteInstructor_'+tid+'">'+options+'</select>'+
+            '<input class="progressCompleteDate" id="progressCompleteDate_'+tid+'" type="date" value="'+esc(todayJst)+'">'+
+            '<button type="button" class="progressCompleteBtn" data-training-id="'+tid+'" data-reservation-id="'+rid+'" data-discord="'+esc(String(discord||''))+'" data-training-title="'+esc(x.title||'研修')+'">この研修だけ受講済みにする</button>'+
+          '</div>';
+        }).join('')+
+       '</div>'
+     :'';
+
    const groups=[];
    for(let i=0;i<rows.length;i+=4)groups.push(rows.slice(i,i+4));
 
@@ -5533,7 +5643,7 @@ async function openAdminProgress(discord){
        '</div>';
    });
 
-   body.innerHTML=summary+revokePanel+ledger;
+   body.innerHTML=summary+revokePanel+completePanel+ledger;
  }catch(_){
    body.innerHTML='<div class="notice error">研修進捗表を取得できませんでした。再読み込みしてください。</div>';
  }
@@ -6925,6 +7035,127 @@ async function handle(request, env) {
      ORDER BY avg_instructor_rating DESC,responses DESC
    `).all();
    return json({ok:true,rows:rows?.results||[],summary:summary?.results||[]});
+ }
+
+
+ if(path==="/api/admin/trainee-progress/complete-one" && method==="POST"){
+   if(!(await isAdmin()))return json({error:"unauthorized"},401);
+   try{
+     await ensureTraineeProfiles(env);
+     await ensureTrainingPrograms(env);
+     await ensureReservationInstructor(env);
+     await ensureReservationPreferredSchedule(env);
+     await ensureReservationNotifications(env);
+     await ensureInstructors(env);
+
+     const b=await request.json().catch(()=>({}));
+     const key=String(b.discord_id||"").trim();
+     const trainingId=Number(b.training_id||0);
+     const reservationId=Number(b.reservation_id||0);
+     const assignedInstructor=String(b.assigned_instructor||"").trim();
+     const completedDate=String(b.completed_date||"").trim();
+
+     if(!key)return json({error:"研修生の識別情報が必要です"},400);
+     if(!trainingId)return json({error:"対象研修が不正です"},400);
+     if(!assignedInstructor)return json({error:"担当教官を選択してください"},400);
+     if(!/^\d{4}-\d{2}-\d{2}$/.test(completedDate))return json({error:"受講日を選択してください"},400);
+
+     const instructor=await env.DB.prepare(
+       "SELECT id,name FROM instructors WHERE lower(trim(name))=lower(trim(?)) LIMIT 1"
+     ).bind(assignedInstructor).first();
+     if(!instructor)return json({error:"登録されていない教官です"},400);
+
+     const profile=await env.DB.prepare(`
+       SELECT id,player_name,discord_id,login_name,affiliation
+       FROM trainee_profiles
+       WHERE lower(trim(COALESCE(discord_id,'')))=lower(trim(?))
+          OR lower(trim(COALESCE(login_name,'')))=lower(trim(?))
+          OR lower(trim(COALESCE(player_name,'')))=lower(trim(?))
+       LIMIT 1
+     `).bind(key,key,key).first();
+     if(!profile)return json({error:"研修生が見つかりません"},404);
+
+     const training=await env.DB.prepare(`
+       SELECT t.id,t.title
+       FROM trainings t
+       JOIN training_programs p ON p.training_id=t.id
+       WHERE t.id=? AND COALESCE(p.active,1)=1
+       LIMIT 1
+     `).bind(trainingId).first();
+     if(!training)return json({error:"対象研修が見つかりません"},404);
+
+     const canonical=String(profile.discord_id||profile.login_name||profile.player_name||"").trim();
+
+     const already=await env.DB.prepare(`
+       SELECT id FROM reservations
+       WHERE training_id=? AND status='completed'
+         AND (
+           lower(trim(COALESCE(discord_id,'')))=lower(trim(?))
+           OR lower(trim(COALESCE(player_name,'')))=lower(trim(?))
+         )
+       ORDER BY id DESC LIMIT 1
+     `).bind(trainingId,canonical,String(profile.player_name||key)).first();
+     if(already)return json({error:"この研修はすでに受講済みです"},409);
+
+     let target=null;
+     if(reservationId){
+       target=await env.DB.prepare(`
+         SELECT id,status,training_id,discord_id,player_name
+         FROM reservations
+         WHERE id=? AND training_id=?
+           AND (
+             lower(trim(COALESCE(discord_id,'')))=lower(trim(?))
+             OR lower(trim(COALESCE(player_name,'')))=lower(trim(?))
+           )
+         LIMIT 1
+       `).bind(reservationId,trainingId,canonical,String(profile.player_name||key)).first();
+     }
+
+     if(target){
+       await env.DB.prepare(`
+         UPDATE reservations
+         SET status='completed',
+             assigned_instructor=?,
+             completed_at=?,
+             confirmed_date=CASE WHEN trim(COALESCE(confirmed_date,''))='' THEN ? ELSE confirmed_date END,
+             pending_announce_sent_at=''
+         WHERE id=?
+       `).bind(assignedInstructor,completedDate,completedDate,Number(target.id)).run();
+     }else{
+       await env.DB.prepare(`
+         INSERT INTO reservations(
+           training_id,player_name,discord_id,affiliation,note,status,
+           preferred_date,preferred_time,preferred_date2,preferred_time2,preferred_date3,preferred_time3,
+           assigned_instructor,confirmed_date,confirmed_time,confirmed_preference,completed_at,
+           exam_result,exam_score
+         )
+         VALUES(?,?,?,?,?,'completed','','','','','','',?,?,'',0,?,'',NULL)
+       `).bind(
+         trainingId,
+         String(profile.player_name||"研修生"),
+         canonical,
+         String(profile.affiliation||""),
+         "管理者による個別受講済み登録",
+         assignedInstructor,
+         completedDate,
+         completedDate
+       ).run();
+     }
+
+     await refreshTraineeFullCompletion(env,Number(profile.id));
+
+     return json({
+       ok:true,
+       training_id:trainingId,
+       training_title:String(training.title||"研修"),
+       assigned_instructor:assignedInstructor,
+       completed_date:completedDate,
+       dm_sent:false
+     });
+   }catch(err){
+     console.error("complete one training error",err);
+     return json({error:"個別の受講済み登録中にエラーが発生しました"},500);
+   }
  }
 
  if(path==="/api/admin/trainee-progress" && method==="GET"){
