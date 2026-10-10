@@ -5376,8 +5376,8 @@ function adminProgressStamp(x,discord){
  const recognized=String(x.note||'')==='途中参加による既修了認定' || instructor==='既修了認定';
  const reservationId=Number(x.reservation_id||0);
  const revokeBtn=reservationId
-   ?'<button type="button" class="progressUndoBtn" data-reservation-id="'+reservationId+'" data-discord="'+esc(String(discord||''))+'" '+
-     'style="margin-top:5px;padding:6px 8px;border:1px solid #d98179;border-radius:7px;background:#fff;color:#a62a20;font-size:9px;font-weight:900;white-space:nowrap;position:relative;z-index:50;touch-action:manipulation;-webkit-tap-highlight-color:rgba(165,45,40,.12)">修了を取り消す</button>'
+   ?'<button type="button" class="progressUndoBtn" data-reservation-id="'+reservationId+'" data-discord="'+esc(String(discord||''))+'" data-training-title="'+esc(x.title||'研修')+'" '+
+     'style="margin-top:5px;padding:6px 8px;border:1px solid #d98179;border-radius:7px;background:#fff;color:#a62a20;font-size:9px;font-weight:900;white-space:nowrap;position:relative;z-index:50;touch-action:manipulation;-webkit-tap-highlight-color:rgba(165,45,40,.12)">この学科だけ取り消す</button>'
    :'';
  return '<div class="adminProgressStamp"><b>'+(recognized?'既修了':'修了印')+'</b><span>'+esc((recognized?'認定':instructor).slice(0,12))+'</span><span>承認</span></div>'+
         '<div class="adminProgressDate">'+esc(date||(recognized?'認定日未入力':'日付未記録'))+'</div>'+
@@ -5385,11 +5385,14 @@ function adminProgressStamp(x,discord){
         revokeBtn;
 }
 
-async function undoProgressCompletion(id,discord){
+async function undoProgressCompletion(id,discord,trainingTitle='研修'){
  if(!id)return;
+ const title=String(trainingTitle||'研修');
  if(!confirm(
-   'この修了スタンプを取り消しますか？\n\n'+
-   '修了記録を未修了へ戻し、進捗を再計算します。\n'+
+   '「'+title+'」だけ修了を取り消しますか？\n\n'+
+   'この学科だけを未修了へ戻します。\n'+
+   'ほかの学科・実技・試験の修了状態は変更しません。\n'+
+   '進捗は自動で再計算されます。\n'+
    '本人へのDiscord DMは送信しません。'
  ))return;
 
@@ -5403,7 +5406,7 @@ async function undoProgressCompletion(id,discord){
    return;
  }
 
- alert(d.message||'修了を取り消しました。');
+ alert('「'+title+'」の修了を取り消しました。');
  await openAdminProgress(discord);
  await loadReservationControl();
  await loadAdmin();
@@ -5420,10 +5423,11 @@ async function handleProgressUndoButton(btn){
  if(!btn || btn.disabled)return;
  const id=Number(btn.dataset.reservationId||0);
  const discord=String(btn.dataset.discord||'');
+ const trainingTitle=String(btn.dataset.trainingTitle||'研修');
  if(!id)return;
  btn.disabled=true;
  try{
-   await undoProgressCompletion(id,discord);
+   await undoProgressCompletion(id,discord,trainingTitle);
  }finally{
    btn.disabled=false;
  }
@@ -5496,10 +5500,10 @@ async function openAdminProgress(discord){
    const revokePanel=completedRows.length
      ?'<div class="adminProgressRevokePanel">'+
         '<div class="adminProgressRevokeTitle">修了取消</div>'+
-        '<div class="adminProgressRevokeHelp">間違えて修了にした研修は、ここから取り消せます。</div>'+
+        '<div class="adminProgressRevokeHelp">取り消したい学科だけ選べます。ほかの修了済み項目には影響しません。</div>'+
         completedRows.map(x=>
-          '<button type="button" class="progressUndoListBtn" data-reservation-id="'+Number(x.reservation_id||0)+'" data-discord="'+esc(String(discord||''))+'">'+
-            '<span>'+esc(x.title||'研修')+'</span><b>修了を取り消す</b>'+
+          '<button type="button" class="progressUndoListBtn" data-reservation-id="'+Number(x.reservation_id||0)+'" data-discord="'+esc(String(discord||''))+'" data-training-title="'+esc(x.title||'研修')+'">'+
+            '<span>'+esc(x.title||'研修')+'</span><b>この学科だけ取り消す</b>'+
           '</button>'
         ).join('')+
        '</div>'
