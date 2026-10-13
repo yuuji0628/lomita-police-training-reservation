@@ -1,4 +1,4 @@
-const APP_VERSION="2.04";
+const APP_VERSION="2.55";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -3126,6 +3126,59 @@ textarea{min-height:90px}
 .traineeAdminDetails summary::after{content:"＋";font-size:17px;color:#748195}
 .traineeAdminDetails[open] summary::after{content:"−"}
 .traineeAdminDetailsBody{padding:0 10px 10px}
+
+.orientationActionCard{
+  margin-top:7px;
+  padding:10px;
+  border:2px solid #d7ad45;
+  border-radius:12px;
+  background:#fffdf7;
+}
+.orientationActionCard.done{
+  border-color:#72b68c;
+  background:#f1fbf5;
+}
+.orientationActionHead{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:8px;
+}
+.orientationActionTitle{
+  font-size:12px;
+  font-weight:1000;
+}
+.orientationState{
+  display:inline-flex;
+  align-items:center;
+  border-radius:999px;
+  padding:4px 8px;
+  font-size:9px;
+  font-weight:1000;
+  white-space:nowrap;
+  background:#fff0d2;
+  color:#8b5a00;
+}
+.orientationActionCard.done .orientationState{
+  background:#dff4e7;
+  color:#13713b;
+}
+.orientationHelp{
+  margin-top:5px;
+  color:#66758a;
+  font-size:9px;
+  line-height:1.45;
+}
+.orientationMainBtn{
+  width:100%;
+  margin-top:7px;
+  min-height:40px;
+  font-size:12px;
+}
+.orientationResetBtn{
+  width:100%;
+  margin-top:7px;
+}
 .traineeAdminActions{
   display:grid;
   grid-template-columns:1fr 1fr;
@@ -5272,21 +5325,25 @@ function renderTrainees(){
        '<span>予約 '+Number(x.reserved||0)+'</span>'+
        '<span>再 '+Number(x.retake||0)+'</span>'+
        '<span>欠 '+Number(x.absent||0)+'</span>'+
-       '<span>OT '+(x.orientation_completed?'済':'未')+'</span>'+
+       '<span>オリエン '+(x.orientation_completed?'済':'未')+'</span>'+
      '</div>'+
      '<details class="traineeAdminDetails traineeCompactDetails">'+
        '<summary>詳細・管理</summary>'+
        '<div class="traineeAdminDetailsBody traineeCompactDetailsBody">'+
-         '<div style="padding:7px;border:1px solid #d7ad45;border-radius:9px;background:#fffdf7">'+
-           '<div class="between"><b style="font-size:10px">オリエンテーション</b>'+
-             '<div class="row">'+
-               '<button class="btn small '+(x.orientation_completed?'dark':'')+' orientationToggleBtn" data-id="'+x.id+'" data-completed="1">済</button>'+
-               '<button class="btn small '+(!x.orientation_completed?'dark':'')+' orientationToggleBtn" data-id="'+x.id+'" data-completed="0">未</button>'+
-             '</div>'+
+         '<div class="orientationActionCard '+(x.orientation_completed?'done':'')+'">'+
+           '<div class="orientationActionHead">'+
+             '<div class="orientationActionTitle">オリエンテーション</div>'+
+             '<span class="orientationState">'+(x.orientation_completed?'✅ 完了':'⚠️ 未完了')+'</span>'+
            '</div>'+
-           '<select class="orientationInstructorSelect" data-id="'+x.id+'" style="margin-top:5px"><option value="">担当教官を選択...</option>'+
-             instructorRows.map(i=>'<option value="'+esc(i.name)+'">'+esc(i.name)+'</option>').join('')+
-           '</select>'+
+           (x.orientation_completed
+             ? '<div class="orientationHelp">この研修生はオリエンテーション完了済みです。誤登録の場合のみ下のボタンから未完了へ戻してください。</div>'+
+               '<button class="btn small danger orientationResetBtn" data-id="'+x.id+'">オリエンを未完了に戻す</button>'
+             : '<div class="orientationHelp">① 担当教官を選択 → ② 「オリエンを完了にする」を押してください。</div>'+
+               '<select class="orientationInstructorSelect" data-id="'+x.id+'" style="margin-top:7px"><option value="">① 担当教官を選択...</option>'+
+                 instructorRows.map(i=>'<option value="'+esc(i.name)+'">'+esc(i.name)+'</option>').join('')+
+               '</select>'+
+               '<button class="btn primary orientationMainBtn orientationCompleteBtn" data-id="'+x.id+'">✅ ② オリエンを完了にする</button>'
+           )+
          '</div>'+
          (x.all_completed?
            '<div style="margin-top:5px;padding:7px;border:1px solid #d7ad45;border-radius:9px;background:#fff9df;font-size:9px;font-weight:1000">🏅 全研修修了 '+esc(String(x.all_completed_at||'').replaceAll('-','/'))+'</div>'
@@ -5323,7 +5380,8 @@ function renderTrainees(){
 
  document.querySelectorAll('.traineeProgressBtn').forEach(btn=>btn.addEventListener('click',()=>openAdminProgress(decodeURIComponent(btn.dataset.discord))));
  document.querySelectorAll('.traineeOpenBtn').forEach(btn=>btn.addEventListener('click',()=>openTraineeDetail(decodeURIComponent(btn.dataset.discord))));
- document.querySelectorAll('.orientationToggleBtn').forEach(btn=>btn.addEventListener('click',()=>setOrientationStatus(Number(btn.dataset.id),btn.dataset.completed==='1')));
+ document.querySelectorAll('.orientationCompleteBtn').forEach(btn=>btn.addEventListener('click',()=>setOrientationStatus(Number(btn.dataset.id),true)));
+ document.querySelectorAll('.orientationResetBtn').forEach(btn=>btn.addEventListener('click',()=>setOrientationStatus(Number(btn.dataset.id),false)));
  document.querySelectorAll('.saveTraineeMemoBtn').forEach(btn=>btn.addEventListener('click',()=>saveTraineeMemo(Number(btn.dataset.id))));
  document.querySelectorAll('.setTraineeStartBtn').forEach(btn=>btn.addEventListener('click',()=>setTraineeStartTraining(Number(btn.dataset.id))));
  document.querySelectorAll('.traineeDeleteBtn').forEach(btn=>btn.addEventListener('click',()=>deleteTrainee(Number(btn.dataset.id),decodeURIComponent(btn.dataset.name))));
@@ -5373,16 +5431,34 @@ async function saveTraineeMemo(id){
 async function setOrientationStatus(id,completed){
  const instructorEl=document.querySelector('.orientationInstructorSelect[data-id="'+id+'"]');
  const assigned_instructor=String(instructorEl?.value||'').trim();
+
  if(completed && !assigned_instructor){
-   alert('オリエンテーションの担当教官を選択してください。');
+   alert('先に担当教官を選択してください。\n\n① 担当教官を選択\n② 「オリエンを完了にする」を押す');
+   instructorEl?.focus();
    return;
  }
- if(!confirm('オリエンテーションを「'+(completed?'済':'未')+'」に変更しますか？'+(completed?'\n担当教官：'+assigned_instructor:'')))return;
+
+ const confirmText=completed
+   ? 'この研修生のオリエンテーションを完了にしますか？\n\n担当教官：'+assigned_instructor+'\n\n完了後、研修の30日期限が開始されます。'
+   : 'この研修生のオリエンテーションを未完了に戻しますか？\n\n進捗・期限が再計算されます。';
+
+ if(!confirm(confirmText))return;
+
  const r=await fetch('/api/admin/trainees/'+id+'/orientation',{
-   method:'POST',headers:auth(),body:JSON.stringify({completed,assigned_instructor})
+   method:'POST',
+   headers:auth(),
+   body:JSON.stringify({completed,assigned_instructor})
  });
  const d=await r.json().catch(()=>({}));
- if(!r.ok){alert(d.error||'オリエンテーション状態を変更できませんでした');return}
+ if(!r.ok){
+   alert(d.error||'オリエンテーション状態を変更できませんでした');
+   return;
+ }
+
+ alert(completed
+   ? '✅ オリエンテーションを完了にしました。\n担当教官：'+assigned_instructor
+   : 'オリエンテーションを未完了に戻しました。');
+
  await loadTrainees();
  await loadAdmin();
 }
