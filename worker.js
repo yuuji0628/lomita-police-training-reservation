@@ -1,4 +1,4 @@
-const APP_VERSION="2.57";
+const APP_VERSION="2.60";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -558,6 +558,25 @@ async function ensureInstructors(env) {
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
   `).run();
+}
+
+
+async function ensureInstructorAvailability(env){
+  await env.DB.prepare(`
+    CREATE TABLE IF NOT EXISTS instructor_availability(
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      instructor_name TEXT NOT NULL,
+      available_date TEXT NOT NULL,
+      start_time TEXT NOT NULL,
+      end_time TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(instructor_name,available_date,start_time,end_time)
+    )
+  `).run();
+}
+
+function isValidQuarterHourTime(v){
+  return /^(?:[01]\d|2[0-3]):(?:00|15|30|45)$/.test(String(v||""));
 }
 
 
@@ -3325,6 +3344,23 @@ textarea{min-height:90px}
   color:#0f203d;
   font-weight:800;
 }
+
+.availabilityWeekdays{display:grid;grid-template-columns:repeat(7,1fr);gap:4px}
+.availabilityWeekdays label{display:flex;align-items:center;justify-content:center;gap:2px;min-height:34px;border:1px solid #d8e0ea;border-radius:8px;background:#fff;font-size:10px;font-weight:900}
+.availabilityWeekdays input{width:auto;margin:0}
+.availabilityRow{padding:8px 0;border-bottom:1px solid #edf1f5}
+.availabilityRow:last-child{border-bottom:0}
+.availabilityDate{font-size:10px;font-weight:1000}
+.availabilityMeta{margin-top:2px;font-size:9px;color:#64748b}
+
+.availabilityModeTabs{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.availabilitySlotButtons{display:grid;grid-template-columns:repeat(4,1fr);gap:5px}
+.availabilitySlotBtn{
+  border:1px solid #cbd5e1;background:#fff;color:#0f203d;
+  border-radius:9px;padding:9px 4px;font-size:11px;font-weight:900;
+}
+.availabilitySlotBtn.selected{background:#0f2f57;color:#fff;border-color:#0f2f57}
+@media(max-width:420px){.availabilitySlotButtons{grid-template-columns:repeat(3,1fr)}}
 </style>
 </style></head><body>${body}<script>${script}</script></body></html>`, {headers:{"content-type":"text/html; charset=utf-8"}});
 
@@ -4207,6 +4243,63 @@ const ADMIN_BODY = `
      <div id="instructorMsg"></div>
    </div>
    <div id="instructorList"><div class="empty">教官を読み込んでいます...</div></div>
+
+   <div class="card" style="margin-top:12px">
+     <div class="title" style="font-size:16px">空き時間をまとめて登録</div>
+     <div class="sub" style="margin:6px 0 10px">教官・日付範囲・時間帯を選ぶだけで、まとめて登録できます。</div>
+
+     <div class="field">
+       <label>教官 *</label>
+       <select id="availabilityInstructor"><option value="">教官を選択...</option></select>
+     </div>
+
+     <div class="grid2">
+       <div class="field"><label>開始日 *</label><input id="availabilityStartDate" type="date"></div>
+       <div class="field"><label>終了日</label><input id="availabilityEndDate" type="date"></div>
+     </div>
+
+     <div class="sub" style="margin:2px 0 5px">登録方法</div>
+     <div class="availabilityModeTabs">
+       <button type="button" id="availabilityModeSlots" class="btn small dark">開始時刻を複数選ぶ</button>
+       <button type="button" id="availabilityModeRange" class="btn small">時間帯で選ぶ</button>
+     </div>
+
+     <div id="availabilitySlotMode" style="margin-top:8px">
+       <div class="sub" style="margin-bottom:5px">開始時刻をタップ（複数選択可）</div>
+       <div id="availabilitySlotButtons" class="availabilitySlotButtons"></div>
+       <div class="sub" style="margin-top:5px">例：21:00〜 / 21:30〜 / 22:00〜</div>
+     </div>
+
+     <div id="availabilityRangeMode" style="display:none;margin-top:8px">
+
+     <div class="grid2" style="margin-top:7px">
+       <div class="field"><label>開始時間 *</label><select id="availabilityStartTime"><option value="">選択</option><option value="00:00">00:00</option><option value="00:15">00:15</option><option value="00:30">00:30</option><option value="00:45">00:45</option><option value="01:00">01:00</option><option value="01:15">01:15</option><option value="01:30">01:30</option><option value="01:45">01:45</option><option value="02:00">02:00</option><option value="02:15">02:15</option><option value="02:30">02:30</option><option value="02:45">02:45</option><option value="03:00">03:00</option><option value="03:15">03:15</option><option value="03:30">03:30</option><option value="03:45">03:45</option><option value="04:00">04:00</option><option value="04:15">04:15</option><option value="04:30">04:30</option><option value="04:45">04:45</option><option value="05:00">05:00</option><option value="05:15">05:15</option><option value="05:30">05:30</option><option value="05:45">05:45</option><option value="06:00">06:00</option><option value="06:15">06:15</option><option value="06:30">06:30</option><option value="06:45">06:45</option><option value="07:00">07:00</option><option value="07:15">07:15</option><option value="07:30">07:30</option><option value="07:45">07:45</option><option value="08:00">08:00</option><option value="08:15">08:15</option><option value="08:30">08:30</option><option value="08:45">08:45</option><option value="09:00">09:00</option><option value="09:15">09:15</option><option value="09:30">09:30</option><option value="09:45">09:45</option><option value="10:00">10:00</option><option value="10:15">10:15</option><option value="10:30">10:30</option><option value="10:45">10:45</option><option value="11:00">11:00</option><option value="11:15">11:15</option><option value="11:30">11:30</option><option value="11:45">11:45</option><option value="12:00">12:00</option><option value="12:15">12:15</option><option value="12:30">12:30</option><option value="12:45">12:45</option><option value="13:00">13:00</option><option value="13:15">13:15</option><option value="13:30">13:30</option><option value="13:45">13:45</option><option value="14:00">14:00</option><option value="14:15">14:15</option><option value="14:30">14:30</option><option value="14:45">14:45</option><option value="15:00">15:00</option><option value="15:15">15:15</option><option value="15:30">15:30</option><option value="15:45">15:45</option><option value="16:00">16:00</option><option value="16:15">16:15</option><option value="16:30">16:30</option><option value="16:45">16:45</option><option value="17:00">17:00</option><option value="17:15">17:15</option><option value="17:30">17:30</option><option value="17:45">17:45</option><option value="18:00">18:00</option><option value="18:15">18:15</option><option value="18:30">18:30</option><option value="18:45">18:45</option><option value="19:00">19:00</option><option value="19:15">19:15</option><option value="19:30">19:30</option><option value="19:45">19:45</option><option value="20:00">20:00</option><option value="20:15">20:15</option><option value="20:30">20:30</option><option value="20:45">20:45</option><option value="21:00">21:00</option><option value="21:15">21:15</option><option value="21:30">21:30</option><option value="21:45">21:45</option><option value="22:00">22:00</option><option value="22:15">22:15</option><option value="22:30">22:30</option><option value="22:45">22:45</option><option value="23:00">23:00</option><option value="23:15">23:15</option><option value="23:30">23:30</option><option value="23:45">23:45</option></select></div>
+       <div class="field"><label>終了時間 *</label><select id="availabilityEndTime"><option value="">選択</option><option value="24:00">24:00</option><option value="00:00">00:00</option><option value="00:15">00:15</option><option value="00:30">00:30</option><option value="00:45">00:45</option><option value="01:00">01:00</option><option value="01:15">01:15</option><option value="01:30">01:30</option><option value="01:45">01:45</option><option value="02:00">02:00</option><option value="02:15">02:15</option><option value="02:30">02:30</option><option value="02:45">02:45</option><option value="03:00">03:00</option><option value="03:15">03:15</option><option value="03:30">03:30</option><option value="03:45">03:45</option><option value="04:00">04:00</option><option value="04:15">04:15</option><option value="04:30">04:30</option><option value="04:45">04:45</option><option value="05:00">05:00</option><option value="05:15">05:15</option><option value="05:30">05:30</option><option value="05:45">05:45</option><option value="06:00">06:00</option><option value="06:15">06:15</option><option value="06:30">06:30</option><option value="06:45">06:45</option><option value="07:00">07:00</option><option value="07:15">07:15</option><option value="07:30">07:30</option><option value="07:45">07:45</option><option value="08:00">08:00</option><option value="08:15">08:15</option><option value="08:30">08:30</option><option value="08:45">08:45</option><option value="09:00">09:00</option><option value="09:15">09:15</option><option value="09:30">09:30</option><option value="09:45">09:45</option><option value="10:00">10:00</option><option value="10:15">10:15</option><option value="10:30">10:30</option><option value="10:45">10:45</option><option value="11:00">11:00</option><option value="11:15">11:15</option><option value="11:30">11:30</option><option value="11:45">11:45</option><option value="12:00">12:00</option><option value="12:15">12:15</option><option value="12:30">12:30</option><option value="12:45">12:45</option><option value="13:00">13:00</option><option value="13:15">13:15</option><option value="13:30">13:30</option><option value="13:45">13:45</option><option value="14:00">14:00</option><option value="14:15">14:15</option><option value="14:30">14:30</option><option value="14:45">14:45</option><option value="15:00">15:00</option><option value="15:15">15:15</option><option value="15:30">15:30</option><option value="15:45">15:45</option><option value="16:00">16:00</option><option value="16:15">16:15</option><option value="16:30">16:30</option><option value="16:45">16:45</option><option value="17:00">17:00</option><option value="17:15">17:15</option><option value="17:30">17:30</option><option value="17:45">17:45</option><option value="18:00">18:00</option><option value="18:15">18:15</option><option value="18:30">18:30</option><option value="18:45">18:45</option><option value="19:00">19:00</option><option value="19:15">19:15</option><option value="19:30">19:30</option><option value="19:45">19:45</option><option value="20:00">20:00</option><option value="20:15">20:15</option><option value="20:30">20:30</option><option value="20:45">20:45</option><option value="21:00">21:00</option><option value="21:15">21:15</option><option value="21:30">21:30</option><option value="21:45">21:45</option><option value="22:00">22:00</option><option value="22:15">22:15</option><option value="22:30">22:30</option><option value="22:45">22:45</option><option value="23:00">23:00</option><option value="23:15">23:15</option><option value="23:30">23:30</option><option value="23:45">23:45</option></select></div>
+     </div>
+
+     <div class="sub" style="margin:2px 0 5px">登録する曜日</div>
+     <div class="availabilityWeekdays">
+       <label><input type="checkbox" class="availabilityWeekday" value="1" checked>月</label>
+       <label><input type="checkbox" class="availabilityWeekday" value="2" checked>火</label>
+       <label><input type="checkbox" class="availabilityWeekday" value="3" checked>水</label>
+       <label><input type="checkbox" class="availabilityWeekday" value="4" checked>木</label>
+       <label><input type="checkbox" class="availabilityWeekday" value="5" checked>金</label>
+       <label><input type="checkbox" class="availabilityWeekday" value="6" checked>土</label>
+       <label><input type="checkbox" class="availabilityWeekday" value="0" checked>日</label>
+     </div>
+     </div>
+
+     <button id="saveAvailabilityBtn" class="btn primary" type="button" style="width:100%;margin-top:10px">空き時間を登録</button>
+     <div id="availabilityMsg"></div>
+   </div>
+
+   <div class="card" style="margin-top:12px">
+     <div class="between">
+       <div><div class="title" style="font-size:15px">登録済みの空き時間</div><div class="sub">今後の予定を一覧で確認できます。</div></div>
+       <button type="button" class="btn small" onclick="loadInstructorAvailability()">更新</button>
+     </div>
+     <div id="availabilityList" style="margin-top:7px"><div class="empty">読み込み中...</div></div>
+   </div>
  </div>
 
   <div id="programSection" style="display:none">
@@ -5132,6 +5225,8 @@ async function loadInstructors(){
  instructorRows=d;
  renderInstructors();
  refreshInstructorSelect();
+ refreshAvailabilityInstructorSelect();
+ await loadInstructorAvailability();
 }
 function renderInstructors(){
  const e=document.getElementById('instructorList');
@@ -5144,6 +5239,139 @@ function refreshInstructorSelect(selected){
  if(!sel)return;
  sel.innerHTML='<option value="">担当者なし</option>'+instructorRows.map(x=>'<option value="'+esc(x.name)+'">'+esc(x.name)+'</option>').join('');
  if(selected)sel.value=selected;
+}
+
+function refreshAvailabilityInstructorSelect(){
+ const sel=document.getElementById('availabilityInstructor');
+ if(!sel)return;
+ const current=sel.value;
+ sel.innerHTML='<option value="">教官を選択...</option>'+
+   instructorRows.map(x=>'<option value="'+esc(x.name)+'">'+esc(x.name)+'</option>').join('');
+ if(current)sel.value=current;
+}
+
+let availabilityMode='slots';
+let selectedAvailabilitySlots=[];
+
+function buildAvailabilitySlotButtons(){
+ const box=document.getElementById('availabilitySlotButtons');
+ if(!box)return;
+ const times=[];
+ for(let h=0;h<24;h++){
+   for(const m of [0,30]){
+     times.push(String(h).padStart(2,'0')+':'+String(m).padStart(2,'0'));
+   }
+ }
+ box.innerHTML=times.map(t=>
+   '<button type="button" class="availabilitySlotBtn" data-time="'+t+'">'+t+'〜</button>'
+ ).join('');
+ box.querySelectorAll('.availabilitySlotBtn').forEach(btn=>{
+   btn.addEventListener('click',()=>{
+     const t=btn.dataset.time;
+     if(selectedAvailabilitySlots.includes(t)){
+       selectedAvailabilitySlots=selectedAvailabilitySlots.filter(x=>x!==t);
+       btn.classList.remove('selected');
+     }else{
+       selectedAvailabilitySlots.push(t);
+       selectedAvailabilitySlots.sort();
+       btn.classList.add('selected');
+     }
+   });
+ });
+}
+
+function setAvailabilityMode(mode){
+ availabilityMode=mode==='range'?'range':'slots';
+ const slot=document.getElementById('availabilitySlotMode');
+ const range=document.getElementById('availabilityRangeMode');
+ const b1=document.getElementById('availabilityModeSlots');
+ const b2=document.getElementById('availabilityModeRange');
+ if(slot)slot.style.display=availabilityMode==='slots'?'block':'none';
+ if(range)range.style.display=availabilityMode==='range'?'block':'none';
+ if(b1)b1.className='btn small '+(availabilityMode==='slots'?'dark':'');
+ if(b2)b2.className='btn small '+(availabilityMode==='range'?'dark':'');
+}
+
+async function saveInstructorAvailability(){
+ const instructor=String(document.getElementById('availabilityInstructor')?.value||'').trim();
+ const start_date=String(document.getElementById('availabilityStartDate')?.value||'').trim();
+ const end_date=String(document.getElementById('availabilityEndDate')?.value||start_date).trim()||start_date;
+ const weekdays=[...document.querySelectorAll('.availabilityWeekday:checked')].map(x=>Number(x.value));
+
+ if(!instructor){noticeInAdmin('availabilityMsg','教官を選択してください','error');return}
+ if(!start_date){noticeInAdmin('availabilityMsg','開始日を選択してください','error');return}
+ if(!weekdays.length){noticeInAdmin('availabilityMsg','曜日を1つ以上選択してください','error');return}
+
+ const btn=document.getElementById('saveAvailabilityBtn');
+ btn.disabled=true;btn.textContent='登録中...';
+
+ try{
+   let payload={instructor,start_date,end_date,weekdays,mode:availabilityMode};
+
+   if(availabilityMode==='slots'){
+     if(!selectedAvailabilitySlots.length){
+       noticeInAdmin('availabilityMsg','開始時刻を1つ以上選択してください','error');
+       return;
+     }
+     payload.slots=[...selectedAvailabilitySlots];
+   }else{
+     const start_time=String(document.getElementById('availabilityStartTime')?.value||'').trim();
+     const end_time=String(document.getElementById('availabilityEndTime')?.value||'').trim();
+     if(!start_time||!end_time){
+       noticeInAdmin('availabilityMsg','開始時間と終了時間を選択してください','error');
+       return;
+     }
+     if(start_time>=end_time){
+       noticeInAdmin('availabilityMsg','終了時間は開始時間より後にしてください','error');
+       return;
+     }
+     payload.start_time=start_time;
+     payload.end_time=end_time;
+   }
+
+   const r=await fetch('/api/admin/instructor-availability/bulk',{
+     method:'POST',headers:auth(),body:JSON.stringify(payload)
+   });
+   const d=await r.json().catch(()=>({}));
+   if(!r.ok){
+     noticeInAdmin('availabilityMsg',d.error||'登録できませんでした','error');
+     return;
+   }
+
+   noticeInAdmin(
+     'availabilityMsg',
+     '空き時間を '+Number(d.inserted||0)+'件 登録しました',
+     'success'
+   );
+   await loadInstructorAvailability();
+ }finally{
+   btn.disabled=false;
+   btn.textContent='空き時間を登録';
+ }
+}
+
+async function loadInstructorAvailability(){
+ const box=document.getElementById('availabilityList');
+ if(!box)return;
+ const r=await fetch('/api/admin/instructor-availability',{headers:auth()});
+ const d=await r.json().catch(()=>[]);
+ if(!r.ok){box.innerHTML='<div class="notice error">'+esc(d.error||'取得できませんでした')+'</div>';return}
+ if(!Array.isArray(d)||!d.length){box.innerHTML='<div class="empty">今後の空き時間はまだ登録されていません。</div>';return}
+ box.innerHTML=d.map(x=>
+   '<div class="availabilityRow"><div class="between">'+
+     '<div><div class="availabilityDate">'+esc(x.available_date)+'　'+esc(x.start_time)+'〜'+esc(x.end_time)+'</div>'+
+     '<div class="availabilityMeta">'+esc(x.instructor_name)+'</div></div>'+
+     '<button type="button" class="btn small danger" onclick="deleteInstructorAvailability('+Number(x.id)+')">削除</button>'+
+   '</div></div>'
+ ).join('');
+}
+
+async function deleteInstructorAvailability(id){
+ if(!confirm('この空き時間を削除しますか？'))return;
+ const r=await fetch('/api/admin/instructor-availability/'+Number(id),{method:'DELETE',headers:auth()});
+ const d=await r.json().catch(()=>({}));
+ if(!r.ok){alert(d.error||'削除できませんでした');return}
+ await loadInstructorAvailability();
 }
 async function createInstructor(){
  const name=document.getElementById('instructorName').value.trim();
@@ -6140,6 +6368,13 @@ document.getElementById('trainingSaveBtn')?.addEventListener('click',saveTrainin
 document.getElementById('traineeSearch')?.addEventListener('input',renderTrainees);
 document.getElementById('createProgramBtn')?.addEventListener('click',createProgram);
 document.getElementById('createInstructorBtn')?.addEventListener('click',createInstructor);
+document.getElementById('saveAvailabilityBtn')?.addEventListener('click',saveInstructorAvailability);
+document.getElementById('availabilityModeSlots')?.addEventListener('click',()=>setAvailabilityMode('slots'));
+document.getElementById('availabilityModeRange')?.addEventListener('click',()=>setAvailabilityMode('range'));
+buildAvailabilitySlotButtons();
+setAvailabilityMode('slots');
+
+
 
 function zipNotice(t,c){
  const e=document.getElementById('zipUploadMsg');
@@ -7618,6 +7853,84 @@ async function handle(request, env) {
        survey:(surveyQ.results||[]).length
      }
    });
+ }
+
+ if(path==="/api/admin/instructor-availability" && method==="GET"){
+   await ensureInstructorAvailability(env);
+   const today=jstToday();
+   const {results}=await env.DB.prepare(`
+     SELECT id,instructor_name,available_date,start_time,end_time,created_at
+     FROM instructor_availability
+     WHERE available_date>=?
+     ORDER BY available_date,start_time,instructor_name COLLATE NOCASE
+     LIMIT 500
+   `).bind(today).all();
+   return json(results||[]);
+ }
+
+ if(path==="/api/admin/instructor-availability/bulk" && method==="POST"){
+   await ensureInstructorAvailability(env);
+   await ensureInstructors(env);
+   const b=await request.json().catch(()=>({}));
+
+   const instructor=String(b.instructor||"").trim();
+   const startDate=String(b.start_date||"").trim();
+   const endDate=String(b.end_date||startDate).trim()||startDate;
+   const weekdays=Array.isArray(b.weekdays)?b.weekdays.map(Number).filter(x=>x>=0&&x<=6):[];
+   const mode=String(b.mode||"range")==="slots"?"slots":"range";
+
+   if(!instructor)return json({error:"教官を選択してください"},400);
+   const validInstructor=await env.DB.prepare("SELECT id FROM instructors WHERE lower(name)=lower(?) LIMIT 1").bind(instructor).first();
+   if(!validInstructor)return json({error:"登録されていない教官です"},400);
+   if(!/^\d{4}-\d{2}-\d{2}$/.test(startDate)||!/^\d{4}-\d{2}-\d{2}$/.test(endDate))return json({error:"日付が不正です"},400);
+   if(startDate>endDate)return json({error:"終了日は開始日以降にしてください"},400);
+   if(!weekdays.length)return json({error:"曜日を1つ以上選択してください"},400);
+
+   let entries=[];
+   if(mode==="slots"){
+     const slots=Array.isArray(b.slots)?[...new Set(b.slots.map(x=>String(x||"").trim()))]:[];
+     if(!slots.length)return json({error:"開始時刻を1つ以上選択してください"},400);
+     if(slots.some(x=>!/^(?:[01]\d|2[0-3]):(?:00|30)$/.test(x)))return json({error:"開始時刻は30分単位で指定してください"},400);
+     entries=slots.map(start=>({start_time:start,end_time:""}));
+   }else{
+     const startTime=String(b.start_time||"").trim();
+     let endTime=String(b.end_time||"").trim();
+     if(endTime==="24:00")endTime="23:59";
+     if(!isValidQuarterHourTime(startTime) && !/^(?:[01]\d|2[0-3]):(?:00|15|30|45)$/.test(startTime))return json({error:"開始時間が不正です"},400);
+     if(endTime!=="23:59" && !isValidQuarterHourTime(endTime))return json({error:"終了時間が不正です"},400);
+     if(startTime>=endTime)return json({error:"終了時間は開始時間より後にしてください"},400);
+     entries=[{start_time:startTime,end_time:endTime==="23:59"?"24:00":endTime}];
+   }
+
+   const start=new Date(startDate+"T00:00:00Z");
+   const end=new Date(endDate+"T00:00:00Z");
+   const maxDays=Math.floor((end-start)/86400000)+1;
+   if(maxDays>62)return json({error:"一度に登録できる期間は最大62日です"},400);
+
+   let inserted=0,skipped=0;
+   for(let t=start.getTime();t<=end.getTime();t+=86400000){
+     const d=new Date(t);
+     if(!weekdays.includes(d.getUTCDay()))continue;
+     const date=d.toISOString().slice(0,10);
+
+     for(const e of entries){
+       const r=await env.DB.prepare(`
+         INSERT OR IGNORE INTO instructor_availability(
+           instructor_name,available_date,start_time,end_time
+         ) VALUES(?,?,?,?)
+       `).bind(instructor,date,e.start_time,e.end_time).run();
+       if(Number(r.meta?.changes||0)>0)inserted++; else skipped++;
+     }
+   }
+
+   return json({ok:true,inserted,skipped,mode});
+ }
+
+ let availabilityDeleteMatch=path.match(/^\/api\/admin\/instructor-availability\/(\d+)$/);
+ if(availabilityDeleteMatch && method==="DELETE"){
+   await ensureInstructorAvailability(env);
+   await env.DB.prepare("DELETE FROM instructor_availability WHERE id=?").bind(Number(availabilityDeleteMatch[1])).run();
+   return json({ok:true});
  }
 
  if(path==="/api/admin/instructors" && method==="GET"){
