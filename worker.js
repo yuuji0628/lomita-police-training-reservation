@@ -1,4 +1,4 @@
-const APP_VERSION="2.64";
+const APP_VERSION="2.65";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -4649,29 +4649,161 @@ async function testDiscordWebhook(){
 }
 function openManageMenu(){setTimeout(checkDiscordWebhookStatus,150);setTimeout(loadAdminTrainingPolicy,150);setTimeout(loadSurveyDeleteManager,150);document.getElementById('manageModal').classList.add('open');setTimeout(()=>loadBuildStatus(),150)}
 async function openAvailabilityFromMenu(){
- const btn=document.getElementById('availabilityMenu224');
- const original=btn?.innerHTML||'📅 空き時間を登録';
- if(btn){
-   btn.disabled=true;
-   btn.innerHTML='⏳ 読み込み中...';
- }
+ const existing=document.getElementById('availabilityModalCore265');
+ if(existing)existing.remove();
+
+ const modal=document.createElement('div');
+ modal.id='availabilityModalCore265';
+ modal.className='modal open';
+ modal.innerHTML=
+   '<div class="sheet">'+
+     '<button class="btn small" style="float:right" onclick="document.getElementById(\'availabilityModalCore265\')?.remove()">閉じる</button>'+
+     '<div class="title">教官の空き時間管理</div>'+
+     '<div class="sub" style="margin-top:4px">複数開始時刻または時間帯でまとめて登録できます</div>'+
+     '<div id="availabilityCoreBody265"><div class="empty">読み込み中...</div></div>'+
+   '</div>';
+ document.body.appendChild(modal);
+
+ const body=modal.querySelector('#availabilityCoreBody265');
+
  try{
-   for(let i=0;i<50;i++){
-     if(typeof window.openInstructorAvailability221==='function'){
-       window.openInstructorAvailability221();
-       return;
+   const [insRes,avRes]=await Promise.all([
+     fetch('/api/admin/instructors',{headers:auth(),cache:'no-store'}),
+     fetch('/api/admin/instructor-availability',{headers:auth(),cache:'no-store'})
+   ]);
+   const instructors=await insRes.json().catch(()=>[]);
+   const availability=await avRes.json().catch(()=>[]);
+   if(!insRes.ok)throw new Error('教官一覧を取得できませんでした');
+   if(!avRes.ok)throw new Error('空き時間一覧を取得できませんでした');
+
+   const rows=Array.isArray(availability)?availability:(availability.availability||[]);
+   const ins=Array.isArray(instructors)?instructors:(instructors.instructors||[]);
+
+   body.innerHTML=
+     '<div class="card">'+
+       '<div class="field"><label>教官</label><select id="acInstructor265"><option value="">教官を選択...</option>'+
+         ins.map(x=>'<option value="'+esc(x.name)+'">'+esc(x.name)+'</option>').join('')+
+       '</select></div>'+
+       '<div class="field"><label>日付</label><input id="acDate265" type="date"></div>'+
+       '<div class="row" style="margin:8px 0">'+
+         '<button id="acModeSlots265" class="btn small dark" type="button">開始時刻を複数選ぶ</button>'+
+         '<button id="acModeRange265" class="btn small" type="button">時間帯で選ぶ</button>'+
+       '</div>'+
+       '<div id="acSlotsWrap265">'+
+         '<div class="sub">空いている開始時刻を複数タップ</div>'+
+         '<div id="acSlotGrid265" style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:7px"></div>'+
+         '<div id="acCount265" class="sub" style="margin-top:6px">0件選択中</div>'+
+       '</div>'+
+       '<div id="acRangeWrap265" style="display:none">'+
+         '<div class="formgrid">'+
+           '<div class="field"><label>開始</label><select id="acStart265"></select></div>'+
+           '<div class="field"><label>終了</label><select id="acEnd265"></select></div>'+
+         '</div>'+
+         '<div class="sub">例：21:00〜24:00</div>'+
+       '</div>'+
+       '<div class="field"><label>メモ（任意）</label><input id="acNote265"></div>'+
+       '<button id="acSave265" class="btn primary" type="button" style="width:100%">選択した空き時間をまとめて登録</button>'+
+       '<div id="acMsg265"></div>'+
+     '</div>'+
+     '<div class="section">登録済みの空き時間</div>'+
+     '<div id="acList265"></div>';
+
+   let mode='slots';
+   let selected=new Set();
+
+   const setMode=(m)=>{
+     mode=m;
+     body.querySelector('#acSlotsWrap265').style.display=m==='slots'?'block':'none';
+     body.querySelector('#acRangeWrap265').style.display=m==='range'?'block':'none';
+     body.querySelector('#acModeSlots265').className='btn small '+(m==='slots'?'dark':'');
+     body.querySelector('#acModeRange265').className='btn small '+(m==='range'?'dark':'');
+     body.querySelector('#acSave265').textContent=m==='slots'?'選択した空き時間をまとめて登録':'時間帯を登録';
+   };
+
+   body.querySelector('#acModeSlots265').onclick=()=>setMode('slots');
+   body.querySelector('#acModeRange265').onclick=()=>setMode('range');
+
+   const slotGrid=body.querySelector('#acSlotGrid265');
+   const slotTimes=[];
+   for(let h=0;h<24;h++)for(const m of [0,30])slotTimes.push(String(h).padStart(2,'0')+':'+String(m).padStart(2,'0'));
+   slotGrid.innerHTML=slotTimes.map(t=>
+     '<button type="button" class="btn small acSlotBtn265" data-time="'+t+'">'+t+'〜</button>'
+   ).join('');
+
+   const refreshCount=()=>{
+     body.querySelector('#acCount265').textContent=selected.size+'件選択中'+(selected.size?'：'+[...selected].sort().join(' / '):'');
+   };
+
+   slotGrid.querySelectorAll('.acSlotBtn265').forEach(btn=>{
+     btn.onclick=()=>{
+       const t=btn.dataset.time;
+       if(selected.has(t)){selected.delete(t);btn.classList.remove('dark')}
+       else{selected.add(t);btn.classList.add('dark')}
+       refreshCount();
+     };
+   });
+
+   const quarter=[];
+   for(let h=0;h<24;h++)for(const m of [0,15,30,45]){
+     const t=String(h).padStart(2,'0')+':'+String(m).padStart(2,'0');
+     quarter.push('<option value="'+t+'">'+t+'</option>');
+   }
+   body.querySelector('#acStart265').innerHTML='<option value="">開始</option>'+quarter.join('');
+   body.querySelector('#acEnd265').innerHTML='<option value="">終了</option>'+quarter.join('')+'<option value="24:00">24:00</option>';
+
+   const renderList=(data)=>{
+     const box=body.querySelector('#acList265');
+     if(!Array.isArray(data)||!data.length){
+       box.innerHTML='<div class="empty">登録済みの空き時間はありません。</div>';return;
      }
-     await new Promise(r=>setTimeout(r,100));
-   }
-   alert('空き時間管理を読み込めませんでした。ページを再読み込みしてください。');
- }finally{
-   if(btn){
-     btn.disabled=false;
-     btn.innerHTML=original;
-   }
+     box.innerHTML=data.map(x=>
+       '<div class="card" style="padding:10px"><div class="between">'+
+       '<div><b>'+esc(x.instructor_name||'')+'</b><div class="sub">'+esc(x.available_date||'')+' '+esc(x.start_time||'')+'〜'+esc(x.end_time||'')+'</div></div>'+
+       '<button type="button" class="btn small danger acDel265" data-id="'+Number(x.id||0)+'">削除</button>'+
+       '</div></div>'
+     ).join('');
+     box.querySelectorAll('.acDel265').forEach(b=>{
+       b.onclick=async()=>{
+         if(!confirm('この空き時間を削除しますか？'))return;
+         const r=await fetch('/api/admin/instructor-availability/'+Number(b.dataset.id),{method:'DELETE',headers:auth()});
+         if(r.ok)openAvailabilityFromMenu();
+       };
+     });
+   };
+   renderList(rows);
+
+   body.querySelector('#acSave265').onclick=async()=>{
+     const instructor=String(body.querySelector('#acInstructor265').value||'').trim();
+     const date=String(body.querySelector('#acDate265').value||'').trim();
+     if(!instructor)return alert('教官を選択してください');
+     if(!date)return alert('日付を選択してください');
+
+     const payload={instructor,start_date:date,end_date:date,weekdays:[new Date(date+'T00:00:00Z').getUTCDay()],mode};
+
+     if(mode==='slots'){
+       if(!selected.size)return alert('開始時刻を1つ以上選択してください');
+       payload.slots=[...selected];
+     }else{
+       const st=body.querySelector('#acStart265').value;
+       const et=body.querySelector('#acEnd265').value;
+       if(!st||!et)return alert('開始時刻と終了時刻を選択してください');
+       if(st>=et)return alert('終了時刻は開始時刻より後にしてください');
+       payload.start_time=st;
+       payload.end_time=et;
+     }
+
+     const r=await fetch('/api/admin/instructor-availability/bulk',{method:'POST',headers:auth(),body:JSON.stringify(payload)});
+     const d=await r.json().catch(()=>({}));
+     if(!r.ok)return alert(d.error||'登録できませんでした');
+     alert(Number(d.inserted||0)+'件登録しました');
+     openAvailabilityFromMenu();
+   };
+
+   refreshCount();
+ }catch(e){
+   body.innerHTML='<div class="notice error">'+esc(e?.message||'空き時間管理を読み込めませんでした')+'</div>';
  }
-}
-function closeManageMenu(){document.getElementById('manageModal').classList.remove('open')}
+}function closeManageMenu(){document.getElementById('manageModal').classList.remove('open')}
 let adminReservationFilter='all';
 let traineeDashboardFilter='all';
 let dashboardToday='';
