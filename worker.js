@@ -1,4 +1,4 @@
-const APP_VERSION="2.55";
+const APP_VERSION="2.57";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -3315,6 +3315,16 @@ textarea{min-height:90px}
 }
 
 
+
+.quarterHourTimeSelect{
+  width:100%;
+  min-height:44px;
+  border:1px solid #cbd5e1;
+  border-radius:10px;
+  background:#fff;
+  color:#0f203d;
+  font-weight:800;
+}
 </style>
 </style></head><body>${body}<script>${script}</script></body></html>`, {headers:{"content-type":"text/html; charset=utf-8"}});
 
@@ -3444,27 +3454,27 @@ const PUBLIC_BODY = `
 <div id="booking" class="modal"><div class="sheet">
   <button class="btn small" style="float:right" onclick="closeBooking()">閉じる</button>
   <div class="title" id="bookTitle">研修申請</div>
-  <div class="sub" style="margin-top:4px">申請後、管理者が担当教官を選んで承認します。</div>
+  <div class="sub" style="margin-top:4px">申請後、管理者が担当教官を選んで承認します。</div><div class="sub" style="margin-top:4px">時間は15分単位（00・15・30・45分）から選択します。</div>
   <div id="bookingMsg"></div>
   <div style="margin-top:8px">
     <div style="font-weight:900;margin-bottom:4px">第1希望 <span style="color:#b42318;font-size:12px">必須</span></div>
     <div class="grid" style="grid-template-columns:1.35fr 1fr;gap:8px">
       <div class="field" style="margin:0"><label style="font-size:11px">日付</label><input id="preferredDate" type="date" required style="min-height:44px;font-size:15px;padding:9px 10px"></div>
-      <div class="field" style="margin:0"><label style="font-size:11px">時間</label><input id="preferredTime" type="time" required style="min-height:44px;font-size:15px;padding:9px 10px"></div>
+      <div class="field" style="margin:0"><label style="font-size:11px">時間</label><select id="preferredTime" class="quarterHourTimeSelect" style="min-height:44px;font-size:15px;padding:9px 10px"><option value="">選択</option><option value="00:00">00:00</option><option value="00:15">00:15</option><option value="00:30">00:30</option><option value="00:45">00:45</option><option value="01:00">01:00</option><option value="01:15">01:15</option><option value="01:30">01:30</option><option value="01:45">01:45</option><option value="02:00">02:00</option><option value="02:15">02:15</option><option value="02:30">02:30</option><option value="02:45">02:45</option><option value="03:00">03:00</option><option value="03:15">03:15</option><option value="03:30">03:30</option><option value="03:45">03:45</option><option value="04:00">04:00</option><option value="04:15">04:15</option><option value="04:30">04:30</option><option value="04:45">04:45</option><option value="05:00">05:00</option><option value="05:15">05:15</option><option value="05:30">05:30</option><option value="05:45">05:45</option><option value="06:00">06:00</option><option value="06:15">06:15</option><option value="06:30">06:30</option><option value="06:45">06:45</option><option value="07:00">07:00</option><option value="07:15">07:15</option><option value="07:30">07:30</option><option value="07:45">07:45</option><option value="08:00">08:00</option><option value="08:15">08:15</option><option value="08:30">08:30</option><option value="08:45">08:45</option><option value="09:00">09:00</option><option value="09:15">09:15</option><option value="09:30">09:30</option><option value="09:45">09:45</option><option value="10:00">10:00</option><option value="10:15">10:15</option><option value="10:30">10:30</option><option value="10:45">10:45</option><option value="11:00">11:00</option><option value="11:15">11:15</option><option value="11:30">11:30</option><option value="11:45">11:45</option><option value="12:00">12:00</option><option value="12:15">12:15</option><option value="12:30">12:30</option><option value="12:45">12:45</option><option value="13:00">13:00</option><option value="13:15">13:15</option><option value="13:30">13:30</option><option value="13:45">13:45</option><option value="14:00">14:00</option><option value="14:15">14:15</option><option value="14:30">14:30</option><option value="14:45">14:45</option><option value="15:00">15:00</option><option value="15:15">15:15</option><option value="15:30">15:30</option><option value="15:45">15:45</option><option value="16:00">16:00</option><option value="16:15">16:15</option><option value="16:30">16:30</option><option value="16:45">16:45</option><option value="17:00">17:00</option><option value="17:15">17:15</option><option value="17:30">17:30</option><option value="17:45">17:45</option><option value="18:00">18:00</option><option value="18:15">18:15</option><option value="18:30">18:30</option><option value="18:45">18:45</option><option value="19:00">19:00</option><option value="19:15">19:15</option><option value="19:30">19:30</option><option value="19:45">19:45</option><option value="20:00">20:00</option><option value="20:15">20:15</option><option value="20:30">20:30</option><option value="20:45">20:45</option><option value="21:00">21:00</option><option value="21:15">21:15</option><option value="21:30">21:30</option><option value="21:45">21:45</option><option value="22:00">22:00</option><option value="22:15">22:15</option><option value="22:30">22:30</option><option value="22:45">22:45</option><option value="23:00">23:00</option><option value="23:15">23:15</option><option value="23:30">23:30</option><option value="23:45">23:45</option></select></div>
     </div>
   </div>
   <div style="margin-top:7px;padding-top:7px;border-top:1px solid #e5e7eb">
     <div style="font-weight:900;margin-bottom:4px">第2希望 <span class="sub" style="font-size:11px">任意</span></div>
     <div class="grid" style="grid-template-columns:1.35fr 1fr;gap:8px">
       <div class="field" style="margin:0"><label style="font-size:11px">日付</label><input id="preferredDate2" type="date" style="min-height:44px;font-size:15px;padding:9px 10px"></div>
-      <div class="field" style="margin:0"><label style="font-size:11px">時間</label><input id="preferredTime2" type="time" style="min-height:44px;font-size:15px;padding:9px 10px"></div>
+      <div class="field" style="margin:0"><label style="font-size:11px">時間</label><select id="preferredTime2" class="quarterHourTimeSelect" style="min-height:44px;font-size:15px;padding:9px 10px"><option value="">選択</option><option value="00:00">00:00</option><option value="00:15">00:15</option><option value="00:30">00:30</option><option value="00:45">00:45</option><option value="01:00">01:00</option><option value="01:15">01:15</option><option value="01:30">01:30</option><option value="01:45">01:45</option><option value="02:00">02:00</option><option value="02:15">02:15</option><option value="02:30">02:30</option><option value="02:45">02:45</option><option value="03:00">03:00</option><option value="03:15">03:15</option><option value="03:30">03:30</option><option value="03:45">03:45</option><option value="04:00">04:00</option><option value="04:15">04:15</option><option value="04:30">04:30</option><option value="04:45">04:45</option><option value="05:00">05:00</option><option value="05:15">05:15</option><option value="05:30">05:30</option><option value="05:45">05:45</option><option value="06:00">06:00</option><option value="06:15">06:15</option><option value="06:30">06:30</option><option value="06:45">06:45</option><option value="07:00">07:00</option><option value="07:15">07:15</option><option value="07:30">07:30</option><option value="07:45">07:45</option><option value="08:00">08:00</option><option value="08:15">08:15</option><option value="08:30">08:30</option><option value="08:45">08:45</option><option value="09:00">09:00</option><option value="09:15">09:15</option><option value="09:30">09:30</option><option value="09:45">09:45</option><option value="10:00">10:00</option><option value="10:15">10:15</option><option value="10:30">10:30</option><option value="10:45">10:45</option><option value="11:00">11:00</option><option value="11:15">11:15</option><option value="11:30">11:30</option><option value="11:45">11:45</option><option value="12:00">12:00</option><option value="12:15">12:15</option><option value="12:30">12:30</option><option value="12:45">12:45</option><option value="13:00">13:00</option><option value="13:15">13:15</option><option value="13:30">13:30</option><option value="13:45">13:45</option><option value="14:00">14:00</option><option value="14:15">14:15</option><option value="14:30">14:30</option><option value="14:45">14:45</option><option value="15:00">15:00</option><option value="15:15">15:15</option><option value="15:30">15:30</option><option value="15:45">15:45</option><option value="16:00">16:00</option><option value="16:15">16:15</option><option value="16:30">16:30</option><option value="16:45">16:45</option><option value="17:00">17:00</option><option value="17:15">17:15</option><option value="17:30">17:30</option><option value="17:45">17:45</option><option value="18:00">18:00</option><option value="18:15">18:15</option><option value="18:30">18:30</option><option value="18:45">18:45</option><option value="19:00">19:00</option><option value="19:15">19:15</option><option value="19:30">19:30</option><option value="19:45">19:45</option><option value="20:00">20:00</option><option value="20:15">20:15</option><option value="20:30">20:30</option><option value="20:45">20:45</option><option value="21:00">21:00</option><option value="21:15">21:15</option><option value="21:30">21:30</option><option value="21:45">21:45</option><option value="22:00">22:00</option><option value="22:15">22:15</option><option value="22:30">22:30</option><option value="22:45">22:45</option><option value="23:00">23:00</option><option value="23:15">23:15</option><option value="23:30">23:30</option><option value="23:45">23:45</option></select></div>
     </div>
   </div>
   <div style="margin-top:7px;padding-top:7px;border-top:1px solid #e5e7eb">
     <div style="font-weight:900;margin-bottom:4px">第3希望 <span class="sub" style="font-size:11px">任意</span></div>
     <div class="grid" style="grid-template-columns:1.35fr 1fr;gap:8px">
       <div class="field" style="margin:0"><label style="font-size:11px">日付</label><input id="preferredDate3" type="date" style="min-height:44px;font-size:15px;padding:9px 10px"></div>
-      <div class="field" style="margin:0"><label style="font-size:11px">時間</label><input id="preferredTime3" type="time" style="min-height:44px;font-size:15px;padding:9px 10px"></div>
+      <div class="field" style="margin:0"><label style="font-size:11px">時間</label><select id="preferredTime3" class="quarterHourTimeSelect" style="min-height:44px;font-size:15px;padding:9px 10px"><option value="">選択</option><option value="00:00">00:00</option><option value="00:15">00:15</option><option value="00:30">00:30</option><option value="00:45">00:45</option><option value="01:00">01:00</option><option value="01:15">01:15</option><option value="01:30">01:30</option><option value="01:45">01:45</option><option value="02:00">02:00</option><option value="02:15">02:15</option><option value="02:30">02:30</option><option value="02:45">02:45</option><option value="03:00">03:00</option><option value="03:15">03:15</option><option value="03:30">03:30</option><option value="03:45">03:45</option><option value="04:00">04:00</option><option value="04:15">04:15</option><option value="04:30">04:30</option><option value="04:45">04:45</option><option value="05:00">05:00</option><option value="05:15">05:15</option><option value="05:30">05:30</option><option value="05:45">05:45</option><option value="06:00">06:00</option><option value="06:15">06:15</option><option value="06:30">06:30</option><option value="06:45">06:45</option><option value="07:00">07:00</option><option value="07:15">07:15</option><option value="07:30">07:30</option><option value="07:45">07:45</option><option value="08:00">08:00</option><option value="08:15">08:15</option><option value="08:30">08:30</option><option value="08:45">08:45</option><option value="09:00">09:00</option><option value="09:15">09:15</option><option value="09:30">09:30</option><option value="09:45">09:45</option><option value="10:00">10:00</option><option value="10:15">10:15</option><option value="10:30">10:30</option><option value="10:45">10:45</option><option value="11:00">11:00</option><option value="11:15">11:15</option><option value="11:30">11:30</option><option value="11:45">11:45</option><option value="12:00">12:00</option><option value="12:15">12:15</option><option value="12:30">12:30</option><option value="12:45">12:45</option><option value="13:00">13:00</option><option value="13:15">13:15</option><option value="13:30">13:30</option><option value="13:45">13:45</option><option value="14:00">14:00</option><option value="14:15">14:15</option><option value="14:30">14:30</option><option value="14:45">14:45</option><option value="15:00">15:00</option><option value="15:15">15:15</option><option value="15:30">15:30</option><option value="15:45">15:45</option><option value="16:00">16:00</option><option value="16:15">16:15</option><option value="16:30">16:30</option><option value="16:45">16:45</option><option value="17:00">17:00</option><option value="17:15">17:15</option><option value="17:30">17:30</option><option value="17:45">17:45</option><option value="18:00">18:00</option><option value="18:15">18:15</option><option value="18:30">18:30</option><option value="18:45">18:45</option><option value="19:00">19:00</option><option value="19:15">19:15</option><option value="19:30">19:30</option><option value="19:45">19:45</option><option value="20:00">20:00</option><option value="20:15">20:15</option><option value="20:30">20:30</option><option value="20:45">20:45</option><option value="21:00">21:00</option><option value="21:15">21:15</option><option value="21:30">21:30</option><option value="21:45">21:45</option><option value="22:00">22:00</option><option value="22:15">22:15</option><option value="22:30">22:30</option><option value="22:45">22:45</option><option value="23:00">23:00</option><option value="23:15">23:15</option><option value="23:30">23:30</option><option value="23:45">23:45</option></select></div>
     </div>
   </div>
   <div class="field"><label>備考</label><textarea id="note" maxlength="250" placeholder="必要な場合のみ入力"></textarea></div>
@@ -8599,6 +8609,120 @@ async function runPendingApprovalAnnouncement(env){
   return {ok:true,total:rows.length,sent:rows.length};
 }
 
+
+async function ensureInstructorReminderLog(env){
+  await env.DB.prepare(`
+    CREATE TABLE IF NOT EXISTS instructor_reminder_log(
+      reservation_id INTEGER NOT NULL,
+      reminder_type TEXT NOT NULL,
+      sent_at TEXT NOT NULL,
+      PRIMARY KEY(reservation_id,reminder_type)
+    )
+  `).run();
+}
+
+async function sendInstructorChannelReminder(env,row,type){
+  const webhook=String(env.DISCORD_TRAINING_WEBHOOK_URL||"").trim();
+  if(!webhook)return {ok:false,skipped:true,reason:"webhook_not_configured"};
+
+  const roleId=String(env.DISCORD_TRAINING_ROLE_ID||"").trim();
+  const mention=roleId?`<@&${roleId}> `:"";
+  const typeMap={
+    before30:["🕒","研修開始30分前です","30分後に研修開始です。担当教官は準備状況をご確認ください。"],
+    before10:["⏰","研修開始10分前です","まもなく研修開始です。担当教官は研修開始の準備をお願いします。"],
+    start:["🚨","研修開始時刻です","研修開始時刻になりました。担当教官は開始状況をご確認ください。"],
+    late10:["🔴","研修開始時刻を10分過ぎています","まだ受講済みになっていません。担当教官または管理者は状況を確認してください。"]
+  };
+  const m=typeMap[type]||["🔔","研修のお知らせ","研修予定をご確認ください。"];
+  const dt=[row.confirmed_date,row.confirmed_time].filter(Boolean).join(" ");
+
+  const content=[
+    `${mention}${m[0]} **${m[1]}**`,
+    "",
+    `**研修**：${String(row.training_title||"研修")}`,
+    `**研修生**：${String(row.player_name||"研修生")}`,
+    `**開始日時**：${dt||"未設定"}`,
+    `**担当教官**：${String(row.assigned_instructor||"未設定")}`,
+    "",
+    m[2]
+  ].join("\n");
+
+  try{
+    const r=await fetch(webhook,{
+      method:"POST",
+      headers:{"content-type":"application/json"},
+      body:JSON.stringify({
+        content,
+        allowed_mentions:roleId?{roles:[roleId]}:{parse:[]}
+      })
+    });
+    return {ok:r.ok,status:r.status};
+  }catch(err){
+    return {ok:false,error:String(err?.message||err)};
+  }
+}
+
+async function runInstructorChannelReminders(env){
+  await ensureReservationPreferredSchedule(env);
+  await ensureInstructorReminderLog(env);
+
+  const now=Date.now();
+  const p=jstParts(new Date(now));
+  const today=`${p.y}-${p.m}-${p.d}`;
+
+  const q=await env.DB.prepare(`
+    SELECT
+      r.id,
+      r.player_name,
+      r.confirmed_date,
+      r.confirmed_time,
+      r.assigned_instructor,
+      r.status,
+      COALESCE(t.title,'研修') AS training_title
+    FROM reservations r
+    LEFT JOIN trainings t ON t.id=r.training_id
+    WHERE r.status='reserved'
+      AND r.confirmed_date=?
+      AND trim(COALESCE(r.confirmed_time,''))<>''
+      AND trim(COALESCE(r.assigned_instructor,''))<>''
+    ORDER BY r.confirmed_time,r.id
+  `).bind(today).all();
+
+  const rows=Array.isArray(q?.results)?q.results:[];
+  let sent=0,failed=0;
+
+  for(const row of rows){
+    const target=combineJstDateTime(row.confirmed_date,row.confirmed_time);
+    if(target===null)continue;
+    const diff=target-now;
+
+    let type="";
+    // 5分cronで拾えるよう、各通知の受付窓を重複しないように分ける
+    if(diff>15*60*1000 && diff<=35*60*1000)type="before30";
+    else if(diff>0 && diff<=15*60*1000)type="before10";
+    else if(diff<=0 && diff>-10*60*1000)type="start";
+    else if(diff<=-10*60*1000 && diff>-30*60*1000)type="late10";
+    else continue;
+
+    const exists=await env.DB.prepare(
+      "SELECT 1 AS ok FROM instructor_reminder_log WHERE reservation_id=? AND reminder_type=?"
+    ).bind(Number(row.id),type).first();
+    if(exists)continue;
+
+    const result=await sendInstructorChannelReminder(env,row,type);
+    if(result.ok){
+      await env.DB.prepare(
+        "INSERT OR IGNORE INTO instructor_reminder_log(reservation_id,reminder_type,sent_at) VALUES(?,?,?)"
+      ).bind(Number(row.id),type,new Date().toISOString()).run();
+      sent++;
+    }else{
+      failed++;
+    }
+  }
+
+  return {date:today,total:rows.length,sent,failed};
+}
+
 async function runTrainingReminder(env){
   await ensureReservationPreferredSchedule(env);
   await ensureReservationNotifications(env);
@@ -8647,13 +8771,24 @@ async function runTrainingReminder(env){
 }
 
 async function scheduled(event,env,ctx){
+  const cron=String(event?.cron||"");
   const task=(async()=>{
+    // 5分ごと：担当教官向けの研修開始リマインドだけ確認
+    if(cron==="*/5 * * * *"){
+      await runInstructorChannelReminders(env);
+      return;
+    }
+
+    // 1時間ごと：既存の定期処理
     await resetExpiredTrainingCycles(env);
     await runTrainingReminder(env);
     await runSameDayReminder(env);
     await runExpiredPendingReservations(env);
     await runPendingApprovalAnnouncement(env);
     await runOrientationPendingAnnouncement(env);
+
+    // 念のため毎時処理でも開始リマインドを確認
+    await runInstructorChannelReminders(env);
   })();
   if(ctx && typeof ctx.waitUntil==="function")ctx.waitUntil(task);
   else await task;
