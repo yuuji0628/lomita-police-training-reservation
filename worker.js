@@ -1,4 +1,4 @@
-const APP_VERSION="2.66";
+const APP_VERSION="2.68";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -176,6 +176,7 @@ p{margin:0;color:#607286;line-height:1.8;font-size:14px}
   <h1>ただいまメンテナンス中です</h1>
   <p>研修管理システムは現在メンテナンスを行っています。<br>作業完了までしばらくお待ちください。</p>
   <div class="note">管理者によるメンテナンス解除後、自動的に通常利用へ戻ります。</div>
+  <div class="note" style="margin-top:8px">管理者は <b>/admin</b> から管理画面へ入れます。</div>
 </div>
 </body>
 </html>`;
@@ -4616,7 +4617,7 @@ async function login(){
      document.getElementById('loginMsg').innerHTML='<div class="notice error">'+(r.status===401?'パスワードが違います':'ログイン処理に失敗しました（HTTP '+r.status+'）')+'</div>';
      return;
    }
-   adminPassword='';showAdmin();await loadCurrentAdminRole();await loadAdmin();await loadReservationControl();
+   adminPassword=password;showAdmin();await loadCurrentAdminRole();await loadAdmin();await loadReservationControl();
  await loadAdminSurveys();scheduleAdminInitialRefresh();
  }finally{btn.disabled=false;btn.textContent='管理画面を開く'}
 }
@@ -4735,7 +4736,7 @@ async function loadMaintenanceMode(){
   const offBtn=document.getElementById('maintenanceOffBtn');
   if(!badge||!text)return;
   try{
-    const r=await fetch('/api/admin/maintenance',{headers:auth(),cache:'no-store'});
+    const r=await fetch('/api/maintenance',{cache:'no-store'});
     const d=await r.json().catch(()=>({}));
     if(!r.ok)throw new Error(d.error||'取得できませんでした');
     const enabled=!!d.enabled;
@@ -4753,25 +4754,61 @@ async function loadMaintenanceMode(){
   }
 }
 async function setMaintenanceMode(enabled){
-  const action=enabled?'メンテナンスモードをONにしますか？\n\n研修生側はすぐにメンテナンス画面へ切り替わります。':'メンテナンスモードをOFFにしますか？\n\n研修生側を通常運用へ戻します。';
+  const action=enabled
+    ? 'メンテナンスモードをONにしますか？\n\n研修生側はすぐにメンテナンス画面へ切り替わります。'
+    : 'メンテナンスモードをOFFにして通常運用へ戻しますか？';
   if(!confirm(action))return;
+
   const msgBox=document.getElementById('maintenanceMsg');
   if(msgBox)msgBox.innerHTML='<div class="notice">切り替え中...</div>';
-  try{
+
+  const send=async(headers)=>{
     const r=await fetch('/api/admin/maintenance',{
       method:'POST',
-      headers:auth(),
+      headers,
       body:JSON.stringify({enabled:!!enabled})
     });
     const d=await r.json().catch(()=>({}));
-    if(!r.ok)throw new Error(d.error||'切り替えに失敗しました');
-    if(msgBox)msgBox.innerHTML='<div class="notice success">'+(enabled?'メンテナンスモードをONにしました':'通常運用へ戻しました')+'</div>';
+    return {r,d};
+  };
+
+  try{
+    let result=await send(auth());
+
+    // Cookie認証が切れていても、管理パスワードを再入力すれば解除できる。
+    if(result.r.status===401){
+      const password=prompt(
+        enabled
+          ? '管理者認証が切れています。\n管理パスワードを入力してください。'
+          : '通常運用へ戻すため、管理パスワードを入力してください。'
+      );
+      if(!password){
+        if(msgBox)msgBox.innerHTML='<div class="notice error">切り替えをキャンセルしました</div>';
+        return;
+      }
+      adminPassword=password;
+      result=await send({
+        'content-type':'application/json',
+        'x-admin-password':password
+      });
+    }
+
+    if(!result.r.ok)throw new Error(result.d.error||'切り替えに失敗しました');
+
+    if(msgBox){
+      msgBox.innerHTML='<div class="notice success">'+
+        (enabled?'メンテナンスモードをONにしました':'✅ 通常運用へ戻しました')+
+        '</div>';
+    }
     await loadMaintenanceMode();
+
+    if(!enabled){
+      alert('✅ メンテナンスを解除しました。研修生側は通常利用できます。');
+    }
   }catch(e){
     if(msgBox)msgBox.innerHTML='<div class="notice error">'+esc(String(e?.message||e))+'</div>';
   }
-}
-async function openAvailabilityFromMenu(){
+}async function openAvailabilityFromMenu(){
  const existing=document.getElementById('availabilityModalCore265');
  if(existing)existing.remove();
 
