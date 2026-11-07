@@ -19,7 +19,7 @@ const json = (data, status = 200) => new Response(JSON.stringify(data), {
   }
 });
 
-const HOTFIX_VERSION = "2.60";
+const HOTFIX_VERSION = "2.61";
 
 async function syncDisplayedVersion(response){
   try{
@@ -841,34 +841,153 @@ async function syncDisplayedVersion(response){
   }
 
   async function openAvailability(){
-    const body=makeModal('availabilityModal221','教官の空き時間管理','開始時刻を選ぶと終了時刻は30分後に自動設定されます');
+    const body=makeModal(
+      'availabilityModal221',
+      '教官の空き時間管理',
+      '「開始時刻を複数選ぶ」または「時間帯で選ぶ」から登録できます'
+    );
     body.innerHTML='<div style="color:#75869a">読み込み中...</div>';
+
     try{
-      const r=await fetch('/api/admin/instructor-availability',{cache:'no-store'});const d=await r.json();
-      const opts=(d.instructors||[]).map(x=>'<option value="'+Number(x.id||0)+'" data-name="'+esc(x.name)+'">'+esc(x.name)+'</option>').join('');
-      body.innerHTML='<div style="background:#fff;border:1px solid #dbe4ed;border-radius:12px;padding:10px">'+
-        '<select id="iaInstructor221" style="width:100%;padding:9px;border:1px solid #ccd8e4;border-radius:9px"><option value="">教官を選択</option>'+opts+'</select>'+
-        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:7px">'+
-          '<div><div style="font-size:9px;color:#66798d;margin:0 0 3px 2px">日付</div><input id="iaDate221" type="date" style="width:100%;box-sizing:border-box;padding:8px;border:1px solid #ccd8e4;border-radius:9px"></div>'+
-          '<div><div style="font-size:9px;color:#66798d;margin:0 0 3px 2px">開始</div><select id="iaStart221" style="width:100%;box-sizing:border-box;padding:8px;border:1px solid #ccd8e4;border-radius:9px;background:#fff"></select></div>'+
+      const r=await fetch('/api/admin/instructor-availability',{cache:'no-store'});
+      const d=await r.json();
+      const opts=(d.instructors||[])
+        .map(x=>'<option value="'+Number(x.id||0)+'" data-name="'+esc(x.name)+'">'+esc(x.name)+'</option>')
+        .join('');
+
+      body.innerHTML=
+        '<div style="background:#fff;border:1px solid #dbe4ed;border-radius:12px;padding:10px">'+
+          '<select id="iaInstructor221" style="width:100%;padding:9px;border:1px solid #ccd8e4;border-radius:9px">'+
+            '<option value="">教官を選択</option>'+opts+
+          '</select>'+
+
+          '<div style="margin-top:7px">'+
+            '<div style="font-size:9px;color:#66798d;margin:0 0 3px 2px">日付</div>'+
+            '<input id="iaDate221" type="date" style="width:100%;box-sizing:border-box;padding:8px;border:1px solid #ccd8e4;border-radius:9px">'+
+          '</div>'+
+
+          '<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:8px">'+
+            '<button id="iaModeSlots221" type="button" style="padding:9px;border:1px solid #0b2d52;border-radius:9px;background:#0b2d52;color:#fff;font-weight:1000;font-size:10px">開始時刻を複数選ぶ</button>'+
+            '<button id="iaModeRange221" type="button" style="padding:9px;border:1px solid #ccd8e4;border-radius:9px;background:#fff;color:#17314d;font-weight:1000;font-size:10px">時間帯で選ぶ</button>'+
+          '</div>'+
+
+          '<div id="iaSlotsMode221" style="margin-top:8px">'+
+            '<div style="font-size:9px;color:#66798d;margin-bottom:5px">空いている開始時刻を複数タップできます</div>'+
+            '<div id="iaSlotGrid221" style="display:grid;grid-template-columns:repeat(4,1fr);gap:5px"></div>'+
+            '<div id="iaSlotCount221" style="margin-top:6px;padding:7px 9px;border-radius:9px;background:#f5f8fb;font-size:9px;color:#566b80">0件選択中</div>'+
+          '</div>'+
+
+          '<div id="iaRangeMode221" style="display:none;margin-top:8px">'+
+            '<div style="font-size:9px;color:#66798d;margin-bottom:5px">まとまった空き時間を開始〜終了で登録できます</div>'+
+            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">'+
+              '<div><div style="font-size:9px;color:#66798d;margin:0 0 3px 2px">開始</div><select id="iaRangeStart221" style="width:100%;box-sizing:border-box;padding:8px;border:1px solid #ccd8e4;border-radius:9px;background:#fff"></select></div>'+
+              '<div><div style="font-size:9px;color:#66798d;margin:0 0 3px 2px">終了</div><select id="iaRangeEnd221" style="width:100%;box-sizing:border-box;padding:8px;border:1px solid #ccd8e4;border-radius:9px;background:#fff"></select></div>'+
+            '</div>'+
+            '<div style="margin-top:5px;font-size:9px;color:#7a8998">例：21:00〜24:00</div>'+
+          '</div>'+
+
+          '<input id="iaNote221" placeholder="メモ（任意）" style="width:100%;box-sizing:border-box;margin-top:8px;padding:8px;border:1px solid #ccd8e4;border-radius:9px">'+
+          '<button id="iaSave221" style="width:100%;margin-top:8px;border:0;border-radius:9px;background:#0b2d52;color:#fff;padding:10px;font-weight:1000;font-size:11px">選択した空き時間をまとめて登録</button>'+
         '</div>'+
-        '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:6px;padding:7px 9px;border:1px solid #dde5ed;border-radius:9px;background:#f5f8fb">'+
-          '<span style="font-size:9px;color:#66798d">終了時刻</span>'+
-          '<strong id="iaEndDisplay221" style="font-size:12px;color:#17314d">--:--</strong>'+
-        '</div>'+
-        '<div style="margin-top:5px;font-size:9px;color:#7a8998">開始は15分刻み。終了は30分後を自動表示。</div>'+
-        '<input id="iaNote221" placeholder="メモ（任意）" style="width:100%;box-sizing:border-box;margin-top:7px;padding:8px;border:1px solid #ccd8e4;border-radius:9px">'+
-        '<button id="iaSave221" style="width:100%;margin-top:7px;border:0;border-radius:9px;background:#0b2d52;color:#fff;padding:9px;font-weight:1000;font-size:11px">空き時間を登録</button></div>'+
         '<div id="iaList221" style="margin-top:8px"></div>';
+
       const render=rows=>{
         const list=body.querySelector('#iaList221');
-        list.innerHTML=(rows||[]).length?(rows||[]).map(x=>'<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;background:#fff;border:1px solid #dbe4ed;border-radius:10px;padding:8px;margin-top:5px"><div><b>'+esc(x.instructor_name)+'</b><div style="font-size:10px;color:#6f8193">'+esc(x.available_date)+' '+esc(x.start_time)+'〜'+esc(x.end_time)+(x.note?' / '+esc(x.note):'')+'</div></div><button data-del="'+Number(x.id||0)+'" style="border:1px solid #df9992;background:#fff8f7;color:#9c3229;border-radius:8px;padding:5px 7px;font-weight:900">削除</button></div>').join(''):'<div style="padding:10px;color:#7b8a99">登録済みの空き時間はありません。</div>';
-        list.querySelectorAll('[data-del]').forEach(b=>b.onclick=async()=>{await fetch('/api/admin/instructor-availability/delete',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({id:Number(b.dataset.del)})});openAvailability();});
+        list.innerHTML=(rows||[]).length
+          ? (rows||[]).map(x=>
+              '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;background:#fff;border:1px solid #dbe4ed;border-radius:10px;padding:8px;margin-top:5px">'+
+                '<div><b>'+esc(x.instructor_name)+'</b>'+
+                  '<div style="font-size:10px;color:#6f8193">'+esc(x.available_date)+' '+esc(x.start_time)+'〜'+esc(x.end_time)+(x.note?' / '+esc(x.note):'')+'</div>'+
+                '</div>'+
+                '<button data-del="'+Number(x.id||0)+'" style="border:1px solid #df9992;background:#fff8f7;color:#9c3229;border-radius:8px;padding:5px 7px;font-weight:900">削除</button>'+
+              '</div>'
+            ).join('')
+          : '<div style="padding:10px;color:#7b8a99">登録済みの空き時間はありません。</div>';
+
+        list.querySelectorAll('[data-del]').forEach(b=>{
+          b.onclick=async()=>{
+            await fetch('/api/admin/instructor-availability/delete',{
+              method:'POST',
+              headers:{'content-type':'application/json'},
+              body:JSON.stringify({id:Number(b.dataset.del)})
+            });
+            openAvailability();
+          };
+        });
       };
       render(d.availability||[]);
 
-      const startSel=body.querySelector('#iaStart221');
-      const endDisplay=body.querySelector('#iaEndDisplay221');
+      let mode='slots';
+      let selected=new Set();
+
+      const slotMode=body.querySelector('#iaSlotsMode221');
+      const rangeMode=body.querySelector('#iaRangeMode221');
+      const slotBtn=body.querySelector('#iaModeSlots221');
+      const rangeBtn=body.querySelector('#iaModeRange221');
+      const countBox=body.querySelector('#iaSlotCount221');
+
+      const setMode=next=>{
+        mode=next;
+        const slots=mode==='slots';
+        slotMode.style.display=slots?'block':'none';
+        rangeMode.style.display=slots?'none':'block';
+        slotBtn.style.background=slots?'#0b2d52':'#fff';
+        slotBtn.style.color=slots?'#fff':'#17314d';
+        slotBtn.style.borderColor=slots?'#0b2d52':'#ccd8e4';
+        rangeBtn.style.background=!slots?'#0b2d52':'#fff';
+        rangeBtn.style.color=!slots?'#fff':'#17314d';
+        rangeBtn.style.borderColor=!slots?'#0b2d52':'#ccd8e4';
+        body.querySelector('#iaSave221').textContent=slots
+          ? '選択した空き時間をまとめて登録'
+          : '時間帯を登録';
+      };
+      slotBtn.onclick=()=>setMode('slots');
+      rangeBtn.onclick=()=>setMode('range');
+
+      const add30=v=>{
+        const [hh,mm]=String(v||'').split(':').map(Number);
+        if(!Number.isInteger(hh)||!Number.isInteger(mm))return '';
+        const total=hh*60+mm+30;
+        if(total===1440)return '24:00';
+        if(total>1440)return '';
+        return String(Math.floor(total/60)).padStart(2,'0')+':'+String(total%60).padStart(2,'0');
+      };
+
+      const grid=body.querySelector('#iaSlotGrid221');
+      const slotTimes=[];
+      for(let h=0;h<24;h++){
+        for(const m of [0,30]){
+          const v=String(h).padStart(2,'0')+':'+String(m).padStart(2,'0');
+          const end=add30(v);
+          if(end)slotTimes.push(v);
+        }
+      }
+      grid.innerHTML=slotTimes.map(v=>
+        '<button type="button" data-slot="'+v+'" style="padding:8px 3px;border:1px solid #ccd8e4;border-radius:8px;background:#fff;color:#17314d;font-size:10px;font-weight:1000">'+v+'〜</button>'
+      ).join('');
+
+      const refreshCount=()=>{
+        countBox.textContent=selected.size+'件選択中'+(selected.size?'：'+[...selected].sort().join(' / '):'');
+      };
+      grid.querySelectorAll('[data-slot]').forEach(b=>{
+        b.onclick=()=>{
+          const v=b.dataset.slot;
+          if(selected.has(v)){
+            selected.delete(v);
+            b.style.background='#fff';
+            b.style.color='#17314d';
+            b.style.borderColor='#ccd8e4';
+          }else{
+            selected.add(v);
+            b.style.background='#0b2d52';
+            b.style.color='#fff';
+            b.style.borderColor='#0b2d52';
+          }
+          refreshCount();
+        };
+      });
+      refreshCount();
+
       const qopts=[];
       for(let h=0;h<24;h++){
         for(const m of [0,15,30,45]){
@@ -876,44 +995,78 @@ async function syncDisplayedVersion(response){
           qopts.push('<option value="'+v+'">'+v+'</option>');
         }
       }
-      startSel.innerHTML='<option value="">開始時刻</option>'+qopts.join('');
-
-      const add30=v=>{
-        const parts=String(v||'').split(':');
-        if(parts.length<2)return '';
-        const hh=Number(parts[0]),mm=Number(parts[1]);
-        if(!Number.isInteger(hh)||!Number.isInteger(mm)||hh<0||hh>23||![0,15,30,45].includes(mm))return '';
-        let total=hh*60+mm+30;
-        total%=1440;
-        return String(Math.floor(total/60)).padStart(2,'0')+':'+String(total%60).padStart(2,'0');
-      };
-      const refreshEnd=()=>{
-        const end=add30(startSel.value);
-        endDisplay.textContent=end?end:'--:--';
-        endDisplay.dataset.value=end||'';
-      };
-      startSel.addEventListener('input',refreshEnd);
-      startSel.addEventListener('change',refreshEnd);
-      refreshEnd();
+      body.querySelector('#iaRangeStart221').innerHTML='<option value="">開始時刻</option>'+qopts.join('');
+      body.querySelector('#iaRangeEnd221').innerHTML='<option value="">終了時刻</option>'+qopts.join('')+'<option value="24:00">24:00</option>';
 
       body.querySelector('#iaSave221').onclick=async()=>{
-        const sel=body.querySelector('#iaInstructor221');const opt=sel.options[sel.selectedIndex];
-        const startValue=body.querySelector('#iaStart221').value;
-        const endValue=add30(startValue);
-        const payload={instructor_id:Number(sel.value||0),instructor_name:opt?.dataset?.name||'',available_date:body.querySelector('#iaDate221').value,start_time:startValue,end_time:endValue,note:body.querySelector('#iaNote221').value};
-        const valid15=v=>{
-          const p=String(v||'').split(':');
-          if(p.length<2)return false;
-          const hh=Number(p[0]),mm=Number(p[1]);
-          return Number.isInteger(hh)&&Number.isInteger(mm)&&hh>=0&&hh<=23&&[0,15,30,45].includes(mm);
-        };
-        if(!valid15(payload.start_time))return alert('開始時刻を15分単位で選択してください');
-        if(!payload.end_time)return alert('終了時刻を計算できませんでした。開始時刻を選び直してください');
-        const rr=await fetch('/api/admin/instructor-availability',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(payload)});const x=await rr.json();
-        if(!x.ok)return alert(x.error||'登録できませんでした');
+        const sel=body.querySelector('#iaInstructor221');
+        const opt=sel.options[sel.selectedIndex];
+        const instructorId=Number(sel.value||0);
+        const instructorName=opt?.dataset?.name||'';
+        const date=body.querySelector('#iaDate221').value;
+        const note=body.querySelector('#iaNote221').value;
+
+        if(!instructorId || !instructorName)return alert('教官を選択してください');
+        if(!date)return alert('日付を選択してください');
+
+        let entries=[];
+        if(mode==='slots'){
+          if(!selected.size)return alert('開始時刻を1つ以上選択してください');
+          entries=[...selected].sort().map(start=>({
+            start_time:start,
+            end_time:add30(start)
+          }));
+        }else{
+          const startTime=body.querySelector('#iaRangeStart221').value;
+          const endTime=body.querySelector('#iaRangeEnd221').value;
+          if(!startTime||!endTime)return alert('開始時刻と終了時刻を選択してください');
+          if(startTime>=endTime)return alert('終了時刻は開始時刻より後にしてください');
+          entries=[{start_time:startTime,end_time:endTime}];
+        }
+
+        const saveBtn=body.querySelector('#iaSave221');
+        saveBtn.disabled=true;
+        const original=saveBtn.textContent;
+        saveBtn.textContent='登録中...';
+
+        let okCount=0;
+        const errors=[];
+        try{
+          for(const e of entries){
+            const payload={
+              instructor_id:instructorId,
+              instructor_name:instructorName,
+              available_date:date,
+              start_time:e.start_time,
+              end_time:e.end_time,
+              note
+            };
+            const rr=await fetch('/api/admin/instructor-availability',{
+              method:'POST',
+              headers:{'content-type':'application/json'},
+              body:JSON.stringify(payload)
+            });
+            const x=await rr.json().catch(()=>({}));
+            if(x.ok)okCount++;
+            else errors.push((e.start_time||'')+'：'+(x.error||'登録失敗'));
+          }
+        }finally{
+          saveBtn.disabled=false;
+          saveBtn.textContent=original;
+        }
+
+        if(errors.length){
+          alert(okCount+'件登録しました。\n\n登録できなかった枠：\n'+errors.join('\n'));
+        }else{
+          alert(okCount+'件まとめて登録しました');
+        }
         openAvailability();
       };
-    }catch(_){body.textContent='空き時間情報を取得できませんでした';}
+
+      setMode('slots');
+    }catch(_){
+      body.textContent='空き時間情報を取得できませんでした';
+    }
   }
 
   window.openInstructorAvailability221=openAvailability;
@@ -1874,17 +2027,18 @@ async function saveInstructorAvailability(env,b){
   const name=String(b?.instructor_name||"").trim();
   const date=String(b?.available_date||"").trim();
   const startParsed=parseQuarterHourTime(b?.start_time);
-  const endParsed=parseQuarterHourTime(b?.end_time);
+  const rawEnd=String(b?.end_time||"").trim();
+  const endParsed=rawEnd==="24:00"?null:parseQuarterHourTime(rawEnd);
   const start=startParsed?.normalized||String(b?.start_time||"").trim();
-  const end=endParsed?.normalized||String(b?.end_time||"").trim();
+  const end=rawEnd==="24:00"?"24:00":(endParsed?.normalized||rawEnd);
   const note=String(b?.note||"").trim().slice(0,200);
   if(!name || !/^\d{4}-\d{2}-\d{2}$/.test(date) || !/^\d{2}:\d{2}$/.test(start) || !/^\d{2}:\d{2}$/.test(end)){
     return {ok:false,error:"教官・日付・開始/終了時刻を入力してください"};
   }
-  if(!isQuarterHourTime(start)||!isQuarterHourTime(end)){
+  if(!isQuarterHourTime(start)||!(isQuarterHourTime(end)||end==="24:00")){
     return {ok:false,error:"開始時刻・終了時刻は15分単位で登録してください"};
   }
-  if(start>=end)return {ok:false,error:"終了時刻は開始時刻より後にしてください"};
+  if(start==="24:00"||start>=end)return {ok:false,error:"終了時刻は開始時刻より後にしてください"};
   const r=await env.DB.prepare(`
     INSERT INTO instructor_availability(instructor_id,instructor_name,available_date,start_time,end_time,note)
     VALUES(?,?,?,?,?,?)
@@ -2083,7 +2237,7 @@ async function fetch(request, env, ctx){
         const s=String(x.start_time||"");
         const e=String(x.end_time||"");
         if(!/^\d{4}-\d{2}-\d{2}$/.test(d))return false;
-        if(!isQuarterHourTime(s)||!isQuarterHourTime(e))return false;
+        if(!isQuarterHourTime(s)||!(isQuarterHourTime(e)||e==="24:00"))return false;
         if(d<today)return false;
         if(d===today && e<=nowHm)return false;
         return true;
