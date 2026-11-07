@@ -19,14 +19,21 @@ const json = (data, status = 200) => new Response(JSON.stringify(data), {
   }
 });
 
-const HOTFIX_VERSION = "2.66";
+const HOTFIX_VERSION = "2.68";
 
 async function syncDisplayedVersion(response){
   try{
     const type = String(response.headers.get("content-type") || "").toLowerCase();
     if(!type.includes("text/html")) return response;
+    // v2.68: メンテナンス画面や503ページには管理用UIを注入しない
+    if(response.status===503) return response;
 
     const body = await response.text();
+    if(body.includes("ただいまメンテナンス中です") || body.includes("現在メンテナンス中です")){
+      const headers = new Headers(response.headers);
+      headers.delete("content-length");
+      return new Response(body,{status:response.status,statusText:response.statusText,headers});
+    }
     let replaced = body
       .replace(/Version\s+2\.04/g, "Version " + HOTFIX_VERSION)
       .replace(/Version\s+2\.05/g, "Version " + HOTFIX_VERSION)
@@ -110,10 +117,7 @@ async function syncDisplayedVersion(response){
 }
 #versionTicker221:active #versionTickerTrack221{animation-play-state:paused}
 #versionTickerTrack221 span{margin-right:30px}
-@keyframes versionTickerMove221{
-  from{transform:translateX(0)}
-  to{transform:translateX(-100%)}
-}
+
 
 /* v2.14 管理メニューをコンパクト化 */
 #adminToolsSection,
@@ -208,16 +212,7 @@ async function syncDisplayedVersion(response){
     <span>Version 2.55　オリエンテーション完了操作を分かりやすく改善</span>
   </div>
 </div>
-<div id="versionTicker221" aria-label="バージョンアップ履歴">
-  <div id="versionTickerTrack221">
-    <span>Version 2.64　バージョンアップ履歴テロップを追加</span>
-    <span>Version 2.63　「空き時間を登録」ボタンを管理画面へ固定表示</span>
-    <span>Version 2.61　空き時間を複数枠まとめて登録・21:00〜24:00対応</span>
-    <span>Version 2.57　Discordへ研修開始30分前・10分前・開始時刻・10分超過通知を追加</span>
-    <span>Version 2.56　研修申請の時間選択を15分単位に改善</span>
-    <span>Version 2.55　オリエンテーション完了操作を改善</span>
-  </div>
-</div>
+
 <div id="d1StatusInline">
   <div class="left"><span class="dot"></span><span class="label" id="d1StatusInlineText">D1確認中</span></div>
   <span class="reset" id="d1StatusInlineReset"></span>
