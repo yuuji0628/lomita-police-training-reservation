@@ -1,4 +1,4 @@
-const APP_VERSION="2.65";
+const APP_VERSION="2.66";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -116,6 +116,70 @@ const DEFAULT_TRAINING_POLICY=`【LOMITA POLICE 研修ポリシー】
 7. 研修内容・修了判定の最終判断は、担当教官および研修管理本部が行います。
 8. 代理受講、不正受講、虚偽申請は禁止します。
 9. 予約枠の確保のみを目的とした申請は禁止します。`;
+
+
+async function ensureSystemSettings(env){
+  await env.DB.prepare(`
+    CREATE TABLE IF NOT EXISTS system_settings(
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL DEFAULT '',
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `).run();
+}
+
+async function getMaintenanceState(env){
+  await ensureSystemSettings(env);
+  const row=await env.DB.prepare(
+    "SELECT value,updated_at FROM system_settings WHERE key='maintenance_mode'"
+  ).first();
+  return {
+    enabled:String(row?.value||"0")==="1",
+    updated_at:String(row?.updated_at||"")
+  };
+}
+
+async function setMaintenanceState(env,enabled){
+  await ensureSystemSettings(env);
+  await env.DB.prepare(`
+    INSERT INTO system_settings(key,value,updated_at)
+    VALUES('maintenance_mode',?,CURRENT_TIMESTAMP)
+    ON CONFLICT(key) DO UPDATE SET
+      value=excluded.value,
+      updated_at=CURRENT_TIMESTAMP
+  `).bind(enabled?"1":"0").run();
+  return await getMaintenanceState(env);
+}
+
+function maintenancePage(){
+  return `<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>メンテナンス中 | LOMITA POLICE</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;background:#eef3f8;color:#0d2340;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans JP",sans-serif;display:flex;align-items:center;justify-content:center;padding:24px}
+.card{width:min(520px,100%);background:#fff;border:1px solid #d7e0ea;border-radius:22px;padding:30px 22px;text-align:center;box-shadow:0 12px 34px rgba(11,38,66,.10)}
+.badge{display:inline-block;background:#d7ad45;color:#0d2340;font-weight:1000;font-size:12px;padding:6px 12px;border-radius:999px;margin-bottom:14px}
+.icon{font-size:48px;margin-bottom:8px}
+h1{font-size:26px;margin:8px 0 10px}
+p{margin:0;color:#607286;line-height:1.8;font-size:14px}
+.note{margin-top:18px;padding:12px;border-radius:12px;background:#f4f7fa;color:#53677c;font-size:12px}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="badge">LOMITA POLICE</div>
+  <div class="icon">🛠️</div>
+  <h1>ただいまメンテナンス中です</h1>
+  <p>研修管理システムは現在メンテナンスを行っています。<br>作業完了までしばらくお待ちください。</p>
+  <div class="note">管理者によるメンテナンス解除後、自動的に通常利用へ戻ります。</div>
+</div>
+</body>
+</html>`;
+}
 
 async function ensureTrainingPolicy(env){
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS training_policy (
@@ -4390,6 +4454,22 @@ const ADMIN_BODY = `
  <span class="badge">ADMIN TOOLS</span><div class="title" style="font-size:24px">管理メニュー</div>
  <div class="sub" style="margin:5px 0 16px">システム更新・ビルド確認などの管理機能</div>
  
+<div class="card" style="margin-bottom:12px;border:2px solid #d7ad45">
+  <div class="between">
+    <div>
+      <div class="title">メンテナンスモード</div>
+      <div class="sub" style="margin-top:4px">研修生側を手動でメンテナンス画面へ切り替えます。管理画面は使用できます。</div>
+    </div>
+    <span id="maintenanceStatusBadge" class="pill">確認中...</span>
+  </div>
+  <div id="maintenanceStatusText" class="sub" style="margin-top:10px">状態を確認しています...</div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px">
+    <button id="maintenanceOffBtn" class="btn" type="button" onclick="setMaintenanceMode(false)">通常運用 OFF</button>
+    <button id="maintenanceOnBtn" class="btn danger" type="button" onclick="setMaintenanceMode(true)">🛠️ メンテナンス ON</button>
+  </div>
+  <div id="maintenanceMsg" style="margin-top:8px"></div>
+</div>
+
 <div class="card" style="margin-bottom:12px">
   <div class="title">研修ポリシー管理</div>
   <div class="sub" style="margin-top:4px">研修生が申請前に確認・同意する内容です。</div>
@@ -4647,7 +4727,50 @@ async function testDiscordWebhook(){
    if(btn){btn.disabled=false;btn.textContent='テスト通知を送る'}
  }
 }
-function openManageMenu(){setTimeout(checkDiscordWebhookStatus,150);setTimeout(loadAdminTrainingPolicy,150);setTimeout(loadSurveyDeleteManager,150);document.getElementById('manageModal').classList.add('open');setTimeout(()=>loadBuildStatus(),150)}
+function openManageMenu(){setTimeout(checkDiscordWebhookStatus,150);setTimeout(loadAdminTrainingPolicy,150);setTimeout(loadSurveyDeleteManager,150);setTimeout(loadMaintenanceMode,120);document.getElementById('manageModal').classList.add('open');setTimeout(()=>loadBuildStatus(),150)}
+async function loadMaintenanceMode(){
+  const badge=document.getElementById('maintenanceStatusBadge');
+  const text=document.getElementById('maintenanceStatusText');
+  const onBtn=document.getElementById('maintenanceOnBtn');
+  const offBtn=document.getElementById('maintenanceOffBtn');
+  if(!badge||!text)return;
+  try{
+    const r=await fetch('/api/admin/maintenance',{headers:auth(),cache:'no-store'});
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok)throw new Error(d.error||'取得できませんでした');
+    const enabled=!!d.enabled;
+    badge.textContent=enabled?'🔴 メンテナンス中':'🟢 通常運用';
+    badge.style.background=enabled?'#fdeaea':'#e6f6ed';
+    badge.style.color=enabled?'#b42318':'#147d43';
+    text.textContent=enabled
+      ? '研修生側は現在メンテナンス画面が表示されています。'
+      : '研修生側は通常どおり利用できます。';
+    if(onBtn)onBtn.disabled=enabled;
+    if(offBtn)offBtn.disabled=!enabled;
+  }catch(e){
+    badge.textContent='⚠️ 状態取得失敗';
+    text.textContent=String(e?.message||e);
+  }
+}
+async function setMaintenanceMode(enabled){
+  const action=enabled?'メンテナンスモードをONにしますか？\n\n研修生側はすぐにメンテナンス画面へ切り替わります。':'メンテナンスモードをOFFにしますか？\n\n研修生側を通常運用へ戻します。';
+  if(!confirm(action))return;
+  const msgBox=document.getElementById('maintenanceMsg');
+  if(msgBox)msgBox.innerHTML='<div class="notice">切り替え中...</div>';
+  try{
+    const r=await fetch('/api/admin/maintenance',{
+      method:'POST',
+      headers:auth(),
+      body:JSON.stringify({enabled:!!enabled})
+    });
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok)throw new Error(d.error||'切り替えに失敗しました');
+    if(msgBox)msgBox.innerHTML='<div class="notice success">'+(enabled?'メンテナンスモードをONにしました':'通常運用へ戻しました')+'</div>';
+    await loadMaintenanceMode();
+  }catch(e){
+    if(msgBox)msgBox.innerHTML='<div class="notice error">'+esc(String(e?.message||e))+'</div>';
+  }
+}
 async function openAvailabilityFromMenu(){
  const existing=document.getElementById('availabilityModalCore265');
  if(existing)existing.remove();
@@ -6704,6 +6827,29 @@ async function handle(request, env) {
  };
  const isAdmin=async()=>Boolean(await getAdminRole());
  const isOwnerAdmin=async()=>await getAdminRole()==="owner";
+ if(path==="/api/maintenance" && method==="GET"){
+   return json(await getMaintenanceState(env));
+ }
+
+ // メンテナンス中は研修生側のみ停止。管理画面 / admin API は利用可能。
+ if(!path.startsWith("/admin") && !path.startsWith("/api/admin/")){
+   const maintenance=await getMaintenanceState(env);
+   if(maintenance.enabled){
+     if(path==="/" || path==="/trainee" || path==="/auth/discord" || path==="/auth/discord/callback"){
+       return new Response(maintenancePage(),{
+         status:503,
+         headers:{
+           "content-type":"text/html; charset=utf-8",
+           "cache-control":"no-store"
+         }
+       });
+     }
+     if(path.startsWith("/api/trainee/") || path.startsWith("/api/auth/discord/")){
+       return json({error:"maintenance",message:"現在メンテナンス中です"},503);
+     }
+   }
+ }
+
  if(path==="/api/auth/discord/config" && method==="GET"){
    return json({enabled:discordConfigured(env)});
  }
@@ -7123,6 +7269,17 @@ async function handle(request, env) {
 
  if(path==="/api/admin/check") return (await isAdmin())?json({ok:true}):json({error:"unauthorized"},401);
  if(path.startsWith("/api/admin/") && !(await isAdmin())) return json({error:"unauthorized"},401);
+
+ if(path==="/api/admin/maintenance" && method==="GET"){
+   return json(await getMaintenanceState(env));
+ }
+
+ if(path==="/api/admin/maintenance" && method==="POST"){
+   const b=await request.json().catch(()=>({}));
+   if(typeof b.enabled!=="boolean")return json({error:"enabled must be boolean"},400);
+   const state=await setMaintenanceState(env,b.enabled);
+   return json({ok:true,...state});
+ }
 
  if(path==="/api/admin/stats" && method==="GET"){
    if(!(await isAdmin()))return json({error:"unauthorized"},401);
