@@ -1,4 +1,4 @@
-const APP_VERSION="2.68";
+const APP_VERSION="2.69";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -176,7 +176,7 @@ p{margin:0;color:#607286;line-height:1.8;font-size:14px}
   <h1>ただいまメンテナンス中です</h1>
   <p>研修管理システムは現在メンテナンスを行っています。<br>作業完了までしばらくお待ちください。</p>
   <div class="note">管理者によるメンテナンス解除後、自動的に通常利用へ戻ります。</div>
-  <div class="note" style="margin-top:8px">管理者は <b>/admin</b> から管理画面へ入れます。</div>
+
 </div>
 </body>
 </html>`;
