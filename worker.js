@@ -1,4 +1,4 @@
-const APP_VERSION="2.61";
+const APP_VERSION="2.63";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -4229,6 +4229,7 @@ const ADMIN_BODY = `
    <button id="tabInstructors" class="btn" type="button" onclick="showAdminSection('instructors')">教官管理</button>
    <button id="tabTrainees" class="btn" type="button" onclick="showAdminSection('trainees')">研修生管理</button>
    <button id="tabReservations" class="btn dark" type="button" onclick="showAdminSection('reservations')">予約一覧</button>
+   <button id="availabilityMenu224" class="btn" type="button" onclick="openAvailabilityFromMenu()">📅 空き時間を登録</button>
    <button id="tabSurveys" class="btn" type="button" onclick="showAdminSection('surveys')">アンケート結果</button>
 
  </div>
@@ -4647,6 +4648,29 @@ async function testDiscordWebhook(){
  }
 }
 function openManageMenu(){setTimeout(checkDiscordWebhookStatus,150);setTimeout(loadAdminTrainingPolicy,150);setTimeout(loadSurveyDeleteManager,150);document.getElementById('manageModal').classList.add('open');setTimeout(()=>loadBuildStatus(),150)}
+async function openAvailabilityFromMenu(){
+ const btn=document.getElementById('availabilityMenu224');
+ const original=btn?.innerHTML||'📅 空き時間を登録';
+ if(btn){
+   btn.disabled=true;
+   btn.innerHTML='⏳ 読み込み中...';
+ }
+ try{
+   for(let i=0;i<50;i++){
+     if(typeof window.openInstructorAvailability221==='function'){
+       window.openInstructorAvailability221();
+       return;
+     }
+     await new Promise(r=>setTimeout(r,100));
+   }
+   alert('空き時間管理を読み込めませんでした。ページを再読み込みしてください。');
+ }finally{
+   if(btn){
+     btn.disabled=false;
+     btn.innerHTML=original;
+   }
+ }
+}
 function closeManageMenu(){document.getElementById('manageModal').classList.remove('open')}
 let adminReservationFilter='all';
 let traineeDashboardFilter='all';
