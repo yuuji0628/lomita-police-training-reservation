@@ -19,7 +19,7 @@ const json = (data, status = 200) => new Response(JSON.stringify(data), {
   }
 });
 
-const HOTFIX_VERSION = "2.69";
+const HOTFIX_VERSION = "2.70";
 
 async function syncDisplayedVersion(response){
   try{
@@ -64,59 +64,7 @@ async function syncDisplayedVersion(response){
 #d1StatusInline.err{border-color:#df9d95;background:#fff8f7;color:#8f3028}
 #d1StatusInline.err .dot{background:#c64035}
 
-#versionTicker221{
-  margin:6px 0 8px;
-  overflow:hidden;
-  white-space:nowrap;
-  height:26px;
-  border:1px solid #d8e2ec;
-  border-radius:9px;
-  background:#f8fafc;
-  display:flex;
-  align-items:center;
-  box-shadow:0 2px 7px rgba(20,45,70,.04);
 }
-#versionTickerTrack221{
-  display:inline-block;
-  min-width:max-content;
-  padding-left:100%;
-  animation:versionTickerMove221 38s linear infinite;
-  font:800 9px/1.2 -apple-system,BlinkMacSystemFont,"Segoe UI","Hiragino Sans","Noto Sans JP",sans-serif;
-  color:#53687d;
-}
-#versionTickerTrack221 span{
-  margin-right:34px;
-}
-#versionTicker221:active #versionTickerTrack221{
-  animation-play-state:paused;
-}
-@keyframes versionTickerMove221{
-  from{transform:translateX(0)}
-  to{transform:translateX(-100%)}
-}
-
-#versionTicker221{
-  margin:6px 0 8px;
-  overflow:hidden;
-  white-space:nowrap;
-  border:1px solid #d8e2ec;
-  border-radius:10px;
-  background:#f8fafc;
-  height:27px;
-  display:flex;
-  align-items:center;
-  box-shadow:0 2px 7px rgba(20,45,70,.04);
-}
-#versionTickerTrack221{
-  display:inline-block;
-  min-width:max-content;
-  padding-left:100%;
-  animation:versionTickerMove221 36s linear infinite;
-  font:800 9px/1.2 -apple-system,BlinkMacSystemFont,"Segoe UI","Hiragino Sans","Noto Sans JP",sans-serif;
-  color:#53687d;
-}
-#versionTicker221:active #versionTickerTrack221{animation-play-state:paused}
-#versionTickerTrack221 span{margin-right:30px}
 
 
 /* v2.14 管理メニューをコンパクト化 */
@@ -203,15 +151,7 @@ async function syncDisplayedVersion(response){
   }
 }
 </style>
-<div id="versionTicker221" aria-label="バージョンアップ履歴">
-  <div id="versionTickerTrack221">
-    <span>Version 2.62　更新履歴テロップを追加</span>
-    <span>Version 2.61　空き時間を複数枠まとめて登録・21:00〜24:00対応</span>
-    <span>Version 2.57　Discordへ研修開始30分前・10分前・開始時刻・10分超過通知を追加</span>
-    <span>Version 2.56　研修申請の時間選択を15分単位に改善</span>
-    <span>Version 2.55　オリエンテーション完了操作を分かりやすく改善</span>
-  </div>
-</div>
+
 
 <div id="d1StatusInline">
   <div class="left"><span class="dot"></span><span class="label" id="d1StatusInlineText">D1確認中</span></div>
@@ -227,7 +167,6 @@ async function syncDisplayedVersion(response){
     const r=await fetch("/api/admin/d1-status",{credentials:"same-origin",cache:"no-store"});
     if(r.status===401){
       box.remove();
-      document.getElementById("versionTicker221")?.remove();
     }
     const d=await r.json().catch(()=>({}));
     if(r.status!==401){
