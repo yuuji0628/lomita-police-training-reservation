@@ -1,12 +1,12 @@
-const APP_VERSION="2.94";
+const APP_VERSION="2.95";
 const SKIP_VERSION_ANNOUNCEMENT=true;
 
 const APP_CHANGELOG=[
-  "教官に5段階の教官ランクを追加",
-  "研修補佐・教官・上級教官・主任教官・統括教官から設定可能",
-  "教官登録時にランクを選択でき、登録後も管理画面から変更可能",
-  "担当教官・空き時間の選択欄にも教官ランクを表示",
-  "既存教官は初期値を「教官」として維持",
+  "研修ごとに担当できる最低教官ランクを設定可能",
+  "研修プログラム管理画面から最低ランクを直接変更可能",
+  "新規研修作成時にも最低教官ランクを指定可能",
+  "自動割当・教官受理時に最低ランク未満の教官を候補から除外",
+  "既存研修の最低ランクは「教官」に設定",
   "今回は更新履歴Discordへ投稿しない設定"
 ];
 
@@ -822,6 +822,24 @@ async function ensureInstructors(env) {
 }
 
 
+const INSTRUCTOR_RANK_ORDER=["研修補佐","教官","上級教官","主任教官","統括教官"];
+function normalizeInstructorRankServer(v){
+  const s=String(v||"").trim();
+  return INSTRUCTOR_RANK_ORDER.includes(s)?s:"教官";
+}
+function instructorRankLevelServer(v){
+  const i=INSTRUCTOR_RANK_ORDER.indexOf(normalizeInstructorRankServer(v));
+  return i<0?1:i;
+}
+async function ensureTrainingRankRequirements(env){
+  const info=await env.DB.prepare("PRAGMA table_info(trainings)").all();
+  const cols=(info.results||[]).map(x=>String(x.name||"").toLowerCase());
+  if(!cols.includes("min_instructor_rank")){
+    try{await env.DB.prepare("ALTER TABLE trainings ADD COLUMN min_instructor_rank TEXT NOT NULL DEFAULT '教官'").run();}catch(_){}
+  }
+  try{await env.DB.prepare("UPDATE trainings SET min_instructor_rank='教官' WHERE min_instructor_rank IS NULL OR TRIM(min_instructor_rank)=''").run();}catch(_){}
+}
+
 async function ensureInstructorAvailability(env){
   await env.DB.prepare(`
     CREATE TABLE IF NOT EXISTS instructor_availability(
@@ -885,9 +903,12 @@ function minutesToHhmm(total){
   return String(Math.floor(n/60)).padStart(2,"0")+":"+String(n%60).padStart(2,"0");
 }
 
-async function getAvailableInstructorsForDateTime(env,targetDate,targetTime){
+async function getAvailableInstructorsForDateTime(env,targetDate,targetTime,minInstructorRank="研修補佐"){
   await ensureInstructorAvailability(env);
   await ensureInstructorDayStatus(env);
+  await ensureInstructors(env);
+
+  const requiredLevel=instructorRankLevelServer(minInstructorRank);
 
   const offQ=await env.DB.prepare(`
     SELECT instructor_name
@@ -902,10 +923,13 @@ async function getAvailableInstructorsForDateTime(env,targetDate,targetTime){
   );
 
   const q=await env.DB.prepare(`
-    SELECT instructor_name,start_time,end_time
-    FROM instructor_availability
-    WHERE available_date=?
-    ORDER BY instructor_name COLLATE NOCASE,start_time
+    SELECT ia.instructor_name,ia.start_time,ia.end_time,
+           COALESCE(i.instructor_rank,'教官') AS instructor_rank
+    FROM instructor_availability ia
+    LEFT JOIN instructors i
+      ON lower(trim(i.name))=lower(trim(ia.instructor_name))
+    WHERE ia.available_date=?
+    ORDER BY ia.instructor_name COLLATE NOCASE,ia.start_time
   `).bind(targetDate).all();
 
   const t=hhmmToMinutes(targetTime);
@@ -916,6 +940,7 @@ async function getAvailableInstructorsForDateTime(env,targetDate,targetTime){
   for(const row of (q.results||[])){
     const name=String(row.instructor_name||"").trim();
     if(!name || offNames.has(name.toLowerCase()))continue;
+    if(instructorRankLevelServer(row.instructor_rank)<requiredLevel)continue;
 
     const start=hhmmToMinutes(row.start_time);
     const end=hhmmToMinutes(row.end_time);
@@ -1539,6 +1564,7 @@ async function getBlockingSurveyForTrainee(env,discordId){
 }
 
 async function ensureTrainingPrograms(env) {
+  await ensureTrainingRankRequirements(env);
   await env.DB.prepare(`
     CREATE TABLE IF NOT EXISTS training_programs (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -5031,6 +5057,16 @@ const ADMIN_BODY = `
      <div class="sub" style="margin:6px 0 12px">このプログラム自体が、そのまま研修生の申請対象になります。</div>
      <div class="field"><label>研修名 *</label><input id="programName" maxlength="80" placeholder="例：学科1"></div>
      <div class="field"><label>フリー記入欄</label><textarea id="programDescription" maxlength="1000" placeholder="研修内容・注意事項など"></textarea></div>
+     <div class="field"><label>担当できる最低教官ランク *</label>
+       <select id="programMinInstructorRank">
+         <option value="研修補佐">研修補佐以上</option>
+         <option value="教官" selected>教官以上</option>
+         <option value="上級教官">上級教官以上</option>
+         <option value="主任教官">主任教官以上</option>
+         <option value="統括教官">統括教官のみ</option>
+       </select>
+       <div class="sub" style="margin-top:5px">このランク以上の教官だけが担当候補になります。</div>
+     </div>
      <button id="createProgramBtn" class="btn primary" type="button" style="width:100%">研修プログラムを作成</button>
      <div id="programMsg"></div>
    </div>
@@ -6725,10 +6761,20 @@ async function loadPrograms(){
 function renderPrograms(){
  const e=document.getElementById('programList');
  if(!programRows.length){e.innerHTML='<div class="empty">まだ研修プログラムはありません。</div>';return}
- e.innerHTML=programRows.map((p,i)=>'<div class="card"><div class="between"><div><div class="title">'+esc(p.display_name||p.name)+'</div>'+((p.display_description||p.description)?'<div class="sub" style="margin-top:6px;white-space:pre-wrap">'+esc(p.display_description||p.description)+'</div>':'')+'<div class="sub" style="margin-top:7px">'+(isOrientationProgramName(p.display_name||p.name)?'オリエンテーションは申請制ではありません。研修生管理で「済 / 未」を設定します。':'研修生はこのプログラムへ直接申請します。')+'</div></div><div class="row"><button class="btn small" data-move-program="'+p.id+'" data-dir="-1" '+(i===0?'disabled':'')+'>↑</button><button class="btn small" data-move-program="'+p.id+'" data-dir="1" '+(i===programRows.length-1?'disabled':'')+'>↓</button><button class="btn small" data-edit-program="'+p.id+'">編集</button><button class="btn small danger" data-delete-program="'+p.id+'">削除</button></div></div></div>').join('');
+ e.innerHTML=programRows.map((p,i)=>{
+   const minRank=normalizeInstructorRank(p.min_instructor_rank||'教官');
+   return '<div class="card"><div class="between"><div style="min-width:0;flex:1"><div class="title">'+esc(p.display_name||p.name)+'</div>'+
+   ((p.display_description||p.description)?'<div class="sub" style="margin-top:6px;white-space:pre-wrap">'+esc(p.display_description||p.description)+'</div>':'')+
+   '<div class="sub" style="margin-top:7px">'+(isOrientationProgramName(p.display_name||p.name)?'オリエンテーションは申請制ではありません。研修生管理で「済 / 未」を設定します。':'研修生はこのプログラムへ直接申請します。')+'</div>'+
+   '<div class="field" style="margin:9px 0 0"><label>担当できる最低教官ランク</label><select data-program-min-rank="'+p.id+'">'+
+   INSTRUCTOR_RANKS.map(r=>'<option value="'+esc(r)+'" '+(r===minRank?'selected':'')+'>'+esc(r)+(r==='統括教官'?'のみ':'以上')+'</option>').join('')+
+   '</select><div class="sub" style="margin-top:4px">'+esc(minRank)+(minRank==='統括教官'?'のみ':'以上')+'が担当可能</div></div>'+
+   '</div><div class="row"><button class="btn small" data-move-program="'+p.id+'" data-dir="-1" '+(i===0?'disabled':'')+'>↑</button><button class="btn small" data-move-program="'+p.id+'" data-dir="1" '+(i===programRows.length-1?'disabled':'')+'>↓</button><button class="btn small" data-edit-program="'+p.id+'">編集</button><button class="btn small danger" data-delete-program="'+p.id+'">削除</button></div></div></div>';
+ }).join('');
  document.querySelectorAll('[data-move-program]').forEach(b=>b.addEventListener('click',()=>moveProgram(Number(b.dataset.moveProgram),Number(b.dataset.dir))));
  document.querySelectorAll('[data-edit-program]').forEach(b=>b.addEventListener('click',()=>editProgram(Number(b.dataset.editProgram))));
  document.querySelectorAll('[data-delete-program]').forEach(b=>b.addEventListener('click',()=>deleteProgram(Number(b.dataset.deleteProgram))));
+ document.querySelectorAll('[data-program-min-rank]').forEach(s=>s.addEventListener('change',()=>updateProgramMinRank(Number(s.dataset.programMinRank),s.value)));
 }
 async function editProgram(id){
  const p=programRows.find(x=>Number(x.id)===Number(id));
@@ -6745,17 +6791,33 @@ async function editProgram(id){
  await loadPrograms();
  alert('学科名を更新しました');
 }
+async function updateProgramMinRank(id,rank){
+ const min_instructor_rank=normalizeInstructorRank(rank);
+ const p=programRows.find(x=>Number(x.id)===Number(id));
+ if(!p)return;
+ const r=await fetch('/api/admin/programs/'+id,{method:'PATCH',headers:auth(),body:JSON.stringify({
+   name:String(p.display_name||p.name||'').trim(),
+   description:String(p.display_description||p.description||'').trim(),
+   min_instructor_rank
+ })});
+ const d=await r.json().catch(()=>({}));
+ if(!r.ok){alert(d.error||'最低教官ランクを変更できませんでした');await loadPrograms();return}
+ noticeInAdmin('programMsg','最低教官ランクを「'+min_instructor_rank+(min_instructor_rank==='統括教官'?'のみ':'以上')+'」に変更しました','success');
+ await loadPrograms();
+}
 async function createProgram(){
  const name=document.getElementById('programName').value.trim();
  const description=document.getElementById('programDescription').value.trim();
+ const min_instructor_rank=normalizeInstructorRank(document.getElementById('programMinInstructorRank')?.value||'教官');
  if(!name){noticeInAdmin('programMsg','研修名を入力してください','error');return}
  const btn=document.getElementById('createProgramBtn');btn.disabled=true;btn.textContent='作成中...';
  try{
-   const r=await fetch('/api/admin/programs',{method:'POST',headers:auth(),body:JSON.stringify({name,description})});
+   const r=await fetch('/api/admin/programs',{method:'POST',headers:auth(),body:JSON.stringify({name,description,min_instructor_rank})});
    const d=await r.json().catch(()=>({}));
    if(!r.ok){noticeInAdmin('programMsg',d.error||'作成できませんでした','error');return}
    document.getElementById('programName').value='';
    document.getElementById('programDescription').value='';
+   const minRankEl=document.getElementById('programMinInstructorRank');if(minRankEl)minRankEl.value='教官';
    noticeInAdmin('programMsg','研修プログラムを作成しました','success');
    await loadPrograms();
  }finally{btn.disabled=false;btn.textContent='研修プログラムを作成'}
@@ -8241,10 +8303,11 @@ async function handle(request, env, ctx) {
    const firstPreferenceRegistered=firstRegisteredOptions.includes(preferredTime);
 
    const key=String(profile.discord_id||profile.login_name||profile.player_name||"").trim();
-   let t=await env.DB.prepare("SELECT id,title FROM trainings WHERE id=?").bind(trainingId).first();
+   await ensureTrainingRankRequirements(env);
+   let t=await env.DB.prepare("SELECT id,title,COALESCE(min_instructor_rank,'教官') AS min_instructor_rank FROM trainings WHERE id=?").bind(trainingId).first();
    if(!t){
      await ensureTrainingPrograms(env);
-     t=await env.DB.prepare("SELECT id,title FROM trainings WHERE id=?").bind(trainingId).first();
+     t=await env.DB.prepare("SELECT id,title,COALESCE(min_instructor_rank,'教官') AS min_instructor_rank FROM trainings WHERE id=?").bind(trainingId).first();
    }
    if(!t)return json({error:"研修情報を更新しました。画面を再読み込みして、もう一度申請してください。"},409);
    if(isOrientationTitle(t.title))return json({error:"オリエンテーションは管理者が受講済みを登録します"},400);
@@ -8256,7 +8319,7 @@ async function handle(request, env, ctx) {
 
    const reservationId=Number(insertResult.meta?.last_row_id||0);
    const candidates=firstPreferenceRegistered
-     ? await getAvailableInstructorsForDateTime(env,preferredDate,preferredTime)
+     ? await getAvailableInstructorsForDateTime(env,preferredDate,preferredTime,t.min_instructor_rank||"教官")
      : [];
 
    let assignment_mode=firstPreferenceRegistered?"manual":"outside_availability";
@@ -9251,9 +9314,11 @@ async function handle(request, env, ctx) {
    const instructor=String(b.instructor||"").trim();
    if(!instructor)return json({error:"教官名が必要です"},400);
 
+   await ensureTrainingRankRequirements(env);
    const row=await env.DB.prepare(`
      SELECT r.id,r.status,r.preferred_date,r.preferred_time,r.training_id,
-            r.player_name,COALESCE(t.title,'研修') AS title
+            r.player_name,COALESCE(t.title,'研修') AS title,
+            COALESCE(t.min_instructor_rank,'教官') AS min_instructor_rank
      FROM reservations r
      LEFT JOIN trainings t ON t.id=r.training_id
      WHERE r.id=?
@@ -9262,7 +9327,7 @@ async function handle(request, env, ctx) {
    if(!row)return json({error:"申請が見つかりません"},404);
    if(row.status!=="pending")return json({error:"この申請はすでに処理されています"},409);
 
-   const candidates=await getAvailableInstructorsForDateTime(env,row.preferred_date,row.preferred_time);
+   const candidates=await getAvailableInstructorsForDateTime(env,row.preferred_date,row.preferred_time,row.min_instructor_rank||"教官");
    if(!candidates.some(x=>x.toLowerCase()===instructor.toLowerCase())){
      return json({error:"この教官は現在この時間の対応可能教官ではありません"},409);
    }
@@ -9312,7 +9377,8 @@ async function handle(request, env, ctx) {
        t.title,
        t.training_date,
        t.start_time,
-       t.instructor
+       t.instructor,
+       COALESCE(t.min_instructor_rank,'教官') AS min_instructor_rank
      FROM reservations r
      JOIN trainings t ON t.id=r.training_id
      WHERE r.status IN ('pending','reserved','completed','retake','absent','expired')
@@ -9606,7 +9672,8 @@ async function handle(request, env, ctx) {
      SELECT
        p.*,
        COALESCE(NULLIF(TRIM(t.title),''), p.name) AS display_name,
-       COALESCE(t.description, p.description, '') AS display_description
+       COALESCE(t.description, p.description, '') AS display_description,
+       COALESCE(NULLIF(TRIM(t.min_instructor_rank),''),'教官') AS min_instructor_rank
      FROM training_programs p
      LEFT JOIN trainings t ON t.id=p.training_id
      ORDER BY p.sort_order,p.id
@@ -9624,12 +9691,13 @@ async function handle(request, env, ctx) {
    const b=await request.json().catch(()=>({}));
    const name=String(b.name||"").trim();
    const description=String(b.description||"").trim();
+   const minInstructorRank=normalizeInstructorRankServer(b.min_instructor_rank||"教官");
    if(!name)return json({error:"研修名は必須です"},400);
 
    const tr=await env.DB.prepare(`
-     INSERT INTO trainings(title,description,training_date,start_time,capacity,instructor,location)
-     VALUES(?,?,?,?,?,?,?)
-   `).bind(name,description,"2099-12-31","00:00",999,"","").run();
+     INSERT INTO trainings(title,description,training_date,start_time,capacity,instructor,location,min_instructor_rank)
+     VALUES(?,?,?,?,?,?,?,?)
+   `).bind(name,description,"2099-12-31","00:00",999,"","",minInstructorRank).run();
    const trainingId=Number(tr.meta?.last_row_id||0);
 
    const mx=await env.DB.prepare("SELECT COALESCE(MAX(sort_order),0) n FROM training_programs").first();
@@ -9664,14 +9732,15 @@ async function handle(request, env, ctx) {
    const b=await request.json().catch(()=>({}));
    const name=String(b.name||"").trim();
    const description=String(b.description||"").trim();
+   const minInstructorRank=normalizeInstructorRankServer(b.min_instructor_rank||"教官");
    if(!name)return json({error:"研修名は必須です"},400);
    const p=await env.DB.prepare("SELECT id,training_id FROM training_programs WHERE id=?").bind(id).first();
    if(!p)return json({error:"研修プログラムが見つかりません"},404);
    await env.DB.prepare("UPDATE training_programs SET name=?,description=? WHERE id=?").bind(name,description,id).run();
    if(p.training_id){
-     await env.DB.prepare("UPDATE trainings SET title=?,description=? WHERE id=?").bind(name,description,Number(p.training_id)).run();
+     await env.DB.prepare("UPDATE trainings SET title=?,description=?,min_instructor_rank=? WHERE id=?").bind(name,description,minInstructorRank,Number(p.training_id)).run();
    }
-   return json({ok:true,name,description});
+   return json({ok:true,name,description,min_instructor_rank:minInstructorRank});
  }
  pm=path.match(/^\/api\/admin\/programs\/(\d+)$/);
  if(pm && method==="DELETE"){
