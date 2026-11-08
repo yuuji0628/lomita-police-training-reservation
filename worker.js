@@ -1,4 +1,4 @@
-const APP_VERSION="2.82";
+const APP_VERSION="2.84";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -707,6 +707,119 @@ function minutesToHhmm(total){
   if(n===1440)return "24:00";
   return String(Math.floor(n/60)).padStart(2,"0")+":"+String(n%60).padStart(2,"0");
 }
+
+async function getAvailableInstructorsForDateTime(env,targetDate,targetTime){
+  await ensureInstructorAvailability(env);
+  await ensureInstructorDayStatus(env);
+
+  const offQ=await env.DB.prepare(`
+    SELECT instructor_name
+    FROM instructor_day_status
+    WHERE target_date=? AND status='off'
+  `).bind(targetDate).all();
+
+  const offNames=new Set(
+    (offQ.results||[])
+      .map(x=>String(x.instructor_name||"").trim().toLowerCase())
+      .filter(Boolean)
+  );
+
+  const q=await env.DB.prepare(`
+    SELECT instructor_name,start_time,end_time
+    FROM instructor_availability
+    WHERE available_date=?
+    ORDER BY instructor_name COLLATE NOCASE,start_time
+  `).bind(targetDate).all();
+
+  const t=hhmmToMinutes(targetTime);
+  if(t===null)return [];
+
+  const names=new Set();
+
+  for(const row of (q.results||[])){
+    const name=String(row.instructor_name||"").trim();
+    if(!name || offNames.has(name.toLowerCase()))continue;
+
+    const start=hhmmToMinutes(row.start_time);
+    const end=hhmmToMinutes(row.end_time);
+    if(start===null||end===null||end<=start)continue;
+
+    const duration=end-start;
+    if(duration<=30){
+      if(t===start)names.add(name);
+      continue;
+    }
+    if(t>=start && t<end)names.add(name);
+  }
+
+  return [...names].sort((a,b)=>a.localeCompare(b,'ja'));
+}
+
+
+async function announceOutsideAvailabilityRequest(env,{reservation_id,training_title,player_name,date,time,note=""}){
+  const webhook=String(env.DISCORD_TRAINING_WEBHOOK_URL||"").trim();
+  if(!webhook)return {ok:false,skipped:true};
+
+  const roleId=String(env.DISCORD_TRAINING_ROLE_ID||"").trim();
+  const validRole=/^\d{15,25}$/.test(roleId);
+
+  const lines=[
+    validRole?`<@&${roleId}> ⚠️ **事前登録外の時間で研修申請が入りました**`:"⚠️ **事前登録外の時間で研修申請が入りました**",
+    "",
+    `**研修：** ${training_title||"研修"}`,
+    `**研修生：** ${player_name||"研修生"}`,
+    `**希望日時：** ${date||""} ${time||""}`,
+    note?`**備考：** ${note}`:"",
+    "",
+    "この時間は教官の空き時間として事前登録されていません。",
+    "対応可能な教官がいる場合は、管理画面から担当を決めてください。",
+    `予約ID：${reservation_id}`
+  ].filter(Boolean);
+
+  const r=await fetch(webhook,{
+    method:"POST",
+    headers:{"content-type":"application/json"},
+    body:JSON.stringify({
+      content:lines.join("\n"),
+      allowed_mentions:validRole?{parse:[],roles:[roleId]}:{parse:[]}
+    })
+  });
+  return {ok:r.ok,status:r.status};
+}
+
+async function announceInstructorAcceptanceRequest(env,{reservation_id,training_title,player_name,date,time,candidates=[]}){
+  const webhook=String(env.DISCORD_TRAINING_WEBHOOK_URL||"").trim();
+  if(!webhook || !candidates.length)return {ok:false,skipped:true};
+
+  const roleId=String(env.DISCORD_TRAINING_ROLE_ID||"").trim();
+  const validRole=/^\d{15,25}$/.test(roleId);
+
+  const lines=[
+    validRole?`<@&${roleId}> 📣 **研修担当の受理をお願いします**`:"📣 **研修担当の受理をお願いします**",
+    "",
+    `**研修：** ${training_title||"研修"}`,
+    `**研修生：** ${player_name||"研修生"}`,
+    `**希望日時：** ${date||""} ${time||""}`,
+    "",
+    "**対応可能な教官**",
+    ...candidates.map(name=>`・${name}`),
+    "",
+    "該当する教官の方は、管理画面からこの申請を受理してください。",
+    `予約ID：${reservation_id}`
+  ];
+
+  const r=await fetch(webhook,{
+    method:"POST",
+    headers:{"content-type":"application/json"},
+    body:JSON.stringify({
+      content:lines.join("\n"),
+      allowed_mentions:validRole?{parse:[],roles:[roleId]}:{parse:[]}
+    })
+  });
+
+  return {ok:r.ok,status:r.status};
+}
+
 async function getPublicAvailabilityOptions(env,targetDate){
   await ensureInstructorAvailability(env);
   await ensureInstructorDayStatus(env);
@@ -3765,7 +3878,7 @@ const PUBLIC_BODY = `
 <div id="booking" class="modal"><div class="sheet">
   <button class="btn small" style="float:right" onclick="closeBooking()">閉じる</button>
   <div class="title" id="bookTitle">研修申請</div>
-  <div class="sub" style="margin-top:4px">申請後、管理者が担当教官を選んで承認します。</div><div class="sub" style="margin-top:4px">日付を選ぶと、その日の登録済み空き時間を表示します。時間欄から希望する開始時刻を選んでください。</div>
+  <div class="sub" style="margin-top:4px">申請後、管理者が担当教官を選んで承認します。</div><div class="sub" style="margin-top:4px">日付を選ぶと、その日の登録済み空き時間を表示します。登録外の時間も申請できますが、確実に受講できるわけではありません。</div>
   <div id="bookingMsg"></div>
   <div style="margin-top:8px">
     <div style="font-weight:900;margin-bottom:4px">第1希望 <span style="color:#b42318;font-size:12px">必須</span></div>
@@ -4012,6 +4125,7 @@ async function loadPreferredAvailability(dateId,timeId){
    if(!r.ok)throw new Error(d.error||'空き時間を取得できませんでした');
 
    const options=Array.isArray(d.options)?d.options:[];
+   const registeredOptions=new Set(Array.isArray(d.registered_options)?d.registered_options:[]);
    const ranges=Array.isArray(d.ranges)?d.ranges:[];
 
    if(hint){
@@ -4036,15 +4150,43 @@ async function loadPreferredAvailability(dateId,timeId){
      return;
    }
 
-   timeEl.innerHTML='<option value="">登録済み空き時間から選択</option>'+
-     options.map(t=>'<option value="'+esc(t)+'">'+esc(t)+'</option>').join('');
+   timeEl.innerHTML='<option value="">時間を選択</option>'+
+     options.map(t=>{
+       const registered=registeredOptions.has(t);
+       return '<option value="'+esc(t)+'">'+esc(t)+(registered?'  ◎ 登録済み':'  ※ 登録外')+'</option>';
+     }).join('');
+   timeEl.dataset.registeredOptions=JSON.stringify([...registeredOptions]);
    timeEl.disabled=false;
+   updatePreferredAvailabilityWarning(timeId);
  }catch(e){
    timeEl.innerHTML='<option value="">取得エラー</option>';
    timeEl.disabled=true;
    if(hint)hint.textContent='空き時間を取得できませんでした。';
  }
-}function setupPreferredAvailabilitySelectors(){
+}
+function updatePreferredAvailabilityWarning(timeId){
+ const timeEl=document.getElementById(timeId);
+ if(!timeEl)return;
+ const hintMap={
+   preferredTime:'availabilityHint1',
+   preferredTime2:'availabilityHint2',
+   preferredTime3:'availabilityHint3'
+ };
+ const hint=document.getElementById(hintMap[timeId]||'');
+ if(!hint)return;
+
+ const value=String(timeEl.value||'').trim();
+ if(!value)return;
+
+ let registered=[];
+ try{registered=JSON.parse(timeEl.dataset.registeredOptions||'[]')}catch(_){}
+ if(registered.includes(value)){
+   hint.innerHTML='<span style="color:#16794b;font-weight:900">◎ この時間は教官の事前登録済みです。</span>';
+ }else{
+   hint.innerHTML='<span style="color:#b54708;font-weight:900">⚠️ この時間は教官の事前登録外です。申請はできますが、確実に受講できるわけではありません。</span>';
+ }
+}
+function setupPreferredAvailabilitySelectors(){
  const pairs=[
    ['preferredDate','preferredTime'],
    ['preferredDate2','preferredTime2'],
@@ -4052,10 +4194,15 @@ async function loadPreferredAvailability(dateId,timeId){
  ];
  pairs.forEach(([dateId,timeId])=>{
    const dateEl=document.getElementById(dateId);
-   if(!dateEl)return;
+   const timeEl=document.getElementById(timeId);
+   if(!dateEl||!timeEl)return;
    if(dateEl.dataset.availabilityBound!=='1'){
      dateEl.dataset.availabilityBound='1';
      dateEl.addEventListener('change',()=>loadPreferredAvailability(dateId,timeId));
+   }
+   if(timeEl.dataset.availabilityWarnBound!=='1'){
+     timeEl.dataset.availabilityWarnBound='1';
+     timeEl.addEventListener('change',()=>updatePreferredAvailabilityWarning(timeId));
    }
    setPreferredTimeLoading(timeId);
  });
@@ -4483,7 +4630,16 @@ async function submitBooking(){
    return
   }
   closeBooking();[...ids,'note'].forEach(id=>document.getElementById(id).value='');
-  show('希望日時を付けて申請しました。承認をお待ちください。','success');await loadMyPage();
+  if(d.assignment_mode==='auto_single' && d.assigned_instructor){
+    show('申請と同時に担当教官が確定しました：'+d.assigned_instructor,'success');
+  }else if(d.assignment_mode==='discord_accept'){
+    show('申請しました。対応可能な教官へ受理依頼を送信しました。','success');
+  }else if(d.assignment_mode==='outside_availability'){
+    show('申請しました。この時間は教官の事前登録外のため、受講できることは確約されていません。','success');
+  }else{
+    show('希望日時を付けて申請しました。承認をお待ちください。','success');
+  }
+  await loadMyPage();
  }finally{btn.disabled=false;btn.textContent='申請する'}
 }
 document.getElementById('bookingSubmitBtn')?.addEventListener('click',submitBooking);
@@ -7861,22 +8017,8 @@ async function handle(request, env) {
    if((preferredDate2||preferredTime2)&&(!/^\d{4}-\d{2}-\d{2}$/.test(preferredDate2)||!/^\d{2}:\d{2}$/.test(preferredTime2)))return json({error:"第2希望は日付と時間を両方入力してください"},400);
    if((preferredDate3||preferredTime3)&&(!/^\d{4}-\d{2}-\d{2}$/.test(preferredDate3)||!/^\d{2}:\d{2}$/.test(preferredTime3)))return json({error:"第3希望は日付と時間を両方入力してください"},400);
 
-   const validatePreferredAvailability=async(date,time,label)=>{
-     if(!date&&!time)return null;
-     const options=await getPublicAvailabilityOptions(env,date);
-     if(!options.includes(time)){
-       return `${label}の時間は、現在登録されている教官の空き時間ではありません。日付を選び直して候補から選択してください。`;
-     }
-     return null;
-   };
-   for(const [date,time,label] of [
-     [preferredDate,preferredTime,"第1希望"],
-     [preferredDate2,preferredTime2,"第2希望"],
-     [preferredDate3,preferredTime3,"第3希望"]
-   ]){
-     const availabilityError=await validatePreferredAvailability(date,time,label);
-     if(availabilityError)return json({error:availabilityError,code:"availability_changed"},409);
-   }
+   const firstRegisteredOptions=await getPublicAvailabilityOptions(env,preferredDate);
+   const firstPreferenceRegistered=firstRegisteredOptions.includes(preferredTime);
 
    const key=String(profile.discord_id||profile.login_name||profile.player_name||"").trim();
    let t=await env.DB.prepare("SELECT id,title FROM trainings WHERE id=?").bind(trainingId).first();
@@ -7890,7 +8032,49 @@ async function handle(request, env) {
    if(dup)return json({error:dup.status==="completed"?"この研修は受講済みです":"すでに申請済みです"},409);
 
    const note=String(b.note||"").trim();
-   await env.DB.prepare("INSERT INTO reservations(training_id,player_name,discord_id,affiliation,note,status,preferred_date,preferred_time,preferred_date2,preferred_time2,preferred_date3,preferred_time3) VALUES(?,?,?,?,?,'pending',?,?,?,?,?,?)").bind(trainingId,profile.player_name,key,"",note,preferredDate,preferredTime,preferredDate2,preferredTime2,preferredDate3,preferredTime3).run();
+   const insertResult=await env.DB.prepare("INSERT INTO reservations(training_id,player_name,discord_id,affiliation,note,status,preferred_date,preferred_time,preferred_date2,preferred_time2,preferred_date3,preferred_time3) VALUES(?,?,?,?,?,'pending',?,?,?,?,?,?)").bind(trainingId,profile.player_name,key,"",note,preferredDate,preferredTime,preferredDate2,preferredTime2,preferredDate3,preferredTime3).run();
+
+   const reservationId=Number(insertResult.meta?.last_row_id||0);
+   const candidates=firstPreferenceRegistered
+     ? await getAvailableInstructorsForDateTime(env,preferredDate,preferredTime)
+     : [];
+
+   let assignment_mode=firstPreferenceRegistered?"manual":"outside_availability";
+   let assigned_instructor="";
+
+   if(candidates.length===1 && reservationId){
+     assigned_instructor=candidates[0];
+     assignment_mode="auto_single";
+     await ensureReservationInstructor(env);
+     await env.DB.prepare(`
+       UPDATE reservations
+       SET status='reserved',
+           assigned_instructor=?,
+           confirmed_date=?,
+           confirmed_time=?,
+           confirmed_preference=1
+       WHERE id=?
+     `).bind(assigned_instructor,preferredDate,preferredTime,reservationId).run();
+   }else if(candidates.length>1 && reservationId){
+     assignment_mode="discord_accept";
+     await announceInstructorAcceptanceRequest(env,{
+       reservation_id:reservationId,
+       training_title:String(t.title||"研修"),
+       player_name:profile.player_name,
+       date:preferredDate,
+       time:preferredTime,
+       candidates
+     });
+   }else if(!firstPreferenceRegistered && reservationId){
+     await announceOutsideAvailabilityRequest(env,{
+       reservation_id:reservationId,
+       training_title:String(t.title||"研修"),
+       player_name:profile.player_name,
+       date:preferredDate,
+       time:preferredTime,
+       note
+     });
+   }
 
    await sendTrainingApplicationDiscordNotification(env,{
      training_title:String(t.title||"研修"),
@@ -7904,7 +8088,13 @@ async function handle(request, env) {
      note
    });
 
-   return json({ok:true},201);
+   return json({
+     ok:true,
+     reservation_id:reservationId,
+     assignment_mode,
+     assigned_instructor,
+     candidates
+   },201);
  }
 
  if(path==="/api/admin/login" && method==="POST"){
@@ -8698,7 +8888,9 @@ async function handle(request, env) {
    const targetDate=String(url.searchParams.get("date")||"").trim();
    if(!/^\d{4}-\d{2}-\d{2}$/.test(targetDate))return json({error:"日付が不正です"},400);
 
-   const options=await getPublicAvailabilityOptions(env,targetDate);
+   const registeredOptions=await getPublicAvailabilityOptions(env,targetDate);
+   const options=[];
+   for(let m=0;m<24*60;m+=15)options.push(minutesToHhmm(m));
 
    await ensureInstructorAvailability(env);
    await ensureInstructorDayStatus(env);
@@ -8728,7 +8920,14 @@ async function handle(request, env) {
      }))
      .filter(x=>x.start&&x.end);
 
-   return json({ok:true,date:targetDate,options,count:options.length,ranges});
+   return json({
+     ok:true,
+     date:targetDate,
+     options,
+     registered_options:registeredOptions,
+     count:options.length,
+     ranges
+   });
  }
 
  if(path==="/api/training-policy" && method==="GET"){
@@ -8810,6 +9009,42 @@ async function handle(request, env) {
    });
    if(!result.ok)return json({error:"Discord通知に失敗しました",status:result.status||0},502);
    return json({ok:true});
+ }
+
+ let acceptReservationMatch=path.match(/^\/api\/admin\/reservations\/(\d+)\/accept$/);
+ if(acceptReservationMatch && method==="POST"){
+   const reservationId=Number(acceptReservationMatch[1]);
+   const b=await request.json().catch(()=>({}));
+   const instructor=String(b.instructor||"").trim();
+   if(!instructor)return json({error:"教官名が必要です"},400);
+
+   const row=await env.DB.prepare(`
+     SELECT r.id,r.status,r.preferred_date,r.preferred_time,r.training_id,
+            r.player_name,COALESCE(t.title,'研修') AS title
+     FROM reservations r
+     LEFT JOIN trainings t ON t.id=r.training_id
+     WHERE r.id=?
+   `).bind(reservationId).first();
+
+   if(!row)return json({error:"申請が見つかりません"},404);
+   if(row.status!=="pending")return json({error:"この申請はすでに処理されています"},409);
+
+   const candidates=await getAvailableInstructorsForDateTime(env,row.preferred_date,row.preferred_time);
+   if(!candidates.some(x=>x.toLowerCase()===instructor.toLowerCase())){
+     return json({error:"この教官は現在この時間の対応可能教官ではありません"},409);
+   }
+
+   await env.DB.prepare(`
+     UPDATE reservations
+     SET status='reserved',
+         assigned_instructor=?,
+         confirmed_date=preferred_date,
+         confirmed_time=preferred_time,
+         confirmed_preference=1
+     WHERE id=? AND status='pending'
+   `).bind(instructor,reservationId).run();
+
+   return json({ok:true,instructor});
  }
 
  if(path==="/api/admin/reservation-control" && method==="GET"){
