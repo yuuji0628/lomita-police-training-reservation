@@ -1,13 +1,12 @@
-const APP_VERSION="3.01";
+const APP_VERSION="3.02";
 const SKIP_VERSION_ANNOUNCEMENT=true;
 
 const APP_CHANGELOG=[
-  "管理画面トップの見た目を改善",
-  "D1確認中表示をトップから完全削除",
-  "JST時刻カードを時刻・日付中心のシンプル表示へ変更",
-  "管理状況カードの余白・角丸・数字表示を調整",
-  "承認待ち・処理待ちのみ警告色で視認性を向上",
-  "更新ボタンの主張を弱めて全体を整理",
+  "研修開始ボタンが押せない問題を修正",
+  "研修開始処理を既存の予約更新APIへ統合",
+  "iPhone/Safariからでも開始処理が通る方式へ変更",
+  "開始処理の失敗時にHTTP状態と詳細原因を表示",
+  "開始時刻記録・研修中表示・10分未開始通知はそのまま維持",
   "今回は更新履歴Discordへ投稿しない設定"
 ];
 
@@ -6503,18 +6502,26 @@ document.addEventListener('click',e=>{
 async function startTrainingFromList(id){
  if(!id)return;
  if(!confirm('この研修を開始しますか？\n\n開始時刻が記録されます。'))return;
- const r=await fetch('/api/admin/reservations/'+Number(id)+'/start',{
-   method:'POST',
-   headers:auth()
- });
- const d=await r.json().catch(()=>({}));
- if(!r.ok){
-   alert(d.error||'研修開始を記録できませんでした');
-   return;
+ try{
+   const r=await fetch('/api/admin/reservations/'+Number(id),{
+     method:'PATCH',
+     headers:auth(),
+     body:JSON.stringify({start_training:true})
+   });
+   const raw=await r.text();
+   let d={};
+   try{d=raw?JSON.parse(raw):{}}catch(_){d={detail:raw}}
+   if(!r.ok){
+     const detail=d.detail?('\n詳細：'+d.detail):'';
+     alert((d.error||'研修開始を記録できませんでした')+'\nHTTP '+r.status+detail);
+     return;
+   }
+   alert(d.already_started?'この研修はすでに開始済みです。':'研修開始を記録しました。');
+   await loadReservationControl();
+   await loadAdmin();
+ }catch(e){
+   alert('通信エラーで研修開始を記録できませんでした。\n'+String(e?.message||e));
  }
- alert('研修開始を記録しました。');
- await loadReservationControl();
- await loadAdmin();
 }
 
 async function reapproveReservationFromList(id){
@@ -9579,21 +9586,17 @@ async function handle(request, env, ctx) {
    const reservationId=Number(startReservationMatch[1]);
    const row=await env.DB.prepare(`
      SELECT id,status,confirmed_date,confirmed_time,COALESCE(training_started_at,'') AS training_started_at
-     FROM reservations
-     WHERE id=?
+     FROM reservations WHERE id=?
    `).bind(reservationId).first();
-
    if(!row)return json({error:"予約が見つかりません"},404);
-   if(row.status!=="reserved")return json({error:"予約確定中の研修だけ開始できます"},409);
-   if(String(row.training_started_at||"").trim()){
-     return json({ok:true,already_started:true,training_started_at:row.training_started_at});
-   }
-
+   if(String(row.status||"")!=="reserved")return json({error:"予約確定中の研修だけ開始できます",detail:"現在の状態: "+String(row.status||"未設定")},409);
+   if(!String(row.confirmed_date||"").trim()||!String(row.confirmed_time||"").trim())return json({error:"確定日時が設定されていません"},409);
+   if(String(row.training_started_at||"").trim())return json({ok:true,already_started:true,training_started_at:row.training_started_at});
    const startedAt=new Date().toISOString();
-   await env.DB.prepare(
-     "UPDATE reservations SET training_started_at=? WHERE id=? AND status='reserved'"
+   const updated=await env.DB.prepare(
+     "UPDATE reservations SET training_started_at=? WHERE id=? AND status='reserved' AND trim(COALESCE(training_started_at,''))=''"
    ).bind(startedAt,reservationId).run();
-
+   if(Number(updated?.meta?.changes||0)<1)return json({error:"研修開始を保存できませんでした",detail:"D1更新件数が0件でした"},409);
    return json({ok:true,training_started_at:startedAt});
  }
 
@@ -10413,6 +10416,44 @@ if(path==="/api/admin/instructor-ranking" && method==="GET"){
    if(!before)return json({error:"予約が見つかりません"},404);
 
    const b=await request.json().catch(()=>({}));
+
+   if(b.start_training===true){
+     const current=await env.DB.prepare(`
+       SELECT id,status,confirmed_date,confirmed_time,
+              COALESCE(training_started_at,'') AS training_started_at
+       FROM reservations
+       WHERE id=?
+     `).bind(reservationId).first();
+
+     if(!current)return json({error:"予約が見つかりません"},404);
+     if(String(current.status||"")!=="reserved"){
+       return json({error:"予約確定中の研修だけ開始できます",detail:"現在の状態: "+String(current.status||"未設定")},409);
+     }
+     if(!String(current.confirmed_date||"").trim() || !String(current.confirmed_time||"").trim()){
+       return json({error:"確定日時が設定されていません"},409);
+     }
+     if(String(current.training_started_at||"").trim()){
+       return json({ok:true,already_started:true,training_started_at:current.training_started_at});
+     }
+
+     const startedAt=new Date().toISOString();
+     const updated=await env.DB.prepare(
+       "UPDATE reservations SET training_started_at=? WHERE id=? AND status='reserved' AND trim(COALESCE(training_started_at,''))=''"
+     ).bind(startedAt,reservationId).run();
+
+     if(Number(updated?.meta?.changes||0)<1){
+       const after=await env.DB.prepare(
+         "SELECT COALESCE(training_started_at,'') AS training_started_at FROM reservations WHERE id=?"
+       ).bind(reservationId).first();
+       if(String(after?.training_started_at||"").trim()){
+         return json({ok:true,already_started:true,training_started_at:after.training_started_at});
+       }
+       return json({error:"研修開始を保存できませんでした",detail:"D1更新件数が0件でした"},409);
+     }
+
+     return json({ok:true,training_started_at:startedAt});
+   }
+
    if(!['pending','reserved','completed','retake','absent','cancelled'].includes(b.status))return json({error:"invalid status"},400);
 
    const assigned=String(b.assigned_instructor||"").trim();
