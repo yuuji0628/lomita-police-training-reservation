@@ -1,4 +1,4 @@
-const APP_VERSION="2.77";
+const APP_VERSION="2.78";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -4656,7 +4656,7 @@ const ADMIN_BODY = `
    </div>
    <div class="completedAdminBox" id="retakeHistoryBox">
      <div class="completedAdminHead"><div class="completedAdminTitle">再受講履歴</div><div id="retakeAdminCount" class="completedAdminCount">0</div></div>
-     <div class="sub" style="margin-bottom:8px">現在も再受講が必要な記録だけを表示します。同じ研修を再申請して受講済みになった場合は、この一覧から自動的に外れます。</div>
+     <div class="sub" style="margin-bottom:8px">現在も再受講が必要な記録だけを表示します。Discord IDまたは研修生名で同一人物を判定し、同じ研修を後から受講済みにした場合は自動的に一覧から外れます。</div>
      <div id="retakeAdminList"><div class="empty">再受講履歴はありません。</div></div>
    </div>
    <div class="completedAdminBox">
@@ -5647,17 +5647,27 @@ async function loadReservationControl(){
  }
  const all=Array.isArray(d)?d:[];
  const completed=all.filter(x=>x.status==='completed');
- const reservationPersonKey=(x)=>String(x?.discord_id||x?.player_name||'').trim().toLowerCase();
+ const sameReservationPerson=(a,b)=>{
+   const ad=String(a?.discord_id||'').trim().toLowerCase();
+   const bd=String(b?.discord_id||'').trim().toLowerCase();
+   const an=String(a?.player_name||'').trim().toLowerCase();
+   const bn=String(b?.player_name||'').trim().toLowerCase();
+   return (!!ad && !!bd && ad===bd) || (!!an && !!bn && an===bn);
+ };
+ const sameReservationTraining=(a,b)=>{
+   const aid=Number(a?.training_id||0),bid=Number(b?.training_id||0);
+   const at=String(a?.title||'').trim().toLowerCase();
+   const bt=String(b?.title||'').trim().toLowerCase();
+   return (!!aid && !!bid && aid===bid) || (!!at && !!bt && at===bt);
+ };
  const retakeHistory=all.filter(x=>{
    if(x.status!=='retake')return false;
-   const person=reservationPersonKey(x);
-   const trainingId=Number(x.training_id||0);
    const retakeId=Number(x.id||0);
    return !all.some(y=>
      y.status==='completed' &&
-     Number(y.training_id||0)===trainingId &&
-     reservationPersonKey(y)===person &&
-     Number(y.id||0)>retakeId
+     Number(y.id||0)>retakeId &&
+     sameReservationPerson(x,y) &&
+     sameReservationTraining(x,y)
    );
  });
  const expiredHistory=all.filter(x=>x.status==='expired');
@@ -7892,15 +7902,34 @@ async function handle(request, env) {
    const retake=await env.DB.prepare(`
      SELECT COUNT(*) c
      FROM reservations r
+     LEFT JOIN trainings rt ON rt.id=r.training_id
      WHERE r.status='retake'
        AND NOT EXISTS (
          SELECT 1
          FROM reservations c
+         LEFT JOIN trainings ct ON ct.id=c.training_id
          WHERE c.status='completed'
-           AND c.training_id=r.training_id
            AND c.id>r.id
-           AND lower(trim(COALESCE(NULLIF(c.discord_id,''),c.player_name,'')))=
-               lower(trim(COALESCE(NULLIF(r.discord_id,''),r.player_name,'')))
+           AND (
+             c.training_id=r.training_id
+             OR (
+               trim(COALESCE(ct.title,''))<>''
+               AND trim(COALESCE(rt.title,''))<>''
+               AND lower(trim(ct.title))=lower(trim(rt.title))
+             )
+           )
+           AND (
+             (
+               trim(COALESCE(c.discord_id,''))<>''
+               AND trim(COALESCE(r.discord_id,''))<>''
+               AND lower(trim(c.discord_id))=lower(trim(r.discord_id))
+             )
+             OR (
+               trim(COALESCE(c.player_name,''))<>''
+               AND trim(COALESCE(r.player_name,''))<>''
+               AND lower(trim(c.player_name))=lower(trim(r.player_name))
+             )
+           )
        )
    `).first();
 
@@ -7911,16 +7940,35 @@ async function handle(request, env) {
    const retakeTrainees=await env.DB.prepare(`
      SELECT COUNT(DISTINCT lower(trim(COALESCE(NULLIF(r.discord_id,''),r.player_name,'')))) c
      FROM reservations r
+     LEFT JOIN trainings rt ON rt.id=r.training_id
      WHERE r.status='retake'
        AND trim(COALESCE(NULLIF(r.discord_id,''),r.player_name,''))<>''
        AND NOT EXISTS (
          SELECT 1
          FROM reservations c
+         LEFT JOIN trainings ct ON ct.id=c.training_id
          WHERE c.status='completed'
-           AND c.training_id=r.training_id
            AND c.id>r.id
-           AND lower(trim(COALESCE(NULLIF(c.discord_id,''),c.player_name,'')))=
-               lower(trim(COALESCE(NULLIF(r.discord_id,''),r.player_name,'')))
+           AND (
+             c.training_id=r.training_id
+             OR (
+               trim(COALESCE(ct.title,''))<>''
+               AND trim(COALESCE(rt.title,''))<>''
+               AND lower(trim(ct.title))=lower(trim(rt.title))
+             )
+           )
+           AND (
+             (
+               trim(COALESCE(c.discord_id,''))<>''
+               AND trim(COALESCE(r.discord_id,''))<>''
+               AND lower(trim(c.discord_id))=lower(trim(r.discord_id))
+             )
+             OR (
+               trim(COALESCE(c.player_name,''))<>''
+               AND trim(COALESCE(r.player_name,''))<>''
+               AND lower(trim(c.player_name))=lower(trim(r.player_name))
+             )
+           )
        )
    `).first();
 
