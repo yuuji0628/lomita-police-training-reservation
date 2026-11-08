@@ -1,12 +1,12 @@
-const APP_VERSION="3.05";
+const APP_VERSION="3.06";
 const SKIP_VERSION_ANNOUNCEMENT=true;
 
 const APP_CHANGELOG=[
-  "Cloudflare Error 1101（Worker threw exception）を修正",
-  "D1内部監視・DB処理を復元し、Workerの実行時エラーを解消",
-  "画面へのD1確認中ステータス表示だけを無効化",
-  "研修開始済みの研修中表示・開始時刻表示は維持",
-  "開始済み予約の警告・開始ボタン非表示も維持",
+  "開始済み研修が画面で未開始扱いになる問題を修正",
+  "worker-hotfix.js の予約一覧APIに training_started_at を追加",
+  "開始済み予約は研修中表示・開始時刻表示へ正しく切り替え",
+  "開始未確認バッジ・赤い警告・研修開始ボタンを開始済みでは非表示",
+  "処理待ち・要対応集計でも開始済み予約を除外",
   "今回は更新履歴Discordへ投稿しない設定"
 ];
 
