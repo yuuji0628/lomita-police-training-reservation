@@ -19,7 +19,7 @@ const json = (data, status = 200) => new Response(JSON.stringify(data), {
   }
 });
 
-const HOTFIX_VERSION = "3.06";
+const HOTFIX_VERSION = "3.07";
 
 async function syncDisplayedVersion(response){
   try{
