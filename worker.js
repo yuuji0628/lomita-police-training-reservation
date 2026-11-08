@@ -1,10 +1,10 @@
-const APP_VERSION="2.87";
+const APP_VERSION="2.91";
 
 const APP_CHANGELOG=[
-  "更新履歴通知のタイミングを変更",
-  "新Version反映後、最初のアクセス時に更新履歴専用Discordへ自動投稿",
-  "管理画面を開くまで待たず、公開側アクセスでも通知可能",
-  "同じVersionはD1で記録して重複投稿を防止"
+  "本採用試験の合格Discord通知を記録用の簡潔な形式へ変更",
+  "お祝い・発表文を削除し、合格記録として必要な情報だけ表示",
+  "研修生名・試験名・点数・担当教官・合格日時を記録",
+  "本採用試験のみ通知・重複送信防止は維持"
 ];
 
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
@@ -144,6 +144,84 @@ const DEFAULT_TRAINING_POLICY=`【LOMITA POLICE 研修ポリシー】
 8. 代理受講、不正受講、虚偽申請は禁止します。
 9. 予約枠の確保のみを目的とした申請は禁止します。`;
 
+
+
+async function ensureExamPassNotificationLog(env){
+  await env.DB.prepare(`
+    CREATE TABLE IF NOT EXISTS exam_pass_notification_log(
+      reservation_id INTEGER PRIMARY KEY,
+      sent_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `).run();
+}
+
+async function sendExamPassDiscordNotification(env,reservationId){
+  const webhook=String(env.DISCORD_EXAM_PASS_WEBHOOK_URL||"").trim();
+  if(!webhook)return {ok:false,skipped:true,reason:"no_webhook"};
+
+  await ensureExamPassNotificationLog(env);
+
+  const already=await env.DB.prepare(
+    "SELECT reservation_id FROM exam_pass_notification_log WHERE reservation_id=?"
+  ).bind(Number(reservationId)).first();
+  if(already)return {ok:true,skipped:true,reason:"already_sent"};
+
+  const row=await env.DB.prepare(`
+    SELECT r.id,r.player_name,r.assigned_instructor,r.completed_at,
+           r.confirmed_date,r.confirmed_time,r.exam_result,r.exam_score,
+           COALESCE(t.title,'試験') AS training_title
+    FROM reservations r
+    LEFT JOIN trainings t ON t.id=r.training_id
+    WHERE r.id=?
+  `).bind(Number(reservationId)).first();
+
+  if(!row)return {ok:false,skipped:true,reason:"not_found"};
+
+  const result=String(row.exam_result||"").trim().toLowerCase();
+  const passValues=new Set(["pass","passed","合格","ok","success"]);
+  if(!passValues.has(result))return {ok:false,skipped:true,reason:"not_pass"};
+
+  const trainingTitle=String(row.training_title||"").trim();
+  if(!trainingTitle.includes("本採用試験")){
+    return {ok:false,skipped:true,reason:"not_final_recruitment_exam"};
+  }
+
+  const jst=new Date(Date.now()+9*60*60*1000);
+  const y=jst.getUTCFullYear();
+  const m=String(jst.getUTCMonth()+1).padStart(2,"0");
+  const d=String(jst.getUTCDate()).padStart(2,"0");
+  const hh=String(jst.getUTCHours()).padStart(2,"0");
+  const mm=String(jst.getUTCMinutes()).padStart(2,"0");
+  const passedAt=`${y}-${m}-${d} ${hh}:${mm} JST`;
+
+  const content=[
+    "📋 **本採用試験 合格記録**",
+    "",
+    `**研修生：** ${String(row.player_name||"研修生")}`,
+    `**試験：** ${String(row.training_title||"試験")}`,
+    `**点数：** ${row.exam_score===null||row.exam_score===undefined||row.exam_score===""?"未入力":String(row.exam_score)+"点"}`,
+    `**担当教官：** ${String(row.assigned_instructor||"未設定")}`,
+    `**合格日時：** ${passedAt}`,
+    `**予約ID：** ${Number(row.id||0)}`
+  ].join("\\n");
+
+  const r=await fetch(webhook,{
+    method:"POST",
+    headers:{"content-type":"application/json"},
+    body:JSON.stringify({
+      content,
+      allowed_mentions:{parse:[]}
+    })
+  });
+
+  if(!r.ok)return {ok:false,status:r.status};
+
+  await env.DB.prepare(
+    "INSERT OR IGNORE INTO exam_pass_notification_log(reservation_id,sent_at) VALUES(?,CURRENT_TIMESTAMP)"
+  ).bind(Number(reservationId)).run();
+
+  return {ok:true,sent:true};
+}
 
 async function ensureSystemSettings(env){
   await env.DB.prepare(`
@@ -9024,6 +9102,7 @@ async function handle(request, env, ctx) {
    if(body.length>10000)return json({error:"研修ポリシー本文が長すぎます"},400);
    await ensureTrainingPolicy(env);
    await env.DB.prepare("UPDATE training_policy SET body=?,updated_at=CURRENT_TIMESTAMP WHERE id=1").bind(body).run();
+   try{await sendExamPassDiscordNotification(env,id)}catch(_){}
    return json({ok:true});
  }
 
