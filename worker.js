@@ -1,11 +1,13 @@
-const APP_VERSION="2.93";
+const APP_VERSION="2.94";
 const SKIP_VERSION_ANNOUNCEMENT=true;
 
 const APP_CHANGELOG=[
-  "Version 2.92の重複投稿修正を含むビルド",
-  "今回のVersionは更新履歴Discordへ投稿しない設定",
-  "次回以降はSKIP_VERSION_ANNOUNCEMENTをfalseへ戻せば通常投稿",
-  "更新履歴のD1重複防止ロックは維持"
+  "教官に5段階の教官ランクを追加",
+  "研修補佐・教官・上級教官・主任教官・統括教官から設定可能",
+  "教官登録時にランクを選択でき、登録後も管理画面から変更可能",
+  "担当教官・空き時間の選択欄にも教官ランクを表示",
+  "既存教官は初期値を「教官」として維持",
+  "今回は更新履歴Discordへ投稿しない設定"
 ];
 
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
@@ -807,9 +809,16 @@ async function ensureInstructors(env) {
     CREATE TABLE IF NOT EXISTS instructors (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+      instructor_rank TEXT NOT NULL DEFAULT '教官',
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
   `).run();
+  const info=await env.DB.prepare("PRAGMA table_info(instructors)").all();
+  const cols=(info.results||[]).map(x=>String(x.name||"").toLowerCase());
+  if(!cols.includes("instructor_rank")){
+    try{await env.DB.prepare("ALTER TABLE instructors ADD COLUMN instructor_rank TEXT NOT NULL DEFAULT '教官'").run();}catch(_){}
+  }
+  try{await env.DB.prepare("UPDATE instructors SET instructor_rank='教官' WHERE instructor_rank IS NULL OR TRIM(instructor_rank)=''").run();}catch(_){}
 }
 
 
@@ -4936,6 +4945,22 @@ const ADMIN_BODY = `
      <div class="title" style="font-size:16px">教官を登録</div>
      <div class="sub" style="margin:6px 0 12px">ここで登録した教官を研修の担当者として選べます。</div>
      <div class="field"><label>教官名 *</label><input id="instructorName" maxlength="80" placeholder="教官名を入力"></div>
+     <div class="field"><label>教官ランク *</label>
+       <select id="instructorRank">
+         <option value="研修補佐">研修補佐</option>
+         <option value="教官" selected>教官</option>
+         <option value="上級教官">上級教官</option>
+         <option value="主任教官">主任教官</option>
+         <option value="統括教官">統括教官</option>
+       </select>
+     </div>
+     <div class="notice" style="margin-bottom:10px;font-size:11px;line-height:1.7">
+       <b>研修補佐</b>：上位教官の補助・見学を中心に経験を積む段階<br>
+       <b>教官</b>：通常研修を単独で担当できる標準ランク<br>
+       <b>上級教官</b>：難易度の高い研修や重要研修も担当できる経験者<br>
+       <b>主任教官</b>：教官全体の調整・育成・判断支援を行う立場<br>
+       <b>統括教官</b>：研修制度と教官部門を統括する最高ランク
+     </div>
      <button id="createInstructorBtn" class="btn primary" type="button" style="width:100%">教官を登録</button>
      <div id="instructorMsg"></div>
    </div>
@@ -6497,16 +6522,28 @@ async function loadInstructors(){
  refreshAvailabilityInstructorSelect();
  await loadInstructorAvailability();
 }
+const INSTRUCTOR_RANKS=['研修補佐','教官','上級教官','主任教官','統括教官'];
+function normalizeInstructorRank(v){
+ const s=String(v||'').trim();
+ return INSTRUCTOR_RANKS.includes(s)?s:'教官';
+}
 function renderInstructors(){
  const e=document.getElementById('instructorList');
  if(!instructorRows.length){e.innerHTML='<div class="empty">まだ教官は登録されていません。</div>';return}
- e.innerHTML=instructorRows.map(x=>'<div class="card"><div class="between"><div><div class="title">'+esc(x.name)+'</div><div class="sub">登録済み教官</div></div><button class="btn small danger" data-delete-instructor="'+x.id+'">削除</button></div></div>').join('');
+ e.innerHTML=instructorRows.map(x=>{
+   const rank=normalizeInstructorRank(x.instructor_rank);
+   return '<div class="card"><div class="between" style="align-items:flex-start"><div style="min-width:0;flex:1"><div class="title">'+esc(x.name)+'</div><div class="sub" style="margin-top:4px">現在のランク：<b>'+esc(rank)+'</b></div>'+
+   '<div class="field" style="margin:8px 0 0"><label>教官ランク</label><select data-instructor-rank-id="'+x.id+'">'+
+   INSTRUCTOR_RANKS.map(r=>'<option value="'+esc(r)+'" '+(r===rank?'selected':'')+'>'+esc(r)+'</option>').join('')+
+   '</select></div></div><div class="row" style="margin-left:8px"><button class="btn small danger" data-delete-instructor="'+x.id+'">削除</button></div></div></div>';
+ }).join('');
  document.querySelectorAll('[data-delete-instructor]').forEach(b=>b.addEventListener('click',()=>deleteInstructor(Number(b.dataset.deleteInstructor))));
+ document.querySelectorAll('[data-instructor-rank-id]').forEach(s=>s.addEventListener('change',()=>updateInstructorRank(Number(s.dataset.instructorRankId),s.value)));
 }
 function refreshInstructorSelect(selected){
  const sel=document.getElementById('instructor');
  if(!sel)return;
- sel.innerHTML='<option value="">担当者なし</option>'+instructorRows.map(x=>'<option value="'+esc(x.name)+'">'+esc(x.name)+'</option>').join('');
+ sel.innerHTML='<option value="">担当者なし</option>'+instructorRows.map(x=>'<option value="'+esc(x.name)+'">'+esc(x.name)+'［'+esc(normalizeInstructorRank(x.instructor_rank))+'］</option>').join('');
  if(selected)sel.value=selected;
 }
 
@@ -6515,7 +6552,7 @@ function refreshAvailabilityInstructorSelect(){
  if(!sel)return;
  const current=sel.value;
  sel.innerHTML='<option value="">教官を選択...</option>'+
-   instructorRows.map(x=>'<option value="'+esc(x.name)+'">'+esc(x.name)+'</option>').join('');
+   instructorRows.map(x=>'<option value="'+esc(x.name)+'">'+esc(x.name)+'［'+esc(normalizeInstructorRank(x.instructor_rank))+'］</option>').join('');
  if(current)sel.value=current;
 }
 
@@ -6644,16 +6681,26 @@ async function deleteInstructorAvailability(id){
 }
 async function createInstructor(){
  const name=document.getElementById('instructorName').value.trim();
+ const instructor_rank=normalizeInstructorRank(document.getElementById('instructorRank')?.value||'教官');
  if(!name){noticeInAdmin('instructorMsg','教官名を入力してください','error');return}
  const btn=document.getElementById('createInstructorBtn');btn.disabled=true;btn.textContent='登録中...';
  try{
-   const r=await fetch('/api/admin/instructors',{method:'POST',headers:auth(),body:JSON.stringify({name})});
+   const r=await fetch('/api/admin/instructors',{method:'POST',headers:auth(),body:JSON.stringify({name,instructor_rank})});
    const d=await r.json().catch(()=>({}));
    if(!r.ok){noticeInAdmin('instructorMsg',d.error||'登録できませんでした','error');return}
    document.getElementById('instructorName').value='';
+   const rankEl=document.getElementById('instructorRank');if(rankEl)rankEl.value='教官';
    noticeInAdmin('instructorMsg','教官を登録しました','success');
    await loadInstructors();
  }finally{btn.disabled=false;btn.textContent='教官を登録'}
+}
+async function updateInstructorRank(id,rank){
+ const normalized=normalizeInstructorRank(rank);
+ const r=await fetch('/api/admin/instructors/'+Number(id)+'/rank',{method:'PATCH',headers:auth(),body:JSON.stringify({instructor_rank:normalized})});
+ const d=await r.json().catch(()=>({}));
+ if(!r.ok){alert(d.error||'教官ランクを変更できませんでした');await loadInstructors();return}
+ noticeInAdmin('instructorMsg','教官ランクを「'+normalized+'」に変更しました','success');
+ await loadInstructors();
 }
 async function deleteInstructor(id){
  if(!confirm('この教官を削除しますか？\\n既存研修の担当者名はそのまま残ります。'))return;
@@ -9513,7 +9560,7 @@ async function handle(request, env, ctx) {
 
  if(path==="/api/admin/instructors" && method==="GET"){
    await ensureInstructors(env);
-   const {results}=await env.DB.prepare("SELECT id,name,created_at FROM instructors ORDER BY name COLLATE NOCASE").all();
+   const {results}=await env.DB.prepare("SELECT id,name,instructor_rank,created_at FROM instructors ORDER BY name COLLATE NOCASE").all();
    return json(results);
  }
 
@@ -9521,15 +9568,29 @@ async function handle(request, env, ctx) {
    await ensureInstructors(env);
    const b=await request.json().catch(()=>({}));
    const name=String(b.name||"").trim();
+   const allowedRanks=["研修補佐","教官","上級教官","主任教官","統括教官"];
+   const instructorRank=allowedRanks.includes(String(b.instructor_rank||"").trim())?String(b.instructor_rank).trim():"教官";
    if(!name)return json({error:"教官名は必須です"},400);
    try{
-     const r=await env.DB.prepare("INSERT INTO instructors(name) VALUES(?)").bind(name).run();
-     return json({ok:true,id:r.meta?.last_row_id||null},201);
+     const r=await env.DB.prepare("INSERT INTO instructors(name,instructor_rank) VALUES(?,?)").bind(name,instructorRank).run();
+     return json({ok:true,id:r.meta?.last_row_id||null,instructor_rank:instructorRank},201);
    }catch(e){
      const message=String(e?.message||e);
      if(message.toLowerCase().includes("unique"))return json({error:"同じ教官名がすでに登録されています"},409);
      return json({error:"教官を登録できませんでした",detail:message},500);
    }
+ }
+
+ let irm=path.match(/^\/api\/admin\/instructors\/(\d+)\/rank$/);
+ if(irm && method==="PATCH"){
+   await ensureInstructors(env);
+   const b=await request.json().catch(()=>({}));
+   const allowedRanks=["研修補佐","教官","上級教官","主任教官","統括教官"];
+   const instructorRank=String(b.instructor_rank||"").trim();
+   if(!allowedRanks.includes(instructorRank))return json({error:"教官ランクが不正です"},400);
+   const r=await env.DB.prepare("UPDATE instructors SET instructor_rank=? WHERE id=?").bind(instructorRank,Number(irm[1])).run();
+   if(Number(r.meta?.changes||0)<1)return json({error:"教官が見つかりません"},404);
+   return json({ok:true,instructor_rank:instructorRank});
  }
 
  let im=path.match(/^\/api\/admin\/instructors\/(\d+)$/);
