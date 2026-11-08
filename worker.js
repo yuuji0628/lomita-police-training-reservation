@@ -1,4 +1,4 @@
-const APP_VERSION="2.75";
+const APP_VERSION="2.76";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -4533,7 +4533,7 @@ const ADMIN_BODY = `
    </div>
    <div class="completedAdminBox" id="retakeHistoryBox">
      <div class="completedAdminHead"><div class="completedAdminTitle">再受講履歴</div><div id="retakeAdminCount" class="completedAdminCount">0</div></div>
-     <div class="sub" style="margin-bottom:8px">再受講で処理した過去の受講記録です。再申請後は、新しい申請だけを上の予約一覧で操作します。</div>
+     <div class="sub" style="margin-bottom:8px">現在も再受講が必要な記録だけを表示します。同じ研修を再申請して受講済みになった場合は、この一覧から自動的に外れます。</div>
      <div id="retakeAdminList"><div class="empty">再受講履歴はありません。</div></div>
    </div>
    <div class="completedAdminBox">
@@ -5524,7 +5524,19 @@ async function loadReservationControl(){
  }
  const all=Array.isArray(d)?d:[];
  const completed=all.filter(x=>x.status==='completed');
- const retakeHistory=all.filter(x=>x.status==='retake');
+ const reservationPersonKey=(x)=>String(x?.discord_id||x?.player_name||'').trim().toLowerCase();
+ const retakeHistory=all.filter(x=>{
+   if(x.status!=='retake')return false;
+   const person=reservationPersonKey(x);
+   const trainingId=Number(x.training_id||0);
+   const retakeId=Number(x.id||0);
+   return !all.some(y=>
+     y.status==='completed' &&
+     Number(y.training_id||0)===trainingId &&
+     reservationPersonKey(y)===person &&
+     Number(y.id||0)>retakeId
+   );
+ });
  const expiredHistory=all.filter(x=>x.status==='expired');
  // 処理済みの再受講は操作対象から外し、履歴として扱う。
  const active=all.filter(x=>!['completed','retake','expired'].includes(String(x.status||'')));
@@ -5581,7 +5593,7 @@ async function loadReservationControl(){
        (x.assigned_instructor?' ／ 担当教官：'+esc(x.assigned_instructor):'')+
        (confirmed?' ／ 受講日時：'+esc(confirmed):'')+
        '</div>'+
-       '<div class="sub" style="margin-top:5px">再受講判定済み・再申請待ち</div>'+
+       '<div class="sub" style="margin-top:5px">再受講が必要・未解消</div>'+
        '</div>';
    },'再受講履歴はありません。','retakeHistory');
  }
@@ -7736,17 +7748,39 @@ async function handle(request, env) {
      "SELECT COUNT(*) c FROM reservations WHERE status='pending' AND trim(COALESCE(assigned_instructor,''))=''"
    ).first();
    const expired=await env.DB.prepare("SELECT COUNT(*) c FROM reservations WHERE status='expired'").first();
-   const retake=await env.DB.prepare("SELECT COUNT(*) c FROM reservations WHERE status='retake'").first();
+   const retake=await env.DB.prepare(`
+     SELECT COUNT(*) c
+     FROM reservations r
+     WHERE r.status='retake'
+       AND NOT EXISTS (
+         SELECT 1
+         FROM reservations c
+         WHERE c.status='completed'
+           AND c.training_id=r.training_id
+           AND c.id>r.id
+           AND lower(trim(COALESCE(NULLIF(c.discord_id,''),c.player_name,'')))=
+               lower(trim(COALESCE(NULLIF(r.discord_id,''),r.player_name,'')))
+       )
+   `).first();
 
    const trainees=await env.DB.prepare("SELECT COUNT(*) c FROM trainee_profiles").first();
    const fullCompleted=await env.DB.prepare(
      "SELECT COUNT(*) c FROM trainee_profiles WHERE trim(COALESCE(all_completed_at,''))<>''"
    ).first();
    const retakeTrainees=await env.DB.prepare(`
-     SELECT COUNT(DISTINCT lower(trim(COALESCE(discord_id,player_name,'')))) c
-     FROM reservations
-     WHERE status='retake'
-       AND trim(COALESCE(discord_id,player_name,''))<>''
+     SELECT COUNT(DISTINCT lower(trim(COALESCE(NULLIF(r.discord_id,''),r.player_name,'')))) c
+     FROM reservations r
+     WHERE r.status='retake'
+       AND trim(COALESCE(NULLIF(r.discord_id,''),r.player_name,''))<>''
+       AND NOT EXISTS (
+         SELECT 1
+         FROM reservations c
+         WHERE c.status='completed'
+           AND c.training_id=r.training_id
+           AND c.id>r.id
+           AND lower(trim(COALESCE(NULLIF(c.discord_id,''),c.player_name,'')))=
+               lower(trim(COALESCE(NULLIF(r.discord_id,''),r.player_name,'')))
+       )
    `).first();
 
    const orientationTraining=await getOrientationTraining(env);
@@ -7830,10 +7864,12 @@ async function handle(request, env) {
      for(const h of (hist||[])){
        if(h.status==="pending")pending++;
        else if(h.status==="reserved")reserved++;
-       else if(h.status==="retake")retake++;
        else if(h.status==="absent")absent++;
        else if(h.status==="cancelled")cancelled++;
      }
+     // 再受講は「同じ研修の最新状態がretake」のものだけ数える。
+     // 後から再申請して受講済みになった過去retakeは対象外。
+     retake=[...latest.values()].filter(h=>String(h.status||"")==="retake").length;
      const totalPrograms=(programs||[]).length;
      const orientationProgram=(programs||[]).find(pr=>isOrientationTitle(pr.display_name||pr.name));
      const orientationRow=orientationProgram?latest.get(Number(orientationProgram.training_id)):null;
