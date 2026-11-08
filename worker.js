@@ -1,13 +1,13 @@
-const APP_VERSION="2.96";
-const SKIP_VERSION_ANNOUNCEMENT=true;
+const APP_VERSION="2.97";
+const SKIP_VERSION_ANNOUNCEMENT=false;
 
 const APP_CHANGELOG=[
-  "教官実績・評価システムを追加",
-  "教官ごとに担当研修数・修了数・合格数・再受講数を自動集計",
-  "研修アンケートから教官平均評価と回答数を表示",
-  "教官ランクと最終担当日を実績画面に表示",
-  "登録済み教官は実績0件でも一覧に表示",
-  "今回は更新履歴Discordへ投稿しない設定"
+  "研修生カルテを追加し、受講履歴・再受講・試験結果・担当教官・引き継ぎメモを1画面に集約",
+  "教官カレンダーを追加し、空き時間・休み・予約済み研修を日付ごとに表示",
+  "カルテから管理者用の引き継ぎメモを保存可能",
+  "教官カレンダーは月表示で前月・翌月へ移動可能",
+  "既存の予約・空き時間・休みデータをそのまま利用",
+  "今回は更新履歴Discordへ投稿する設定"
 ];
 
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
@@ -89,6 +89,9 @@ async function ensureTraineeProfiles(env) {
   }
   if (!cols.includes("admin_memo")) {
     try { await env.DB.prepare("ALTER TABLE trainee_profiles ADD COLUMN admin_memo TEXT DEFAULT ''").run(); } catch (_) {}
+  }
+  if (!cols.includes("handoff_memo")) {
+    try { await env.DB.prepare("ALTER TABLE trainee_profiles ADD COLUMN handoff_memo TEXT DEFAULT ''").run(); } catch (_) {}
   }
   if (!cols.includes("all_completed_at")) {
     try { await env.DB.prepare("ALTER TABLE trainee_profiles ADD COLUMN all_completed_at TEXT DEFAULT ''").run(); } catch (_) {}
@@ -4959,6 +4962,8 @@ const ADMIN_BODY = `
     <button id="tabPrograms" class="btn" type="button" onclick="showAdminSection('programs')">研修プログラム管理</button>
    <button id="tabInstructors" class="btn" type="button" onclick="showAdminSection('instructors')">教官管理</button>
    <button id="tabTrainees" class="btn" type="button" onclick="showAdminSection('trainees')">研修生管理</button>
+   <button id="tabRecords" class="btn" type="button" onclick="showAdminSection('records')">研修生カルテ</button>
+   <button id="tabCalendar" class="btn" type="button" onclick="showAdminSection('calendar')">教官カレンダー</button>
    <button id="tabReservations" class="btn dark" type="button" onclick="showAdminSection('reservations')">予約一覧</button>
    <button id="availabilityMenu224" class="btn" type="button" onclick="openAvailabilityFromMenu()">📅 空き時間を登録</button>
    <button id="tabSurveys" class="btn" type="button" onclick="showAdminSection('surveys')">アンケート結果</button>
@@ -5083,6 +5088,36 @@ const ADMIN_BODY = `
      <div id="programMsg"></div>
    </div>
    <div id="programList"><div class="empty">研修プログラムを読み込んでいます...</div></div>
+ </div>
+
+
+ <div id="recordsSection" style="display:none">
+   <div class="section">研修生カルテ</div>
+   <div class="card">
+     <div class="between">
+       <div><div class="title" style="font-size:16px">研修生カルテ検索</div><div class="sub" style="margin-top:5px">受講履歴・再受講・試験結果・担当教官・引き継ぎメモをまとめて確認できます。</div></div>
+       <button class="btn small" type="button" onclick="loadTraineeRecords()">更新</button>
+     </div>
+     <div class="field" style="margin-top:10px"><label>研修生</label><select id="recordTraineeSelect"><option value="">研修生を選択...</option></select></div>
+   </div>
+   <div id="traineeRecordView"><div class="empty">研修生を選択してください。</div></div>
+ </div>
+
+ <div id="calendarSection" style="display:none">
+   <div class="section">教官カレンダー</div>
+   <div class="card">
+     <div class="between">
+       <div><div class="title" style="font-size:16px">月間カレンダー</div><div class="sub" style="margin-top:5px">空き時間・休み／対応不可・予約済み研修をまとめて確認できます。</div></div>
+       <button class="btn small" type="button" onclick="loadInstructorCalendar()">更新</button>
+     </div>
+     <div style="display:grid;grid-template-columns:auto 1fr auto;gap:8px;align-items:center;margin-top:10px">
+       <button id="calendarPrevBtn" class="btn small" type="button">← 前月</button>
+       <div id="calendarMonthLabel" style="text-align:center;font-weight:1000;font-size:17px"></div>
+       <button id="calendarNextBtn" class="btn small" type="button">翌月 →</button>
+     </div>
+     <div class="field" style="margin-top:10px"><label>教官で絞り込み</label><select id="calendarInstructorFilter"><option value="">全教官</option></select></div>
+   </div>
+   <div id="instructorCalendarView"><div class="empty">カレンダーを読み込んでいます...</div></div>
  </div>
 
  <div id="reservationsSection">
@@ -6035,21 +6070,29 @@ function showAdminSection(section){
  const programs=section==='programs';
  const instructors=section==='instructors';
  const trainees=section==='trainees';
+ const records=section==='records';
+ const calendar=section==='calendar';
  const reservations=section==='reservations';
  const surveys=section==='surveys';
  document.getElementById('programSection').style.display=programs?'block':'none';
  document.getElementById('instructorSection').style.display=instructors?'block':'none';
  document.getElementById('traineeSection').style.display=trainees?'block':'none';
+ document.getElementById('recordsSection').style.display=records?'block':'none';
+ document.getElementById('calendarSection').style.display=calendar?'block':'none';
  document.getElementById('reservationsSection').style.display=reservations?'block':'none';
  document.getElementById('surveySectionAdmin').style.display=surveys?'block':'none';
  document.getElementById('tabPrograms').className='btn '+(programs?'dark':'');
  document.getElementById('tabInstructors').className='btn '+(instructors?'dark':'');
  document.getElementById('tabTrainees').className='btn '+(trainees?'dark':'');
+ document.getElementById('tabRecords').className='btn '+(records?'dark':'');
+ document.getElementById('tabCalendar').className='btn '+(calendar?'dark':'');
  document.getElementById('tabReservations').className='btn '+(reservations?'dark':'');
  document.getElementById('tabSurveys').className='btn '+(surveys?'dark':'');
  if(programs)loadPrograms();
  if(instructors)loadInstructors();
  if(trainees)loadTrainees();
+ if(records)loadTraineeRecords();
+ if(calendar)loadInstructorCalendar();
  if(reservations)loadReservationControl();
  if(surveys)loadAdminSurveys();
 }
@@ -6902,6 +6945,69 @@ async function deleteProgram(id){
  await loadPrograms();
 }
 
+
+let recordRows=[];
+let calendarMonthCursor=new Date();
+calendarMonthCursor=new Date(calendarMonthCursor.getFullYear(),calendarMonthCursor.getMonth(),1);
+
+async function loadTraineeRecords(){
+ const sel=document.getElementById('recordTraineeSelect');
+ const view=document.getElementById('traineeRecordView');
+ if(!sel||!view)return;
+ const r=await fetch('/api/admin/trainees',{headers:auth(),cache:'no-store'});
+ const d=await r.json().catch(()=>[]);
+ if(!r.ok){view.innerHTML='<div class="notice error">'+esc(d.error||'研修生を取得できませんでした')+'</div>';return}
+ recordRows=Array.isArray(d)?d:[];
+ const current=sel.value;
+ sel.innerHTML='<option value="">研修生を選択...</option>'+recordRows.map(x=>'<option value="'+Number(x.id)+'">'+esc(x.player_name||x.login_name||'研修生')+'</option>').join('');
+ if(current&&recordRows.some(x=>String(x.id)===String(current)))sel.value=current;
+ if(sel.value)await loadTraineeRecordDetail(Number(sel.value));
+}
+async function loadTraineeRecordDetail(id){
+ const view=document.getElementById('traineeRecordView');
+ if(!view)return;
+ view.innerHTML='<div class="empty">カルテを読み込んでいます...</div>';
+ const r=await fetch('/api/admin/trainee-records/'+Number(id),{headers:auth(),cache:'no-store'});
+ const d=await r.json().catch(()=>({}));
+ if(!r.ok){view.innerHTML='<div class="notice error">'+esc(d.error||'カルテを取得できませんでした')+'</div>';return}
+ const p=d.profile||{},history=Array.isArray(d.history)?d.history:[],stats=d.stats||{};
+ view.innerHTML='<div class="card"><div class="between"><div><div class="title" style="font-size:18px">'+esc(p.player_name||p.login_name||'研修生')+'</div><div class="sub">'+esc(p.discord_id||'Discord ID未登録')+'</div></div><span class="pill">'+(p.all_completed_at?'全研修修了':'研修中')+'</span></div>'+
+ '<div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px;margin-top:10px">'+
+ '<div style="padding:8px;border:1px solid #ead0cd;border-radius:9px"><div class="sub">受講済み</div><div style="font-size:18px;font-weight:1000">'+Number(stats.completed||0)+'件</div></div>'+
+ '<div style="padding:8px;border:1px solid #ead0cd;border-radius:9px"><div class="sub">再受講</div><div style="font-size:18px;font-weight:1000">'+Number(stats.retake||0)+'件</div></div>'+
+ '<div style="padding:8px;border:1px solid #ead0cd;border-radius:9px"><div class="sub">合格</div><div style="font-size:18px;font-weight:1000">'+Number(stats.pass||0)+'件</div></div>'+
+ '<div style="padding:8px;border:1px solid #ead0cd;border-radius:9px"><div class="sub">欠席</div><div style="font-size:18px;font-weight:1000">'+Number(stats.absent||0)+'件</div></div></div>'+
+ '<div class="field" style="margin-top:10px"><label>教官引き継ぎメモ</label><textarea id="recordHandoffMemo" rows="5" maxlength="5000" placeholder="次回担当教官へ共有したい内容">'+esc(p.handoff_memo||'')+'</textarea></div>'+
+ '<button class="btn primary small" type="button" onclick="saveTraineeHandoffMemo('+Number(p.id||0)+')">引き継ぎメモを保存</button></div>'+
+ '<div class="section" style="margin-top:12px">受講履歴</div>'+
+ (history.length?history.map(x=>{const result=String(x.exam_result||'').trim();const dt=[x.confirmed_date||x.completed_at||'',x.confirmed_time||''].filter(Boolean).join(' ');return '<div class="card" style="margin-top:8px"><div class="between"><div class="title" style="font-size:15px">'+esc(x.title||'研修')+'</div><span class="pill '+esc(x.status||'')+'">'+esc(x.status_label||x.status||'')+'</span></div><div class="sub" style="margin-top:6px">担当教官：'+esc(x.assigned_instructor||'未設定')+'</div>'+(dt?'<div class="sub">日時：'+esc(dt)+'</div>':'')+(result?'<div class="sub">試験結果：'+esc(result)+(x.exam_score!==null&&x.exam_score!==undefined&&x.exam_score!==''?' ／ '+esc(String(x.exam_score))+'点':'')+'</div>':'')+(x.note?'<div class="sub" style="margin-top:5px">備考：'+esc(x.note)+'</div>':'')+'</div>';}).join(''):'<div class="empty">履歴はまだありません。</div>');
+}
+async function saveTraineeHandoffMemo(id){
+ const memo=String(document.getElementById('recordHandoffMemo')?.value||'').trim();
+ const r=await fetch('/api/admin/trainee-records/'+Number(id)+'/handoff',{method:'PATCH',headers:auth(),body:JSON.stringify({memo})});
+ const d=await r.json().catch(()=>({}));
+ if(!r.ok){alert(d.error||'引き継ぎメモを保存できませんでした');return}
+ alert('引き継ぎメモを保存しました');
+ await loadTraineeRecordDetail(Number(id));
+}
+function formatCalendarYmd(y,m,d){return String(y)+'-'+String(m+1).padStart(2,'0')+'-'+String(d).padStart(2,'0')}
+function calendarMonthKey(){return calendarMonthCursor.getFullYear()+'-'+String(calendarMonthCursor.getMonth()+1).padStart(2,'0')}
+async function loadInstructorCalendar(){
+ const view=document.getElementById('instructorCalendarView'),label=document.getElementById('calendarMonthLabel'),filter=document.getElementById('calendarInstructorFilter');
+ if(!view||!label||!filter)return;
+ const month=calendarMonthKey();label.textContent=calendarMonthCursor.getFullYear()+'年 '+(calendarMonthCursor.getMonth()+1)+'月';
+ view.innerHTML='<div class="empty">カレンダーを読み込んでいます...</div>';
+ const r=await fetch('/api/admin/instructor-calendar?month='+encodeURIComponent(month),{headers:auth(),cache:'no-store'});
+ const d=await r.json().catch(()=>({}));
+ if(!r.ok){view.innerHTML='<div class="notice error">'+esc(d.error||'カレンダーを取得できませんでした')+'</div>';return}
+ const current=filter.value,instructors=Array.isArray(d.instructors)?d.instructors:[],items=Array.isArray(d.items)?d.items:[];
+ filter.innerHTML='<option value="">全教官</option>'+instructors.map(x=>'<option value="'+esc(x.name)+'">'+esc(x.name)+'［'+esc(x.instructor_rank||'教官')+'］</option>').join('');
+ if(current&&instructors.some(x=>x.name===current))filter.value=current;
+ const first=new Date(calendarMonthCursor.getFullYear(),calendarMonthCursor.getMonth(),1),last=new Date(calendarMonthCursor.getFullYear(),calendarMonthCursor.getMonth()+1,0),startWeek=first.getDay();
+ let html='<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:5px;margin-top:10px">';['日','月','火','水','木','金','土'].forEach(w=>html+='<div style="text-align:center;font-weight:900;font-size:11px">'+w+'</div>');for(let i=0;i<startWeek;i++)html+='<div></div>';
+ for(let day=1;day<=last.getDate();day++){const ymd=formatCalendarYmd(first.getFullYear(),first.getMonth(),day),selected=filter.value,dayItems=items.filter(x=>x.date===ymd&&(!selected||x.instructor_name===selected));const rows=dayItems.slice(0,5).map(x=>{const icon=x.type==='off'?'休':x.type==='reservation'?'予':'空';const text=x.type==='off'?esc(x.instructor_name)+' 休み':x.type==='reservation'?esc(x.instructor_name)+' '+esc(x.time||'')+' '+esc(x.title||'研修'):esc(x.instructor_name)+' '+esc(x.time||'');return '<div style="font-size:8px;line-height:1.25;margin-top:2px"><b>'+icon+'</b> '+text+'</div>';}).join('');html+='<div style="min-height:86px;border:1px solid #ead0cd;border-radius:8px;padding:5px;background:#fff"><div style="font-weight:1000;font-size:11px">'+day+'</div>'+rows+(dayItems.length>5?'<div class="sub" style="font-size:8px;margin-top:2px">ほか '+(dayItems.length-5)+'件</div>':'')+'</div>';}
+ html+='</div><div class="sub" style="margin-top:8px">空＝空き時間 ／ 休＝休み・対応不可 ／ 予＝予約済み研修</div>';view.innerHTML=html;
+}
 let traineeRows=[];
 let traineeStartOptions=[];
 async function loadTrainees(){
@@ -7974,6 +8080,13 @@ document.getElementById('workerUploadBtn')?.addEventListener('click',uploadAsWor
 document.getElementById('gitFile')?.addEventListener('change',updateFileInfo);
 document.getElementById('adminLoginBtn')?.addEventListener('click',login);
 document.getElementById('password')?.addEventListener('keydown',e=>{if(e.key==='Enter')login()});
+
+const recordSel=document.getElementById('recordTraineeSelect');
+if(recordSel)recordSel.addEventListener('change',e=>{const id=Number(e.target.value||0);if(id)loadTraineeRecordDetail(id);else document.getElementById('traineeRecordView').innerHTML='<div class="empty">研修生を選択してください。</div>';});
+const calPrev=document.getElementById('calendarPrevBtn');if(calPrev)calPrev.addEventListener('click',()=>{calendarMonthCursor=new Date(calendarMonthCursor.getFullYear(),calendarMonthCursor.getMonth()-1,1);loadInstructorCalendar();});
+const calNext=document.getElementById('calendarNextBtn');if(calNext)calNext.addEventListener('click',()=>{calendarMonthCursor=new Date(calendarMonthCursor.getFullYear(),calendarMonthCursor.getMonth()+1,1);loadInstructorCalendar();});
+const calFilter=document.getElementById('calendarInstructorFilter');if(calFilter)calFilter.addEventListener('change',()=>loadInstructorCalendar());
+
 restoreAdmin();
 
 
@@ -9459,7 +9572,43 @@ async function handle(request, env, ctx) {
 
 
 
- if(path==="/api/admin/instructor-ranking" && method==="GET"){
+ 
+ let traineeRecordMatch=path.match(/^\/api\/admin\/trainee-records\/(\d+)$/);
+ if(traineeRecordMatch && method==="GET"){
+   await ensureTraineeProfiles(env);await ensureReservationNotifications(env);
+   const id=Number(traineeRecordMatch[1]);
+   const profile=await env.DB.prepare("SELECT id,player_name,discord_id,login_name,COALESCE(admin_memo,'') AS admin_memo,COALESCE(handoff_memo,'') AS handoff_memo,COALESCE(all_completed_at,'') AS all_completed_at FROM trainee_profiles WHERE id=?").bind(id).first();
+   if(!profile)return json({error:"研修生が見つかりません"},404);
+   const keys=[profile.discord_id,profile.login_name,profile.player_name].map(x=>String(x||"").trim().toLowerCase()).filter(Boolean);
+   const q=await env.DB.prepare("SELECT r.id,r.player_name,r.discord_id,r.status,r.note,r.assigned_instructor,r.confirmed_date,r.confirmed_time,r.completed_at,r.exam_result,r.exam_score,COALESCE(t.title,'研修') AS title FROM reservations r LEFT JOIN trainings t ON t.id=r.training_id ORDER BY r.id DESC").all();
+   const rows=(q.results||[]).filter(r=>[r.discord_id,r.player_name].map(x=>String(x||"").trim().toLowerCase()).filter(Boolean).some(k=>keys.includes(k)));
+   const labels={completed:"受講済み",retake:"再受講",absent:"欠席",reserved:"予約確定",pending:"承認待ち",expired:"期限超過",cancelled:"取消"};
+   const history=rows.map(r=>({...r,status_label:labels[r.status]||r.status}));
+   const passValues=new Set(["pass","passed","合格","ok","success"]);
+   const stats={completed:history.filter(x=>x.status==="completed").length,retake:history.filter(x=>x.status==="retake").length,absent:history.filter(x=>x.status==="absent").length,pass:history.filter(x=>passValues.has(String(x.exam_result||"").trim().toLowerCase())).length};
+   return json({ok:true,profile,history,stats});
+ }
+ let traineeHandoffMatch=path.match(/^\/api\/admin\/trainee-records\/(\d+)\/handoff$/);
+ if(traineeHandoffMatch && method==="PATCH"){
+   await ensureTraineeProfiles(env);
+   const b=await request.json().catch(()=>({}));const memo=String(b.memo||"").trim().slice(0,5000);
+   const r=await env.DB.prepare("UPDATE trainee_profiles SET handoff_memo=? WHERE id=?").bind(memo,Number(traineeHandoffMatch[1])).run();
+   if(Number(r.meta?.changes||0)<1)return json({error:"研修生が見つかりません"},404);
+   return json({ok:true,memo});
+ }
+ if(path==="/api/admin/instructor-calendar" && method==="GET"){
+   await ensureInstructors(env);await ensureInstructorAvailability(env);await ensureInstructorDayStatus(env);await ensureReservationInstructor(env);
+   const month=String(url.searchParams.get("month")||"").trim();if(!/^\d{4}-\d{2}$/.test(month))return json({error:"monthはYYYY-MM形式で指定してください"},400);
+   const start=month+"-01";const parts=month.split("-").map(Number),yy=parts[0],mm=parts[1];const nextMonth=(mm===12?(yy+1)+"-01":yy+"-"+String(mm+1).padStart(2,"0"))+"-01";
+   const instructorsQ=await env.DB.prepare("SELECT name,COALESCE(instructor_rank,'教官') AS instructor_rank FROM instructors ORDER BY name COLLATE NOCASE").all();
+   const availabilityQ=await env.DB.prepare("SELECT instructor_name,available_date,start_time,end_time FROM instructor_availability WHERE available_date>=? AND available_date<? ORDER BY available_date,start_time,instructor_name COLLATE NOCASE").bind(start,nextMonth).all();
+   const offQ=await env.DB.prepare("SELECT instructor_name,target_date,status,note FROM instructor_day_status WHERE target_date>=? AND target_date<? AND status='off' ORDER BY target_date,instructor_name COLLATE NOCASE").bind(start,nextMonth).all();
+   const reservationQ=await env.DB.prepare("SELECT COALESCE(r.assigned_instructor,'') AS instructor_name,COALESCE(r.confirmed_date,'') AS confirmed_date,COALESCE(r.confirmed_time,'') AS confirmed_time,COALESCE(t.title,'研修') AS title FROM reservations r LEFT JOIN trainings t ON t.id=r.training_id WHERE r.status='reserved' AND COALESCE(r.assigned_instructor,'')<>'' AND r.confirmed_date>=? AND r.confirmed_date<? ORDER BY r.confirmed_date,r.confirmed_time,r.assigned_instructor").bind(start,nextMonth).all();
+   const items=[];for(const x of (availabilityQ.results||[]))items.push({type:"availability",date:String(x.available_date||""),instructor_name:String(x.instructor_name||""),time:String(x.start_time||"")+"〜"+String(x.end_time||"")});for(const x of (offQ.results||[]))items.push({type:"off",date:String(x.target_date||""),instructor_name:String(x.instructor_name||""),time:"",note:String(x.note||"")});for(const x of (reservationQ.results||[]))items.push({type:"reservation",date:String(x.confirmed_date||""),instructor_name:String(x.instructor_name||""),time:String(x.confirmed_time||""),title:String(x.title||"研修")});
+   return json({ok:true,month,instructors:instructorsQ.results||[],items});
+ }
+
+if(path==="/api/admin/instructor-ranking" && method==="GET"){
    if(!(await isAdmin()))return json({error:"unauthorized"},401);
 
    await ensureTrainingSurveys(env);
