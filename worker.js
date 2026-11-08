@@ -1,11 +1,12 @@
-const APP_VERSION="3.04";
+const APP_VERSION="3.05";
 const SKIP_VERSION_ANNOUNCEMENT=true;
 
 const APP_CHANGELOG=[
-  "研修開始済みなのに開始未確認表示が残る問題を修正",
-  "開始済み予約では開始未確認バッジ・赤い警告・研修開始ボタンを非表示",
-  "開始済み予約は研修中バッジと実際の開始時刻を表示",
-  "予約一覧取得時の開始済み状態判定を強化",
+  "Cloudflare Error 1101（Worker threw exception）を修正",
+  "D1内部監視・DB処理を復元し、Workerの実行時エラーを解消",
+  "画面へのD1確認中ステータス表示だけを無効化",
+  "研修開始済みの研修中表示・開始時刻表示は維持",
+  "開始済み予約の警告・開始ボタン非表示も維持",
   "今回は更新履歴Discordへ投稿しない設定"
 ];
 

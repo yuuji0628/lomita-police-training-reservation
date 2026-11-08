@@ -19,7 +19,7 @@ const json = (data, status = 200) => new Response(JSON.stringify(data), {
   }
 });
 
-const HOTFIX_VERSION = "3.04";
+const HOTFIX_VERSION = "3.05";
 
 async function syncDisplayedVersion(response){
   try{
@@ -30,7 +30,12 @@ async function syncDisplayedVersion(response){
 
     const body = await response.text();
     if(body.includes("ただいまメンテナンス中です") || body.includes("現在メンテナンス中です")){
-      const headers = new Headers(response.headers);
+      if(replaced.includes("</head>")){
+      replaced=replaced.replace("</head>",'<style>#d1StatusInline{display:none!important}</style>'+"</head>");
+    }else if(replaced.includes("</body>")){
+      replaced=replaced.replace("</body>",'<style>#d1StatusInline{display:none!important}</style>'+"</body>");
+    }
+    const headers = new Headers(response.headers);
       headers.delete("content-length");
       return new Response(body,{status:response.status,statusText:response.statusText,headers});
     }
@@ -44,6 +49,7 @@ async function syncDisplayedVersion(response){
       .replace(/Version\s+2\.10/g, "Version " + HOTFIX_VERSION)
       .replace(/Version\s+2\.11/g, "Version " + HOTFIX_VERSION)
       .replace(/Version\s+2\.12/g, "Version " + HOTFIX_VERSION);
+    const d1Widget = "";
     const timeBlockPatterns = [
       /(<div[^>]*class="[^"]*(?:time|clock|jst)[^"]*"[^>]*>[\s\S]*?<\/div>)/i,
       /(<div[^>]*>[\s\S]*?JST[\s\S]*?<\/div>)/i
@@ -52,12 +58,14 @@ async function syncDisplayedVersion(response){
     let placed = false;
     for(const p of timeBlockPatterns){
       if(p.test(replaced)){
-placed = true;
+        replaced = replaced.replace(p, "$1" + d1Widget);
+        placed = true;
         break;
       }
     }
     if(!placed && replaced.includes("</body>")){
-}
+      replaced = replaced.replace("</body>", d1Widget + "</body>");
+    }
 
     const headers = new Headers(response.headers);
     headers.delete("content-length");
@@ -189,6 +197,32 @@ async function safeReservationList(request, env, ctx){
     return fail("D1_SAVER_READ", err?.message || err);
   }
 }
+
+
+
+function isD1QuotaError(err){
+  const s = String(err?.message || err || "").toLowerCase();
+  return (
+    s.includes("exceeded d1's free tier daily row read limit") ||
+    s.includes("daily row read limit") ||
+    s.includes("upgrade to a paid plan or wait until tomorrow") ||
+    (s.includes("d1_error") && s.includes("row read"))
+  );
+}
+
+async function isD1ReadQuotaExhausted(env){
+  if(!env?.DB) return false;
+  try{
+    // 1行だけ読む軽量確認。通常時のD1消費を最小限にする。
+    await env.DB.prepare("SELECT id FROM reservations ORDER BY id DESC LIMIT 1").first();
+    return false;
+  }catch(err){
+    if(isD1QuotaError(err)) return true;
+    // D1上限以外の障害は通常エラー処理に任せる。
+    return false;
+  }
+}
+
 function maintenanceHtml(){
   const nextResetLabel = (() => {
     const now = new Date();
@@ -285,6 +319,84 @@ function maintenanceResponse(){
     }
   });
 }
+
+
+function getNextD1ResetInfo(){
+  const now = new Date();
+
+  // D1 daily limits reset at 00:00 UTC = 09:00 JST.
+  let resetUtc = new Date(Date.UTC(
+    now.getUTCFullYear(),
+    now.getUTCMonth(),
+    now.getUTCDate(),
+    0, 0, 0
+  ));
+  if(resetUtc.getTime() <= now.getTime()){
+    resetUtc = new Date(resetUtc.getTime() + 24*60*60*1000);
+  }
+
+  const jst = new Date(resetUtc.getTime() + 9*60*60*1000);
+  const mm = String(jst.getUTCMonth()+1).padStart(2,"0");
+  const dd = String(jst.getUTCDate()).padStart(2,"0");
+  const hh = String(jst.getUTCHours()).padStart(2,"0");
+  const mi = String(jst.getUTCMinutes()).padStart(2,"0");
+
+  const remainingMs = Math.max(0, resetUtc.getTime() - now.getTime());
+  const totalMinutes = Math.ceil(remainingMs/60000);
+  const hours = Math.floor(totalMinutes/60);
+  const minutes = totalMinutes%60;
+
+  return {
+    reset_at_jst: `${mm}/${dd} ${hh}:${mi}`,
+    remaining_minutes: totalMinutes,
+    remaining_label: `${hours}時間${minutes}分`
+  };
+}
+
+async function getD1Status(env){
+  const reset = getNextD1ResetInfo();
+
+  if(!env?.DB){
+    return {
+      ok:false,
+      status:"error",
+      label:"接続エラー",
+      message:"DB binding が見つかりません",
+      ...reset
+    };
+  }
+
+  try{
+    // 1行だけ読む軽量ヘルスチェック。
+    await env.DB.prepare("SELECT id FROM reservations ORDER BY id DESC LIMIT 1").first();
+    return {
+      ok:true,
+      status:"normal",
+      label:"正常",
+      message:"D1は正常に利用できます",
+      ...reset
+    };
+  }catch(err){
+    if(isD1QuotaError(err)){
+      return {
+        ok:false,
+        status:"maintenance",
+        label:"メンテナンス中",
+        message:"現在メンテナンス中です",
+        ...reset
+      };
+    }
+    return {
+      ok:false,
+      status:"error",
+      label:"確認エラー",
+      message:String(err?.message || err || "UNKNOWN_ERROR").slice(0,300),
+      ...reset
+    };
+  }
+}
+
+
 async function ensureIncidentLog(env){
   try{await env.DB.prepare(`CREATE TABLE IF NOT EXISTS incident_logs(
     id INTEGER PRIMARY KEY AUTOINCREMENT,
