@@ -1,4 +1,4 @@
-const APP_VERSION="2.81";
+const APP_VERSION="2.82";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -5263,7 +5263,7 @@ async function setMaintenanceMode(enabled){
      '<div class="section">登録済みの休み／対応不可</div>'+
      '<div id="acOffList265"></div>'+
      '<div class="section">登録済みの空き時間</div>'+
-     '<div class="sub" style="margin:-4px 0 8px">教官ごとにまとめて表示します。各時間帯の「削除」から個別に削除できます。</div>'+
+     '<div class="sub" style="margin:-4px 0 8px">教官ごとにまとめて表示します。日付をまたぐ連続枠は「翌」を付けて1本にまとめます。</div>'+
      '<div id="acList265"></div>';
 
    let mode='slots';
@@ -5331,10 +5331,39 @@ async function setMaintenanceMode(enabled){
        const days=[];
        for(const [date,items] of byDate){
          items.sort((a,b)=>String(b.start_time||'').localeCompare(String(a.start_time||'')));
-         const chips=items.map(x=>
+
+         // 夜〜深夜をまたぐ連続枠は「22:30〜翌02:30」のように1本へまとめる。
+         const late=items.find(x=>String(x.end_time||'')==='24:00' && String(x.start_time||'')>='18:00');
+         const early=items.find(x=>String(x.start_time||'')==='00:00' && String(x.end_time||'')<='06:00');
+
+         const displayItems=[];
+         const consumed=new Set();
+
+         if(late && early){
+           displayItems.push({
+             ids:[Number(late.id||0),Number(early.id||0)].filter(Boolean),
+             label:String(late.start_time||'')+'〜翌'+String(early.end_time||''),
+             overnight:true
+           });
+           consumed.add(Number(late.id||0));
+           consumed.add(Number(early.id||0));
+         }
+
+         for(const x of items){
+           const id=Number(x.id||0);
+           if(consumed.has(id))continue;
+           displayItems.push({
+             ids:[id].filter(Boolean),
+             label:String(x.start_time||'')+'〜'+String(x.end_time||''),
+             overnight:false
+           });
+         }
+
+         const chips=displayItems.map((x,i)=>
            '<span style="display:inline-flex;align-items:center;gap:7px;padding:7px 10px;border:1px solid #dbe4ee;border-radius:999px;background:#f8fafc;font-size:12px;font-weight:700">'+
-             '<span>'+esc(x.start_time||'')+'〜'+esc(x.end_time||'')+'</span>'+
-             '<button type="button" class="acDel274" data-id="'+Number(x.id||0)+'" aria-label="この時間帯を削除" style="border:1px solid #f3c7c3;background:#fff7f6;color:#b42318;font-weight:800;font-size:11px;padding:4px 7px;border-radius:999px;line-height:1.2">削除</button>'+
+             '<span>'+esc(x.label)+'</span>'+
+             (x.overnight?'<span style="font-size:10px;color:#64748b;font-weight:800">日付またぎ</span>':'')+
+             '<button type="button" class="acDel274" data-ids="'+esc(x.ids.join(','))+'" aria-label="この時間帯を削除" style="border:1px solid #f3c7c3;background:#fff7f6;color:#b42318;font-weight:800;font-size:11px;padding:4px 7px;border-radius:999px;line-height:1.2">削除</button>'+
            '</span>'
          ).join('');
 
@@ -5361,13 +5390,18 @@ async function setMaintenanceMode(enabled){
 
      box.querySelectorAll('.acDel274').forEach(b=>{
        b.onclick=async()=>{
-         if(!confirm('この空き時間を削除しますか？'))return;
-         const r=await fetch('/api/admin/instructor-availability/'+Number(b.dataset.id),{
-           method:'DELETE',
-           headers:auth()
-         });
-         const d=await r.json().catch(()=>({}));
-         if(!r.ok)return alert(d.error||'削除に失敗しました');
+         const ids=String(b.dataset.ids||'').split(',').map(Number).filter(Boolean);
+         if(!ids.length)return;
+         if(!confirm(ids.length>1?'この日付またぎの空き時間をまとめて削除しますか？':'この空き時間を削除しますか？'))return;
+
+         for(const id of ids){
+           const r=await fetch('/api/admin/instructor-availability/'+id,{
+             method:'DELETE',
+             headers:auth()
+           });
+           const d=await r.json().catch(()=>({}));
+           if(!r.ok)return alert(d.error||'削除に失敗しました');
+         }
          openAvailabilityFromMenu();
        };
      });
