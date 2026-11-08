@@ -1,4 +1,4 @@
-const APP_VERSION="2.72";
+const APP_VERSION="2.73";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -5086,6 +5086,8 @@ async function setMaintenanceMode(enabled){
          '<div id="acOffStatus265" class="sub" style="margin-top:7px">教官と日付を選択してください。</div>'+
        '</div>'+
      '</div>'+
+     '<div class="section">登録済みの休み／対応不可</div>'+
+     '<div id="acOffList265"></div>'+
      '<div class="section">登録済みの空き時間</div>'+
      '<div id="acList265"></div>';
 
@@ -5153,6 +5155,49 @@ async function setMaintenanceMode(enabled){
    };
    renderList(rows);
 
+   const renderOffList=async()=>{
+     const list=body.querySelector('#acOffList265');
+     if(!list)return;
+     list.innerHTML='<div class="sub">読み込み中...</div>';
+     try{
+       const r=await fetch('/api/admin/instructor-day-status',{headers:auth(),cache:'no-store'});
+       const d=await r.json().catch(()=>({}));
+       if(!r.ok)throw new Error(d.error||'取得に失敗しました');
+       const rows=(d.rows||[]).filter(x=>String(x.status||'')==='off');
+       if(!rows.length){
+         list.innerHTML='<div class="empty">登録済みの休み／対応不可はありません。</div>';
+         return;
+       }
+       list.innerHTML=rows.map((x,i)=>
+         '<div class="card" style="padding:10px"><div class="between">'+
+           '<div><b>'+esc(x.instructor_name||'')+'</b>'+
+             '<div class="sub">'+esc(x.target_date||'')+'　休み／対応不可</div>'+
+             (x.note?'<div class="sub">'+esc(x.note)+'</div>':'')+
+           '</div>'+
+           '<button type="button" class="btn small danger acOffDel265" data-index="'+i+'">解除</button>'+
+         '</div></div>'
+       ).join('');
+
+       list.querySelectorAll('.acOffDel265').forEach(btn=>{
+         btn.onclick=async()=>{
+           const row=rows[Number(btn.dataset.index)];
+           if(!row)return;
+           if(!confirm(row.instructor_name+' の '+row.target_date+' の休み／対応不可を解除しますか？'))return;
+           const rr=await fetch(
+             '/api/admin/instructor-day-status?instructor='+encodeURIComponent(row.instructor_name)+'&date='+encodeURIComponent(row.target_date),
+             {method:'DELETE',headers:auth()}
+           );
+           const dd=await rr.json().catch(()=>({}));
+           if(!rr.ok)return alert(dd.error||'解除に失敗しました');
+           await renderOffList();
+           await refreshOffStatus();
+         };
+       });
+     }catch(e){
+       list.innerHTML='<div class="notice error">'+esc(String(e?.message||e))+'</div>';
+     }
+   };
+
    const refreshOffStatus=async()=>{
      const instructor=String(body.querySelector('#acInstructor265')?.value||'').trim();
      const date=String(body.querySelector('#acDate265')?.value||'').trim();
@@ -5195,6 +5240,7 @@ async function setMaintenanceMode(enabled){
      const d=await r.json().catch(()=>({}));
      if(!r.ok)return alert(d.error||'休み設定を登録できませんでした');
      await refreshOffStatus();
+     await renderOffList();
      alert('休み／対応不可として登録しました');
    };
 
@@ -5212,8 +5258,11 @@ async function setMaintenanceMode(enabled){
      const d=await r.json().catch(()=>({}));
      if(!r.ok)return alert(d.error||'休み設定を解除できませんでした');
      await refreshOffStatus();
+     await renderOffList();
      alert('休み設定を解除しました');
    };
+
+   await renderOffList();
 
    body.querySelector('#acSave265').onclick=async()=>{
      const instructor=String(body.querySelector('#acInstructor265').value||'').trim();
@@ -8490,12 +8539,18 @@ async function handle(request, env) {
 
  if(path==="/api/admin/instructor-day-status" && method==="GET"){
    await ensureInstructorDayStatus(env);
-   const targetDate=String(url.searchParams.get("date")||jstYmdOffset(1)).trim();
-   if(!/^\d{4}-\d{2}-\d{2}$/.test(targetDate))return json({error:"日付が不正です"},400);
+   const targetDate=String(url.searchParams.get("date")||"").trim();
+   if(targetDate){
+     if(!/^\d{4}-\d{2}-\d{2}$/.test(targetDate))return json({error:"日付が不正です"},400);
+     const q=await env.DB.prepare(
+       "SELECT instructor_name,target_date,status,note,updated_at FROM instructor_day_status WHERE target_date=? ORDER BY instructor_name COLLATE NOCASE"
+     ).bind(targetDate).all();
+     return json({ok:true,target_date:targetDate,rows:q.results||[]});
+   }
    const q=await env.DB.prepare(
-     "SELECT instructor_name,target_date,status,note,updated_at FROM instructor_day_status WHERE target_date=? ORDER BY instructor_name COLLATE NOCASE"
-   ).bind(targetDate).all();
-   return json({ok:true,target_date:targetDate,rows:q.results||[]});
+     "SELECT instructor_name,target_date,status,note,updated_at FROM instructor_day_status ORDER BY target_date DESC,instructor_name COLLATE NOCASE"
+   ).all();
+   return json({ok:true,rows:q.results||[]});
  }
 
  if(path==="/api/admin/instructor-day-status" && method==="POST"){
