@@ -1,3 +1,36 @@
+LOMITA POLICE 研修管理システム Version 2.93
+
+今回のVersionは更新履歴Discordへ投稿しない設定です。
+
+■ 内容
+- Version 2.92の重複投稿修正を含む
+- 更新履歴Discordへの自動投稿だけ一時停止
+- システム本体の機能は通常どおり利用可能
+- 次回Version以降は SKIP_VERSION_ANNOUNCEMENT=false に戻せば通常投稿
+
+■ 注意
+今回の2.93は「投稿しないためのVersion」です。
+Discord更新履歴には残りません。
+
+LOMITA POLICE 研修管理システム Version 2.92
+
+更新履歴Discordの重複投稿を修正
+
+■ 原因
+新Version反映直後に複数アクセスがほぼ同時に入ると、
+複数の処理が「まだ未投稿」と判断し、
+同じVersionを2回投稿する可能性がありました。
+
+■ 修正
+- VersionごとのD1ロックを投稿前に作成
+- INSERT OR IGNORE を使い、最初の1アクセスだけ投稿権を取得
+- 2件目以降の同時アクセスは投稿せず終了
+- Discord送信失敗時だけロックを解除し、次回アクセスで再試行
+
+■ 維持
+- 新Version反映後の最初のアクセスで自動投稿
+- Version番号・更新日時・実際の更新内容を投稿
+
 LOMITA POLICE 研修管理システム Version 2.91
 
 本採用試験の合格Discord通知を「記録用」へ変更
