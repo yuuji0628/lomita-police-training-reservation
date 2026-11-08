@@ -1,4 +1,4 @@
-const APP_VERSION="2.80";
+const APP_VERSION="2.81";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -5330,7 +5330,7 @@ async function setMaintenanceMode(enabled){
      for(const [instructor,byDate] of groups){
        const days=[];
        for(const [date,items] of byDate){
-         items.sort((a,b)=>String(a.start_time||'').localeCompare(String(b.start_time||'')));
+         items.sort((a,b)=>String(b.start_time||'').localeCompare(String(a.start_time||'')));
          const chips=items.map(x=>
            '<span style="display:inline-flex;align-items:center;gap:7px;padding:7px 10px;border:1px solid #dbe4ee;border-radius:999px;background:#f8fafc;font-size:12px;font-weight:700">'+
              '<span>'+esc(x.start_time||'')+'〜'+esc(x.end_time||'')+'</span>'+
