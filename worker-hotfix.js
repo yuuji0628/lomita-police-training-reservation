@@ -19,7 +19,7 @@ const json = (data, status = 200) => new Response(JSON.stringify(data), {
   }
 });
 
-const HOTFIX_VERSION = "3.05";
+const HOTFIX_VERSION = "3.06";
 
 async function syncDisplayedVersion(response){
   try{
@@ -109,7 +109,18 @@ async function ensureReadIndexes(env){
   }catch(_){}
 }
 
+async function ensureTrainingStartedColumn(env){
+  try{
+    const info=await env.DB.prepare("PRAGMA table_info(reservations)").all();
+    const cols=(info?.results||[]).map(x=>String(x.name||"").toLowerCase());
+    if(!cols.includes("training_started_at")){
+      try{await env.DB.prepare("ALTER TABLE reservations ADD COLUMN training_started_at TEXT DEFAULT ''").run();}catch(_){}
+    }
+  }catch(_){}
+}
+
 async function safeReservationList(request, env, ctx){
+  await ensureTrainingStartedColumn(env);
   const fail = (stage, detail, status = 500) => json({
     error: `【診断:${stage}】 ${String(detail || "不明なエラー").slice(0, 700)}`,
     stage,
@@ -148,7 +159,10 @@ async function safeReservationList(request, env, ctx){
         r.assigned_instructor,r.preferred_date,r.preferred_time,
         r.preferred_date2,r.preferred_time2,r.preferred_date3,r.preferred_time3,
         r.confirmed_date,r.confirmed_time,r.confirmed_preference,
-        r.exam_result,r.exam_score,r.created_at,
+        r.exam_result,r.exam_score,
+        COALESCE(r.training_started_at,'') AS training_started_at,
+        CASE WHEN trim(COALESCE(r.training_started_at,''))<>'' THEN 1 ELSE 0 END AS training_started,
+        r.created_at,
         COALESCE(t.title,'研修') AS title,
         COALESCE(t.training_date,'') AS training_date,
         COALESCE(t.start_time,'') AS start_time,
