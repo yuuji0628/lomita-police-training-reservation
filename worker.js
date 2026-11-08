@@ -1,4 +1,12 @@
-const APP_VERSION="2.84";
+const APP_VERSION="2.87";
+
+const APP_CHANGELOG=[
+  "更新履歴通知のタイミングを変更",
+  "新Version反映後、最初のアクセス時に更新履歴専用Discordへ自動投稿",
+  "管理画面を開くまで待たず、公開側アクセスでも通知可能",
+  "同じVersionはD1で記録して重複投稿を防止"
+];
+
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -156,6 +164,61 @@ async function getMaintenanceState(env){
     enabled:String(row?.value||"0")==="1",
     updated_at:String(row?.updated_at||"")
   };
+}
+
+
+async function announceVersionUpdateIfNeeded(env){
+  const webhook=String(env.DISCORD_UPDATE_WEBHOOK_URL||"").trim();
+  if(!webhook)return {ok:false,skipped:true,reason:"no_webhook"};
+
+  await ensureSystemSettings(env);
+
+  const key="discord_update_announced_version";
+  const row=await env.DB.prepare(
+    "SELECT value FROM system_settings WHERE key=?"
+  ).bind(key).first();
+
+  const last=String(row?.value||"").trim();
+  if(last===APP_VERSION)return {ok:true,skipped:true,reason:"already_announced"};
+
+  const jst=new Date(Date.now()+9*60*60*1000);
+  const y=jst.getUTCFullYear();
+  const m=String(jst.getUTCMonth()+1).padStart(2,"0");
+  const d=String(jst.getUTCDate()).padStart(2,"0");
+  const hh=String(jst.getUTCHours()).padStart(2,"0");
+  const mm=String(jst.getUTCMinutes()).padStart(2,"0");
+  const updatedAt=`${y}-${m}-${d} ${hh}:${mm} JST`;
+
+  const content=[
+    "🛠️ **LOMITA POLICE 研修管理システム 更新**",
+    "",
+    `**Version ${APP_VERSION}**`,
+    `**更新日時：** ${updatedAt}`,
+    "",
+    "**今回の更新内容**",
+    ...APP_CHANGELOG.map(x=>`・${x}`)
+  ].join("\n");
+
+  const r=await fetch(webhook,{
+    method:"POST",
+    headers:{"content-type":"application/json"},
+    body:JSON.stringify({
+      content,
+      allowed_mentions:{parse:[]}
+    })
+  });
+
+  if(!r.ok)return {ok:false,status:r.status};
+
+  await env.DB.prepare(`
+    INSERT INTO system_settings(key,value,updated_at)
+    VALUES(?,?,CURRENT_TIMESTAMP)
+    ON CONFLICT(key) DO UPDATE SET
+      value=excluded.value,
+      updated_at=CURRENT_TIMESTAMP
+  `).bind(key,APP_VERSION).run();
+
+  return {ok:true,announced:true,version:APP_VERSION};
 }
 
 async function setMaintenanceState(env,enabled){
@@ -7639,7 +7702,12 @@ restoreAdmin();
 updateJstCurrentTime('admin');setInterval(()=>updateJstCurrentTime('admin'),1000);
 `;
 
-async function handle(request, env) {
+async function handle(request, env, ctx) {
+ try{
+   if(ctx && typeof ctx.waitUntil==="function"){
+     ctx.waitUntil(announceVersionUpdateIfNeeded(env));
+   }
+ }catch(_){}
  const url=new URL(request.url), path=url.pathname, method=request.method;
  const adminPass=env.ADMIN_PASSWORD || "lomita2026";
  if(path==="/api/version" && method==="GET") return json({version:APP_VERSION});
@@ -8144,6 +8212,16 @@ async function handle(request, env) {
  if(path==="/api/admin/check") return (await isAdmin())?json({ok:true}):json({error:"unauthorized"},401);
  if(path.startsWith("/api/admin/") && !(await isAdmin())) return json({error:"unauthorized"},401);
 
+ if(path==="/api/admin/version-announcement" && method==="POST"){
+   const b=await request.json().catch(()=>({}));
+   if(b.force===true){
+     await ensureSystemSettings(env);
+     await env.DB.prepare("DELETE FROM system_settings WHERE key='discord_update_announced_version'").run();
+   }
+   const result=await announceVersionUpdateIfNeeded(env);
+   return json(result,result.ok===false?500:200);
+ }
+
  if(path==="/api/admin/maintenance" && method==="GET"){
    return json(await getMaintenanceState(env));
  }
@@ -8157,6 +8235,7 @@ async function handle(request, env) {
 
  if(path==="/api/admin/stats" && method==="GET"){
    if(!(await isAdmin()))return json({error:"unauthorized"},401);
+   try{await announceVersionUpdateIfNeeded(env)}catch(_){}
    await ensureTraineeProfiles(env);
    await ensureReservationInstructor(env);
    await ensureReservationPreferredSchedule(env);
