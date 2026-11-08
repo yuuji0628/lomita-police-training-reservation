@@ -1,13 +1,13 @@
-const APP_VERSION="3.00";
+const APP_VERSION="3.01";
 const SKIP_VERSION_ANNOUNCEMENT=true;
 
 const APP_CHANGELOG=[
-  "予約カードに研修開始ボタンを追加",
-  "研修開始ボタン押下時に実際の開始時刻を記録",
-  "開始済み予約は研修中として表示",
-  "開始予定から10分経過しても開始ボタン未押下の場合のみDiscordへ警告通知",
-  "10分超過通知の文面を研修開始未確認に変更",
-  "開始済みの予約には10分超過通知を送らない",
+  "管理画面トップの見た目を改善",
+  "D1確認中表示をトップから完全削除",
+  "JST時刻カードを時刻・日付中心のシンプル表示へ変更",
+  "管理状況カードの余白・角丸・数字表示を調整",
+  "承認待ち・処理待ちのみ警告色で視認性を向上",
+  "更新ボタンの主張を弱めて全体を整理",
   "今回は更新履歴Discordへ投稿しない設定"
 ];
 
@@ -4914,34 +4914,34 @@ const ADMIN_BODY = `
 <div id="adminView" style="display:none"><div class="wrap">
  <div class="header"><div class="between"><div><span class="badge">LOMITA POLICE</span><div class="brand">研修管理本部</div><div class="sub">研修・参加申請・受講状況を一括管理</div><div class="sub" style="margin-top:6px;opacity:.78">Version ${APP_VERSION}</div><div id="adminRoleLabel" class="sub" style="margin-top:4px"></div></div><div class="row"><button class="btn small" onclick="logout()">ログアウト</button><button class="btn small" onclick="openManageMenu()">⚠️ここは触らない⚠️</button> </div></div></div>
  <div id="msg"></div>
- <div class="currentTimeBar">
-  <div class="currentTimeLabel">JST</div>
-  <div>
-    <div id="adminCurrentTime" class="currentTimeClock">--:--:--</div>
-    <div id="adminCurrentDate" class="currentTimeDate">----/--/--</div>
+ <div class="currentTimeBar" style="display:flex;align-items:center;justify-content:space-between;gap:14px;padding:14px 16px">
+  <div class="currentTimeLabel" style="font-size:11px;letter-spacing:.18em;font-weight:900;opacity:.72">JST</div>
+  <div style="text-align:right">
+    <div id="adminCurrentTime" class="currentTimeClock" style="font-size:30px;line-height:1;font-weight:1000;letter-spacing:.02em">--:--:--</div>
+    <div id="adminCurrentDate" class="currentTimeDate" style="margin-top:5px;font-size:11px;opacity:.72">----/--/--</div>
   </div>
 </div>
 
 <div class="adminCommand">
-   <div class="adminCommandHead">
-     <div><div class="adminCommandTitle">管理状況</div><div class="adminCommandSub">今対応する内容をここで確認できます</div></div>
-     <button class="btn small" type="button" onclick="refreshAdminNow()">更新</button>
+   <div class="adminCommandHead" style="align-items:center">
+     <div><div class="adminCommandTitle" style="font-size:17px">管理状況</div><div class="adminCommandSub" style="margin-top:3px">今対応する内容をここで確認できます</div></div>
+     <button class="btn small" style="padding:8px 12px;min-height:0;border-radius:12px" type="button" onclick="refreshAdminNow()">更新</button>
    </div>
 
-   <div class="adminDashGrid">
-     <button class="adminDashTile compact" type="button" onclick="openDashboardReservations('today')">
-       <div class="label">今日の研修</div><div id="dashToday" class="num">0</div><div class="hint">今日の予約</div>
+   <div class="adminDashGrid" style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px">
+     <button class="adminDashTile compact" style="padding:14px 10px;border-radius:16px;background:#fff;border:1px solid #d9e1ea;box-shadow:0 3px 10px rgba(13,45,82,.05)" type="button" onclick="openDashboardReservations('today')">
+       <div class="label" style="font-size:12px;font-weight:900">今日の研修</div><div id="dashToday" class="num" style="font-size:32px;line-height:1.05;margin-top:4px">0</div><div class="hint" style="font-size:10px;opacity:.65;margin-top:3px">今日の予約</div>
      </button>
-     <button class="adminDashTile compact alert" type="button" onclick="openDashboardReservations('pending')">
-       <div class="label">承認待ち</div><div id="dashPending" class="num">0</div><div class="hint">確認が必要</div>
+     <button class="adminDashTile compact alert" style="padding:14px 10px;border-radius:16px;background:#fff9e8;border:1px solid #e7c66d;box-shadow:0 3px 10px rgba(140,104,10,.05)" type="button" onclick="openDashboardReservations('pending')">
+       <div class="label" style="font-size:12px;font-weight:900">承認待ち</div><div id="dashPending" class="num" style="font-size:32px;line-height:1.05;margin-top:4px">0</div><div class="hint" style="font-size:10px;opacity:.7;margin-top:3px">確認が必要</div>
      </button>
-     <button class="adminDashTile compact alert" type="button" onclick="openDashboardReservations('overdue')">
-       <div class="label">処理待ち</div><div id="dashOverdue" class="num">0</div><div class="hint">予定時刻を過ぎた予約</div>
+     <button class="adminDashTile compact alert" style="padding:14px 10px;border-radius:16px;background:#fff1f0;border:1px solid #e5a4a0;box-shadow:0 3px 10px rgba(145,58,50,.05)" type="button" onclick="openDashboardReservations('overdue')">
+       <div class="label" style="font-size:12px;font-weight:900">処理待ち</div><div id="dashOverdue" class="num" style="font-size:32px;line-height:1.05;margin-top:4px">0</div><div class="hint" style="font-size:10px;opacity:.7;margin-top:3px">開始未確認・要処理</div>
      </button>
    </div>
 
-   <details class="adminDashDetails">
-     <summary>詳細</summary>
+   <details class="adminDashDetails" style="margin-top:10px">
+     <summary style="font-size:12px;font-weight:900;padding:8px 2px">詳細</summary>
      <div class="adminDashDetailsBody">
        <div class="adminMiniGrid">
          <button class="adminMiniTile" type="button" onclick="openDashboardReservations('week')"><div class="between"><span class="name">今週の研修</span><span id="dashWeek" class="count">0</span></div></button>
