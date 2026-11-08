@@ -1,4 +1,4 @@
-const APP_VERSION="2.76";
+const APP_VERSION="2.77";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -672,6 +672,64 @@ function jstYmdOffset(days=0){
     String(now.getUTCMonth()+1).padStart(2,"0"),
     String(now.getUTCDate()).padStart(2,"0")
   ].join("-");
+}
+
+
+function hhmmToMinutes(value){
+  const m=String(value||"").match(/^(\d{2}):(\d{2})$/);
+  if(!m)return null;
+  const hh=Number(m[1]),mm=Number(m[2]);
+  if(hh===24 && mm===0)return 1440;
+  if(hh<0||hh>23||mm<0||mm>59)return null;
+  return hh*60+mm;
+}
+function minutesToHhmm(total){
+  const n=Math.max(0,Math.min(1440,Number(total)||0));
+  if(n===1440)return "24:00";
+  return String(Math.floor(n/60)).padStart(2,"0")+":"+String(n%60).padStart(2,"0");
+}
+async function getPublicAvailabilityOptions(env,targetDate){
+  await ensureInstructorAvailability(env);
+  await ensureInstructorDayStatus(env);
+
+  const availabilityQ=await env.DB.prepare(`
+    SELECT id,instructor_name,available_date,start_time,end_time
+    FROM instructor_availability
+    WHERE available_date=?
+    ORDER BY start_time,instructor_name COLLATE NOCASE
+  `).bind(targetDate).all();
+
+  const offQ=await env.DB.prepare(`
+    SELECT instructor_name
+    FROM instructor_day_status
+    WHERE target_date=? AND status='off'
+  `).bind(targetDate).all();
+
+  const offNames=new Set(
+    (offQ.results||[])
+      .map(x=>String(x.instructor_name||"").trim().toLowerCase())
+      .filter(Boolean)
+  );
+
+  const options=new Set();
+  for(const row of (availabilityQ.results||[])){
+    const instructor=String(row.instructor_name||"").trim().toLowerCase();
+    if(!instructor || offNames.has(instructor))continue;
+
+    const start=hhmmToMinutes(row.start_time);
+    const end=hhmmToMinutes(row.end_time);
+    if(start===null || end===null || end<=start)continue;
+
+    const duration=end-start;
+    if(duration<=30){
+      if(start<1440)options.add(minutesToHhmm(start));
+      continue;
+    }
+    for(let t=start;t<end;t+=15){
+      if(t<1440)options.add(minutesToHhmm(t));
+    }
+  }
+  return [...options].sort();
 }
 
 async function getMissingAvailabilityInstructors(env,targetDate){
@@ -3688,7 +3746,7 @@ const PUBLIC_BODY = `
 <div id="booking" class="modal"><div class="sheet">
   <button class="btn small" style="float:right" onclick="closeBooking()">閉じる</button>
   <div class="title" id="bookTitle">研修申請</div>
-  <div class="sub" style="margin-top:4px">申請後、管理者が担当教官を選んで承認します。</div><div class="sub" style="margin-top:4px">時間は15分単位（00・15・30・45分）から選択します。</div>
+  <div class="sub" style="margin-top:4px">申請後、管理者が担当教官を選んで承認します。</div><div class="sub" style="margin-top:4px">日付を選ぶと、その日に教官が事前登録した対応可能時間だけ表示されます。</div>
   <div id="bookingMsg"></div>
   <div style="margin-top:8px">
     <div style="font-weight:900;margin-bottom:4px">第1希望 <span style="color:#b42318;font-size:12px">必須</span></div>
@@ -3898,6 +3956,60 @@ async function load(){
    el.innerHTML='<div class="notice error">現在の研修を取得できませんでした。再読み込みしてください。</div>';
  }
 }
+
+function setPreferredTimeLoading(selectId,text='日付を先に選択'){
+ const el=document.getElementById(selectId);
+ if(!el)return;
+ el.innerHTML='<option value="">'+text+'</option>';
+ el.value='';
+ el.disabled=true;
+}
+async function loadPreferredAvailability(dateId,timeId){
+ const dateEl=document.getElementById(dateId);
+ const timeEl=document.getElementById(timeId);
+ if(!dateEl||!timeEl)return;
+ const date=String(dateEl.value||'').trim();
+ if(!date){
+   setPreferredTimeLoading(timeId,'日付を先に選択');
+   return;
+ }
+ timeEl.disabled=true;
+ timeEl.innerHTML='<option value="">空き時間を確認中...</option>';
+ try{
+   const r=await fetch('/api/availability-options?date='+encodeURIComponent(date),{cache:'no-store'});
+   const d=await r.json().catch(()=>({}));
+   if(!r.ok)throw new Error(d.error||'空き時間を取得できませんでした');
+   const options=Array.isArray(d.options)?d.options:[];
+   if(!options.length){
+     timeEl.innerHTML='<option value="">予約可能な時間なし</option>';
+     timeEl.disabled=true;
+     return;
+   }
+   timeEl.innerHTML='<option value="">選択</option>'+
+     options.map(t=>'<option value="'+esc(t)+'">'+esc(t)+'</option>').join('');
+   timeEl.disabled=false;
+ }catch(e){
+   timeEl.innerHTML='<option value="">取得エラー</option>';
+   timeEl.disabled=true;
+ }
+}
+function setupPreferredAvailabilitySelectors(){
+ const pairs=[
+   ['preferredDate','preferredTime'],
+   ['preferredDate2','preferredTime2'],
+   ['preferredDate3','preferredTime3']
+ ];
+ pairs.forEach(([dateId,timeId])=>{
+   const dateEl=document.getElementById(dateId);
+   if(!dateEl)return;
+   if(dateEl.dataset.availabilityBound!=='1'){
+     dateEl.dataset.availabilityBound='1';
+     dateEl.addEventListener('change',()=>loadPreferredAvailability(dateId,timeId));
+   }
+   setPreferredTimeLoading(timeId);
+ });
+}
+
 function openBooking(id,title){
  setTimeout(fitBookingModalToViewport,0);
  selectedTraining={id,title};
@@ -3911,7 +4023,8 @@ function openBooking(id,title){
  document.getElementById('bookTitle').textContent=title+' 申請';
  const now=new Date();
  const local=new Date(now.getTime()-now.getTimezoneOffset()*60000).toISOString().slice(0,10);
- ['preferredDate','preferredDate2','preferredDate3'].forEach(id=>{const el=document.getElementById(id);if(el)el.min=local;});
+ ['preferredDate','preferredDate2','preferredDate3'].forEach(id=>{const el=document.getElementById(id);if(el){el.min=local;el.value='';}});
+ setupPreferredAvailabilitySelectors();
  document.getElementById('booking').classList.add('open')
 }
 function closeBooking(){document.getElementById('booking').classList.remove('open')}
@@ -4307,7 +4420,17 @@ async function submitBooking(){
   })});
   const d=await r.json().catch(()=>({}));
   if(r.status===401){closeBooking();showAuth();return}
-  if(!r.ok){noticeIn('bookingMsg',d.error||'申請できませんでした','error');return}
+  if(!r.ok){
+   noticeIn('bookingMsg',d.error||'申請できませんでした','error');
+   if(d.code==='availability_changed'){
+    await Promise.all([
+     loadPreferredAvailability('preferredDate','preferredTime'),
+     loadPreferredAvailability('preferredDate2','preferredTime2'),
+     loadPreferredAvailability('preferredDate3','preferredTime3')
+    ]);
+   }
+   return
+  }
   closeBooking();[...ids,'note'].forEach(id=>document.getElementById(id).value='');
   show('希望日時を付けて申請しました。承認をお待ちください。','success');await loadMyPage();
  }finally{btn.disabled=false;btn.textContent='申請する'}
@@ -7620,6 +7743,24 @@ async function handle(request, env) {
    if(!/^\d{4}-\d{2}-\d{2}$/.test(preferredDate)||!/^\d{2}:\d{2}$/.test(preferredTime))return json({error:"第1希望の日時は必ず入力してください"},400);
    if((preferredDate2||preferredTime2)&&(!/^\d{4}-\d{2}-\d{2}$/.test(preferredDate2)||!/^\d{2}:\d{2}$/.test(preferredTime2)))return json({error:"第2希望は日付と時間を両方入力してください"},400);
    if((preferredDate3||preferredTime3)&&(!/^\d{4}-\d{2}-\d{2}$/.test(preferredDate3)||!/^\d{2}:\d{2}$/.test(preferredTime3)))return json({error:"第3希望は日付と時間を両方入力してください"},400);
+
+   const validatePreferredAvailability=async(date,time,label)=>{
+     if(!date&&!time)return null;
+     const options=await getPublicAvailabilityOptions(env,date);
+     if(!options.includes(time)){
+       return `${label}の時間は、現在登録されている教官の空き時間ではありません。日付を選び直して候補から選択してください。`;
+     }
+     return null;
+   };
+   for(const [date,time,label] of [
+     [preferredDate,preferredTime,"第1希望"],
+     [preferredDate2,preferredTime2,"第2希望"],
+     [preferredDate3,preferredTime3,"第3希望"]
+   ]){
+     const availabilityError=await validatePreferredAvailability(date,time,label);
+     if(availabilityError)return json({error:availabilityError,code:"availability_changed"},409);
+   }
+
    const key=String(profile.discord_id||profile.login_name||profile.player_name||"").trim();
    let t=await env.DB.prepare("SELECT id,title FROM trainings WHERE id=?").bind(trainingId).first();
    if(!t){
@@ -8405,6 +8546,13 @@ async function handle(request, env) {
      console.error("trainee-history error",err);
      return json({error:"研修履歴の取得中にエラーが発生しました"},500);
    }
+ }
+
+ if(path==="/api/availability-options" && method==="GET"){
+   const targetDate=String(url.searchParams.get("date")||"").trim();
+   if(!/^\d{4}-\d{2}-\d{2}$/.test(targetDate))return json({error:"日付が不正です"},400);
+   const options=await getPublicAvailabilityOptions(env,targetDate);
+   return json({ok:true,date:targetDate,options,count:options.length});
  }
 
  if(path==="/api/training-policy" && method==="GET"){
