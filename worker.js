@@ -1,13 +1,11 @@
-const APP_VERSION="2.98";
+const APP_VERSION="2.99";
 const SKIP_VERSION_ANNOUNCEMENT=true;
 
 const APP_CHANGELOG=[
-  "スマホ向け教官カレンダー表示を改善",
-  "月表示では各日の予定を件数で表示し、文字詰まりを解消",
-  "日付タップでその日の予定詳細を下部カードに表示",
-  "空き時間・休み・予約済み研修を見やすいバッジ表示に変更",
-  "今日の日付を強調表示",
-  "教官絞り込みは従来どおり利用可能",
+  "管理画面トップの表示を整理",
+  "管理状況から再受講件数カードを削除",
+  "JST時刻カードは時刻と日付だけのシンプル表示を維持",
+  "再受講履歴・再受講機能そのものは維持",
   "今回は更新履歴Discordへ投稿しない設定"
 ];
 
@@ -4934,9 +4932,6 @@ const ADMIN_BODY = `
      </button>
      <button class="adminDashTile compact alert" type="button" onclick="openDashboardReservations('overdue')">
        <div class="label">処理待ち</div><div id="dashOverdue" class="num">0</div><div class="hint">予定時刻を過ぎた予約</div>
-     </button>
-     <button class="adminDashTile compact alert" type="button" onclick="openDashboardReservations('retake')">
-       <div class="label">再受講</div><div id="dashRetake" class="num">0</div><div class="hint">再受講が必要</div>
      </button>
    </div>
 
