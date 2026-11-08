@@ -1,13 +1,14 @@
-const APP_VERSION="2.97";
-const SKIP_VERSION_ANNOUNCEMENT=false;
+const APP_VERSION="2.98";
+const SKIP_VERSION_ANNOUNCEMENT=true;
 
 const APP_CHANGELOG=[
-  "研修生カルテを追加し、受講履歴・再受講・試験結果・担当教官・引き継ぎメモを1画面に集約",
-  "教官カレンダーを追加し、空き時間・休み・予約済み研修を日付ごとに表示",
-  "カルテから管理者用の引き継ぎメモを保存可能",
-  "教官カレンダーは月表示で前月・翌月へ移動可能",
-  "既存の予約・空き時間・休みデータをそのまま利用",
-  "今回は更新履歴Discordへ投稿する設定"
+  "スマホ向け教官カレンダー表示を改善",
+  "月表示では各日の予定を件数で表示し、文字詰まりを解消",
+  "日付タップでその日の予定詳細を下部カードに表示",
+  "空き時間・休み・予約済み研修を見やすいバッジ表示に変更",
+  "今日の日付を強調表示",
+  "教官絞り込みは従来どおり利用可能",
+  "今回は更新履歴Discordへ投稿しない設定"
 ];
 
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
@@ -5118,6 +5119,7 @@ const ADMIN_BODY = `
      <div class="field" style="margin-top:10px"><label>教官で絞り込み</label><select id="calendarInstructorFilter"><option value="">全教官</option></select></div>
    </div>
    <div id="instructorCalendarView"><div class="empty">カレンダーを読み込んでいます...</div></div>
+   <div id="calendarDayDetail" class="card" style="margin-top:10px;display:none"></div>
  </div>
 
  <div id="reservationsSection">
@@ -6993,23 +6995,89 @@ async function saveTraineeHandoffMemo(id){
 function formatCalendarYmd(y,m,d){return String(y)+'-'+String(m+1).padStart(2,'0')+'-'+String(d).padStart(2,'0')}
 function calendarMonthKey(){return calendarMonthCursor.getFullYear()+'-'+String(calendarMonthCursor.getMonth()+1).padStart(2,'0')}
 async function loadInstructorCalendar(){
- const view=document.getElementById('instructorCalendarView'),label=document.getElementById('calendarMonthLabel'),filter=document.getElementById('calendarInstructorFilter');
+ const view=document.getElementById('instructorCalendarView'),label=document.getElementById('calendarMonthLabel'),filter=document.getElementById('calendarInstructorFilter'),detail=document.getElementById('calendarDayDetail');
  if(!view||!label||!filter)return;
  const month=calendarMonthKey();label.textContent=calendarMonthCursor.getFullYear()+'年 '+(calendarMonthCursor.getMonth()+1)+'月';
  view.innerHTML='<div class="empty">カレンダーを読み込んでいます...</div>';
+ if(detail){detail.style.display='none';detail.innerHTML='';}
  const r=await fetch('/api/admin/instructor-calendar?month='+encodeURIComponent(month),{headers:auth(),cache:'no-store'});
  const d=await r.json().catch(()=>({}));
  if(!r.ok){view.innerHTML='<div class="notice error">'+esc(d.error||'カレンダーを取得できませんでした')+'</div>';return}
  const current=filter.value,instructors=Array.isArray(d.instructors)?d.instructors:[],items=Array.isArray(d.items)?d.items:[];
  filter.innerHTML='<option value="">全教官</option>'+instructors.map(x=>'<option value="'+esc(x.name)+'">'+esc(x.name)+'［'+esc(x.instructor_rank||'教官')+'］</option>').join('');
  if(current&&instructors.some(x=>x.name===current))filter.value=current;
- const first=new Date(calendarMonthCursor.getFullYear(),calendarMonthCursor.getMonth(),1),last=new Date(calendarMonthCursor.getFullYear(),calendarMonthCursor.getMonth()+1,0),startWeek=first.getDay();
- let html='<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:5px;margin-top:10px">';['日','月','火','水','木','金','土'].forEach(w=>html+='<div style="text-align:center;font-weight:900;font-size:11px">'+w+'</div>');for(let i=0;i<startWeek;i++)html+='<div></div>';
- for(let day=1;day<=last.getDate();day++){const ymd=formatCalendarYmd(first.getFullYear(),first.getMonth(),day),selected=filter.value,dayItems=items.filter(x=>x.date===ymd&&(!selected||x.instructor_name===selected));const rows=dayItems.slice(0,5).map(x=>{const icon=x.type==='off'?'休':x.type==='reservation'?'予':'空';const text=x.type==='off'?esc(x.instructor_name)+' 休み':x.type==='reservation'?esc(x.instructor_name)+' '+esc(x.time||'')+' '+esc(x.title||'研修'):esc(x.instructor_name)+' '+esc(x.time||'');return '<div style="font-size:8px;line-height:1.25;margin-top:2px"><b>'+icon+'</b> '+text+'</div>';}).join('');html+='<div style="min-height:86px;border:1px solid #ead0cd;border-radius:8px;padding:5px;background:#fff"><div style="font-weight:1000;font-size:11px">'+day+'</div>'+rows+(dayItems.length>5?'<div class="sub" style="font-size:8px;margin-top:2px">ほか '+(dayItems.length-5)+'件</div>':'')+'</div>';}
- html+='</div><div class="sub" style="margin-top:8px">空＝空き時間 ／ 休＝休み・対応不可 ／ 予＝予約済み研修</div>';view.innerHTML=html;
+
+ window.__calendarItems=items;
+ window.__calendarSelectedInstructor=filter.value||'';
+
+ const first=new Date(calendarMonthCursor.getFullYear(),calendarMonthCursor.getMonth(),1),
+       last=new Date(calendarMonthCursor.getFullYear(),calendarMonthCursor.getMonth()+1,0),
+       startWeek=first.getDay(),
+       today=new Date(),
+       todayYmd=formatCalendarYmd(today.getFullYear(),today.getMonth(),today.getDate());
+
+ let html='<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:5px;margin-top:10px">';
+ ['日','月','火','水','木','金','土'].forEach(w=>html+='<div style="text-align:center;font-weight:900;font-size:11px;padding-bottom:2px">'+w+'</div>');
+ for(let i=0;i<startWeek;i++)html+='<div></div>';
+
+ for(let day=1;day<=last.getDate();day++){
+   const ymd=formatCalendarYmd(first.getFullYear(),first.getMonth(),day),
+         selected=filter.value,
+         dayItems=items.filter(x=>x.date===ymd&&(!selected||x.instructor_name===selected)),
+         free=dayItems.filter(x=>x.type==='availability').length,
+         off=dayItems.filter(x=>x.type==='off').length,
+         reserved=dayItems.filter(x=>x.type==='reservation').length,
+         isToday=ymd===todayYmd;
+
+   const badgeParts=[];
+   if(free)badgeParts.push('<div style="font-size:9px;font-weight:900;margin-top:3px;padding:2px 4px;border-radius:6px;background:#eaf8ef">空き '+free+'</div>');
+   if(off)badgeParts.push('<div style="font-size:9px;font-weight:900;margin-top:3px;padding:2px 4px;border-radius:6px;background:#f3f3f3">休み '+off+'</div>');
+   if(reserved)badgeParts.push('<div style="font-size:9px;font-weight:900;margin-top:3px;padding:2px 4px;border-radius:6px;background:#eaf1ff">予約 '+reserved+'</div>');
+
+   html+='<button type="button" onclick="showCalendarDayDetail(\''+ymd+'\')" style="appearance:none;text-align:left;min-height:88px;border:'+(isToday?'2px solid #d7ad45':'1px solid #ead0cd')+';border-radius:8px;padding:5px;background:#fff;cursor:pointer">'+
+     '<div style="font-weight:1000;font-size:11px">'+day+(isToday?' <span style="font-size:8px">今日</span>':'')+'</div>'+
+     (badgeParts.length?badgeParts.join(''):'<div style="font-size:9px;color:#9aa3ad;margin-top:6px">予定なし</div>')+
+   '</button>';
+ }
+ html+='</div><div class="sub" style="margin-top:8px">日付をタップすると、その日の予定詳細を確認できます。</div>';
+ view.innerHTML=html;
 }
-let traineeRows=[];
-let traineeStartOptions=[];
+
+function showCalendarDayDetail(ymd){
+ const detail=document.getElementById('calendarDayDetail');
+ if(!detail)return;
+ const items=Array.isArray(window.__calendarItems)?window.__calendarItems:[],
+       selected=String(window.__calendarSelectedInstructor||''),
+       dayItems=items.filter(x=>x.date===ymd&&(!selected||x.instructor_name===selected));
+
+ const d=new Date(ymd+'T00:00:00');
+ const weekdays=['日','月','火','水','木','金','土'];
+ const title=(d.getMonth()+1)+'月'+d.getDate()+'日（'+weekdays[d.getDay()]+'）の予定';
+
+ const order={reservation:1,availability:2,off:3};
+ dayItems.sort((a,b)=>(order[a.type]||9)-(order[b.type]||9)||String(a.time||'').localeCompare(String(b.time||''))||String(a.instructor_name||'').localeCompare(String(b.instructor_name||''),'ja'));
+
+ let body='';
+ if(!dayItems.length){
+   body='<div class="empty" style="margin-top:8px">この日の予定はありません。</div>';
+ }else{
+   body=dayItems.map(x=>{
+     const type=x.type==='reservation'?'予約済み':x.type==='off'?'休み・対応不可':'空き時間';
+     const bg=x.type==='reservation'?'#eaf1ff':x.type==='off'?'#f3f3f3':'#eaf8ef';
+     const icon=x.type==='reservation'?'📘':x.type==='off'?'⛔':'🟢';
+     return '<div style="margin-top:8px;padding:10px;border:1px solid #e5d7d4;border-radius:10px;background:#fff">'+
+       '<div class="between"><div style="font-weight:1000">'+esc(x.instructor_name||'教官')+'</div><span style="font-size:10px;font-weight:900;padding:3px 7px;border-radius:999px;background:'+bg+'">'+icon+' '+type+'</span></div>'+
+       (x.time?'<div class="sub" style="margin-top:5px">時間：<b>'+esc(x.time)+'</b></div>':'')+
+       (x.title?'<div class="sub" style="margin-top:3px">研修：'+esc(x.title)+'</div>':'')+
+       (x.note?'<div class="sub" style="margin-top:3px">備考：'+esc(x.note)+'</div>':'')+
+     '</div>';
+   }).join('');
+ }
+ detail.innerHTML='<div class="between"><div class="title" style="font-size:16px">'+esc(title)+'</div><button class="btn small" type="button" onclick="document.getElementById(\'calendarDayDetail\').style.display=\'none\'">閉じる</button></div>'+body;
+ detail.style.display='block';
+ setTimeout(()=>detail.scrollIntoView({behavior:'smooth',block:'start'}),30);
+}
+
 async function loadTrainees(){
  const [r,optR]=await Promise.all([
    fetch('/api/admin/trainees',{headers:auth(),cache:'no-store'}),
@@ -8085,7 +8153,7 @@ const recordSel=document.getElementById('recordTraineeSelect');
 if(recordSel)recordSel.addEventListener('change',e=>{const id=Number(e.target.value||0);if(id)loadTraineeRecordDetail(id);else document.getElementById('traineeRecordView').innerHTML='<div class="empty">研修生を選択してください。</div>';});
 const calPrev=document.getElementById('calendarPrevBtn');if(calPrev)calPrev.addEventListener('click',()=>{calendarMonthCursor=new Date(calendarMonthCursor.getFullYear(),calendarMonthCursor.getMonth()-1,1);loadInstructorCalendar();});
 const calNext=document.getElementById('calendarNextBtn');if(calNext)calNext.addEventListener('click',()=>{calendarMonthCursor=new Date(calendarMonthCursor.getFullYear(),calendarMonthCursor.getMonth()+1,1);loadInstructorCalendar();});
-const calFilter=document.getElementById('calendarInstructorFilter');if(calFilter)calFilter.addEventListener('change',()=>loadInstructorCalendar());
+const calFilter=document.getElementById('calendarInstructorFilter');if(calFilter)calFilter.addEventListener('change',()=>{window.__calendarSelectedInstructor=calFilter.value||'';loadInstructorCalendar();});
 
 restoreAdmin();
 
