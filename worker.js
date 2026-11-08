@@ -1,12 +1,13 @@
-const APP_VERSION="3.06";
+const APP_VERSION="3.07";
 const SKIP_VERSION_ANNOUNCEMENT=true;
 
 const APP_CHANGELOG=[
-  "開始済み研修が画面で未開始扱いになる問題を修正",
-  "worker-hotfix.js の予約一覧APIに training_started_at を追加",
-  "開始済み予約は研修中表示・開始時刻表示へ正しく切り替え",
-  "開始未確認バッジ・赤い警告・研修開始ボタンを開始済みでは非表示",
-  "処理待ち・要対応集計でも開始済み予約を除外",
+  "研修生カルテを見やすく全面整理",
+  "修了進捗を進捗バーと修了数/総研修数で表示",
+  "最終受講日・再受講履歴・合格数をサマリー表示",
+  "現在も再受講が必要な研修と未修了研修を要確認欄へ表示",
+  "教官引き継ぎメモを独立カード化",
+  "受講履歴を時系列カードで見やすく表示",
   "今回は更新履歴Discordへ投稿しない設定"
 ];
 
@@ -7007,18 +7008,87 @@ async function loadTraineeRecordDetail(id){
  const r=await fetch('/api/admin/trainee-records/'+Number(id),{headers:auth(),cache:'no-store'});
  const d=await r.json().catch(()=>({}));
  if(!r.ok){view.innerHTML='<div class="notice error">'+esc(d.error||'カルテを取得できませんでした')+'</div>';return}
- const p=d.profile||{},history=Array.isArray(d.history)?d.history:[],stats=d.stats||{};
- view.innerHTML='<div class="card"><div class="between"><div><div class="title" style="font-size:18px">'+esc(p.player_name||p.login_name||'研修生')+'</div><div class="sub">'+esc(p.discord_id||'Discord ID未登録')+'</div></div><span class="pill">'+(p.all_completed_at?'全研修修了':'研修中')+'</span></div>'+
- '<div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px;margin-top:10px">'+
- '<div style="padding:8px;border:1px solid #ead0cd;border-radius:9px"><div class="sub">受講済み</div><div style="font-size:18px;font-weight:1000">'+Number(stats.completed||0)+'件</div></div>'+
- '<div style="padding:8px;border:1px solid #ead0cd;border-radius:9px"><div class="sub">再受講</div><div style="font-size:18px;font-weight:1000">'+Number(stats.retake||0)+'件</div></div>'+
- '<div style="padding:8px;border:1px solid #ead0cd;border-radius:9px"><div class="sub">合格</div><div style="font-size:18px;font-weight:1000">'+Number(stats.pass||0)+'件</div></div>'+
- '<div style="padding:8px;border:1px solid #ead0cd;border-radius:9px"><div class="sub">欠席</div><div style="font-size:18px;font-weight:1000">'+Number(stats.absent||0)+'件</div></div></div>'+
- '<div class="field" style="margin-top:10px"><label>教官引き継ぎメモ</label><textarea id="recordHandoffMemo" rows="5" maxlength="5000" placeholder="次回担当教官へ共有したい内容">'+esc(p.handoff_memo||'')+'</textarea></div>'+
- '<button class="btn primary small" type="button" onclick="saveTraineeHandoffMemo('+Number(p.id||0)+')">引き継ぎメモを保存</button></div>'+
- '<div class="section" style="margin-top:12px">受講履歴</div>'+
- (history.length?history.map(x=>{const result=String(x.exam_result||'').trim();const dt=[x.confirmed_date||x.completed_at||'',x.confirmed_time||''].filter(Boolean).join(' ');return '<div class="card" style="margin-top:8px"><div class="between"><div class="title" style="font-size:15px">'+esc(x.title||'研修')+'</div><span class="pill '+esc(x.status||'')+'">'+esc(x.status_label||x.status||'')+'</span></div><div class="sub" style="margin-top:6px">担当教官：'+esc(x.assigned_instructor||'未設定')+'</div>'+(dt?'<div class="sub">日時：'+esc(dt)+'</div>':'')+(result?'<div class="sub">試験結果：'+esc(result)+(x.exam_score!==null&&x.exam_score!==undefined&&x.exam_score!==''?' ／ '+esc(String(x.exam_score))+'点':'')+'</div>':'')+(x.note?'<div class="sub" style="margin-top:5px">備考：'+esc(x.note)+'</div>':'')+'</div>';}).join(''):'<div class="empty">履歴はまだありません。</div>');
+
+ const p=d.profile||{},
+       history=Array.isArray(d.history)?d.history:[],
+       stats=d.stats||{},
+       cycle=d.cycle_info||{},
+       requirements=Array.isArray(d.requirements)?d.requirements:[];
+
+ const total=Number(cycle.total||requirements.length||0);
+ const completedUnique=Number(cycle.completed||0);
+ const percent=total>0?Math.max(0,Math.min(100,Math.round((completedUnique/total)*100))):0;
+
+ const historyDates=history.map(x=>String(x.completed_at||x.confirmed_date||'').slice(0,10)).filter(x=>/^\d{4}-\d{2}-\d{2}$/.test(x)).sort();
+ const latestDate=historyDates.length?historyDates[historyDates.length-1]:'―';
+
+ const retakeNeeded=requirements.filter(x=>x.state==='retake');
+ const unfinished=requirements.filter(x=>x.state==='uncompleted');
+ const scheduled=requirements.filter(x=>x.state==='scheduled');
+
+ const stateLabel=p.all_completed_at?'全研修修了':'研修中';
+ const summaryHtml=
+   '<div class="card" style="padding:14px;border:1px solid #ccd8e5;background:linear-gradient(180deg,#fff,#f8fbff)">'+
+     '<div class="between" style="align-items:flex-start;gap:10px">'+
+       '<div style="min-width:0"><div class="title" style="font-size:21px">'+esc(p.player_name||p.login_name||'研修生')+'</div><div class="sub" style="margin-top:3px">'+esc(p.discord_id||'Discord ID未登録')+'</div></div>'+
+       '<span class="pill" style="'+(p.all_completed_at?'background:#e8f6ee;color:#147d43':'background:#edf2f8;color:#40556c')+'">'+stateLabel+'</span>'+
+     '</div>'+
+     '<div style="margin-top:14px"><div class="between"><div style="font-weight:1000">研修進捗</div><div style="font-size:14px;font-weight:1000">'+completedUnique+' / '+(total||'―')+' 修了</div></div>'+
+       '<div style="height:12px;border-radius:999px;background:#e6ebf1;overflow:hidden;margin-top:7px"><div style="height:100%;width:'+percent+'%;background:#1659a7;border-radius:999px"></div></div>'+
+       '<div class="sub" style="margin-top:5px">'+percent+'% 完了</div>'+
+     '</div>'+
+     '<div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px;margin-top:12px">'+
+       '<div style="padding:9px 7px;border:1px solid #dce4ed;border-radius:11px;background:#fff"><div class="sub">最終受講日</div><div style="font-size:13px;font-weight:1000;margin-top:3px">'+esc(latestDate)+'</div></div>'+
+       '<div style="padding:9px 7px;border:1px solid #f0c9c4;border-radius:11px;background:#fffafa"><div class="sub">再受講履歴</div><div style="font-size:18px;font-weight:1000;margin-top:3px;color:#a43b32">'+Number(stats.retake||0)+'件</div></div>'+
+       '<div style="padding:9px 7px;border:1px solid #cfe5d8;border-radius:11px;background:#f9fffb"><div class="sub">合格</div><div style="font-size:18px;font-weight:1000;margin-top:3px;color:#147d43">'+Number(stats.pass||0)+'件</div></div>'+
+     '</div>'+
+   '</div>';
+
+ let attentionRows=[];
+ retakeNeeded.forEach(x=>attentionRows.push({icon:'🔴',label:'再受講',title:x.title,bg:'#fff5f4',border:'#efb7b1',color:'#a23830'}));
+ unfinished.forEach(x=>attentionRows.push({icon:'○',label:'未修了',title:x.title,bg:'#fffaf0',border:'#ead08b',color:'#7c5b00'}));
+ scheduled.forEach(x=>attentionRows.push({icon:'📅',label:'予約中',title:x.title,bg:'#f3f7ff',border:'#c8d8f2',color:'#245b9e'}));
+
+ const attentionHtml=
+   '<div class="section" style="margin-top:13px">現在の要確認</div>'+
+   '<div class="card" style="padding:10px">'+
+     (attentionRows.length
+       ?attentionRows.map(x=>'<div style="display:flex;align-items:center;gap:9px;padding:9px 10px;border:1px solid '+x.border+';background:'+x.bg+';border-radius:10px;margin-top:6px"><span>'+x.icon+'</span><div style="min-width:0;flex:1"><div style="font-size:10px;font-weight:900;color:'+x.color+'">'+x.label+'</div><div style="font-weight:1000;font-size:13px;margin-top:1px">'+esc(x.title||'研修')+'</div></div></div>').join('')
+       :'<div class="empty">現在、要確認の研修はありません。</div>')+
+   '</div>';
+
+ const memoHtml=
+   '<div class="section" style="margin-top:13px">教官引き継ぎメモ</div>'+
+   '<div class="card" style="border:1px solid #d9c67a;background:#fffdf6">'+
+     '<div class="sub" style="margin-bottom:8px">次回担当する教官へ共有したい内容を残せます。</div>'+
+     '<textarea id="recordHandoffMemo" rows="5" maxlength="5000" placeholder="例：前回つまずいた点、次回重点的に確認する内容">'+esc(p.handoff_memo||'')+'</textarea>'+
+     '<button class="btn primary small" style="width:100%;margin-top:8px" type="button" onclick="saveTraineeHandoffMemo('+Number(p.id||0)+')">引き継ぎメモを保存</button>'+
+   '</div>';
+
+ const historyHtml=
+   '<div class="section" style="margin-top:13px">受講履歴</div>'+
+   (history.length?history.map(x=>{
+      const result=String(x.exam_result||'').trim();
+      const dt=[x.completed_at||x.confirmed_date||'',x.confirmed_time||''].filter(Boolean).join(' ');
+      const isRetake=x.status==='retake';
+      const isCompleted=x.status==='completed';
+      const border=isRetake?'#e7aaa4':isCompleted?'#a9d5ba':'#d6dee8';
+      const bg=isRetake?'#fff9f8':isCompleted?'#f8fffb':'#fff';
+      const resultText=result?(result==='pass'?'合格':result==='fail'?'不合格':result):'';
+      return '<div class="card" style="margin-top:8px;border-left:5px solid '+border+';background:'+bg+'">'+
+        '<div class="between" style="align-items:flex-start;gap:8px"><div style="min-width:0;flex:1"><div class="title" style="font-size:14px">'+esc(x.title||'研修')+'</div>'+(dt?'<div class="sub" style="margin-top:4px">'+esc(dt)+'</div>':'')+'</div>'+
+        '<span class="pill '+esc(x.status||'')+'">'+esc(x.status_label||x.status||'')+'</span></div>'+
+        '<div style="margin-top:8px;padding-top:7px;border-top:1px solid #e5eaf0">'+
+          '<div class="sub">担当教官：<b>'+esc(x.assigned_instructor||'未設定')+'</b></div>'+
+          (resultText?'<div class="sub" style="margin-top:3px">試験結果：<b>'+esc(resultText)+(x.exam_score!==null&&x.exam_score!==undefined&&x.exam_score!==''?' ／ '+esc(String(x.exam_score))+'点':'')+'</b></div>':'')+
+          (x.note?'<div class="sub" style="margin-top:3px">備考：'+esc(x.note)+'</div>':'')+
+        '</div>'+
+      '</div>';
+   }).join(''):'<div class="empty">履歴はまだありません。</div>');
+
+ view.innerHTML=summaryHtml+attentionHtml+memoHtml+historyHtml;
 }
+
 async function saveTraineeHandoffMemo(id){
  const memo=String(document.getElementById('recordHandoffMemo')?.value||'').trim();
  const r=await fetch('/api/admin/trainee-records/'+Number(id)+'/handoff',{method:'PATCH',headers:auth(),body:JSON.stringify({memo})});
@@ -9707,13 +9777,37 @@ async function handle(request, env, ctx) {
    const profile=await env.DB.prepare("SELECT id,player_name,discord_id,login_name,COALESCE(admin_memo,'') AS admin_memo,COALESCE(handoff_memo,'') AS handoff_memo,COALESCE(all_completed_at,'') AS all_completed_at FROM trainee_profiles WHERE id=?").bind(id).first();
    if(!profile)return json({error:"研修生が見つかりません"},404);
    const keys=[profile.discord_id,profile.login_name,profile.player_name].map(x=>String(x||"").trim().toLowerCase()).filter(Boolean);
-   const q=await env.DB.prepare("SELECT r.id,r.player_name,r.discord_id,r.status,r.note,r.assigned_instructor,r.confirmed_date,r.confirmed_time,r.completed_at,r.exam_result,r.exam_score,COALESCE(t.title,'研修') AS title FROM reservations r LEFT JOIN trainings t ON t.id=r.training_id ORDER BY r.id DESC").all();
+   const q=await env.DB.prepare("SELECT r.id,r.training_id,r.player_name,r.discord_id,r.status,r.note,r.assigned_instructor,r.confirmed_date,r.confirmed_time,r.completed_at,r.exam_result,r.exam_score,COALESCE(t.title,'研修') AS title FROM reservations r LEFT JOIN trainings t ON t.id=r.training_id ORDER BY r.id DESC").all();
    const rows=(q.results||[]).filter(r=>[r.discord_id,r.player_name].map(x=>String(x||"").trim().toLowerCase()).filter(Boolean).some(k=>keys.includes(k)));
    const labels={completed:"受講済み",retake:"再受講",absent:"欠席",reserved:"予約確定",pending:"承認待ち",expired:"期限超過",cancelled:"取消"};
    const history=rows.map(r=>({...r,status_label:labels[r.status]||r.status}));
    const passValues=new Set(["pass","passed","合格","ok","success"]);
    const stats={completed:history.filter(x=>x.status==="completed").length,retake:history.filter(x=>x.status==="retake").length,absent:history.filter(x=>x.status==="absent").length,pass:history.filter(x=>passValues.has(String(x.exam_result||"").trim().toLowerCase())).length};
-   return json({ok:true,profile,history,stats});
+
+   const cycle_info=await getTraineeCycleInfo(env,profile);
+
+   await ensureTrainingPrograms(env);
+   const programsQ=await env.DB.prepare(`
+     SELECT p.training_id,COALESCE(t.title,p.name,'研修') AS title,COALESCE(p.sort_order,p.id) AS sort_order
+     FROM training_programs p
+     LEFT JOIN trainings t ON t.id=p.training_id
+     WHERE COALESCE(p.active,1)=1 AND p.training_id IS NOT NULL
+     ORDER BY COALESCE(p.sort_order,p.id),p.id
+   `).all();
+
+   const requirements=(programsQ.results||[]).map(program=>{
+     const trainingId=Number(program.training_id||0);
+     const rows=history.filter(x=>Number(x.training_id||0)===trainingId);
+     const hasCompleted=rows.some(x=>x.status==="completed");
+     const latest=rows[0]||null;
+     let state="uncompleted";
+     if(hasCompleted)state="completed";
+     else if(latest?.status==="retake")state="retake";
+     else if(["reserved","pending"].includes(String(latest?.status||"")))state="scheduled";
+     return {training_id:trainingId,title:String(program.title||"研修"),state};
+   });
+
+   return json({ok:true,profile,history,stats,cycle_info,requirements});
  }
  let traineeHandoffMatch=path.match(/^\/api\/admin\/trainee-records\/(\d+)\/handoff$/);
  if(traineeHandoffMatch && method==="PATCH"){
