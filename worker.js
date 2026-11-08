@@ -1,10 +1,11 @@
-const APP_VERSION="2.91";
+const APP_VERSION="2.93";
+const SKIP_VERSION_ANNOUNCEMENT=true;
 
 const APP_CHANGELOG=[
-  "本採用試験の合格Discord通知を記録用の簡潔な形式へ変更",
-  "お祝い・発表文を削除し、合格記録として必要な情報だけ表示",
-  "研修生名・試験名・点数・担当教官・合格日時を記録",
-  "本採用試験のみ通知・重複送信防止は維持"
+  "Version 2.92の重複投稿修正を含むビルド",
+  "今回のVersionは更新履歴Discordへ投稿しない設定",
+  "次回以降はSKIP_VERSION_ANNOUNCEMENTをfalseへ戻せば通常投稿",
+  "更新履歴のD1重複防止ロックは維持"
 ];
 
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
@@ -246,18 +247,27 @@ async function getMaintenanceState(env){
 
 
 async function announceVersionUpdateIfNeeded(env){
+  if(SKIP_VERSION_ANNOUNCEMENT){
+    return {ok:true,skipped:true,reason:"version_announcement_disabled"};
+  }
   const webhook=String(env.DISCORD_UPDATE_WEBHOOK_URL||"").trim();
   if(!webhook)return {ok:false,skipped:true,reason:"no_webhook"};
 
   await ensureSystemSettings(env);
 
-  const key="discord_update_announced_version";
-  const row=await env.DB.prepare(
-    "SELECT value FROM system_settings WHERE key=?"
-  ).bind(key).first();
+  // 同時アクセス対策:
+  // Versionごとのロックキーを先にD1へINSERTする。
+  // INSERT OR IGNOREで最初の1リクエストだけがchanges=1になり投稿権を得る。
+  const lockKey=`discord_update_lock_${APP_VERSION}`;
+  const lockResult=await env.DB.prepare(`
+    INSERT OR IGNORE INTO system_settings(key,value,updated_at)
+    VALUES(?, 'sending', CURRENT_TIMESTAMP)
+  `).bind(lockKey).run();
 
-  const last=String(row?.value||"").trim();
-  if(last===APP_VERSION)return {ok:true,skipped:true,reason:"already_announced"};
+  const acquired=Number(lockResult?.meta?.changes||0)>0;
+  if(!acquired){
+    return {ok:true,skipped:true,reason:"already_locked_or_announced"};
+  }
 
   const jst=new Date(Date.now()+9*60*60*1000);
   const y=jst.getUTCFullYear();
@@ -277,26 +287,43 @@ async function announceVersionUpdateIfNeeded(env){
     ...APP_CHANGELOG.map(x=>`・${x}`)
   ].join("\n");
 
-  const r=await fetch(webhook,{
-    method:"POST",
-    headers:{"content-type":"application/json"},
-    body:JSON.stringify({
-      content,
-      allowed_mentions:{parse:[]}
-    })
-  });
+  try{
+    const r=await fetch(webhook,{
+      method:"POST",
+      headers:{"content-type":"application/json"},
+      body:JSON.stringify({
+        content,
+        allowed_mentions:{parse:[]}
+      })
+    });
 
-  if(!r.ok)return {ok:false,status:r.status};
+    if(!r.ok){
+      // 失敗時はロックを外して、次回アクセスで再試行できるようにする。
+      await env.DB.prepare("DELETE FROM system_settings WHERE key=?").bind(lockKey).run();
+      return {ok:false,status:r.status};
+    }
 
-  await env.DB.prepare(`
-    INSERT INTO system_settings(key,value,updated_at)
-    VALUES(?,?,CURRENT_TIMESTAMP)
-    ON CONFLICT(key) DO UPDATE SET
-      value=excluded.value,
-      updated_at=CURRENT_TIMESTAMP
-  `).bind(key,APP_VERSION).run();
+    await env.DB.prepare(`
+      UPDATE system_settings
+      SET value='sent', updated_at=CURRENT_TIMESTAMP
+      WHERE key=?
+    `).bind(lockKey).run();
 
-  return {ok:true,announced:true,version:APP_VERSION};
+    await env.DB.prepare(`
+      INSERT INTO system_settings(key,value,updated_at)
+      VALUES('discord_update_announced_version',?,CURRENT_TIMESTAMP)
+      ON CONFLICT(key) DO UPDATE SET
+        value=excluded.value,
+        updated_at=CURRENT_TIMESTAMP
+    `).bind(APP_VERSION).run();
+
+    return {ok:true,announced:true,version:APP_VERSION};
+  }catch(e){
+    try{
+      await env.DB.prepare("DELETE FROM system_settings WHERE key=?").bind(lockKey).run();
+    }catch(_){}
+    return {ok:false,error:String(e?.message||e)};
+  }
 }
 
 async function setMaintenanceState(env,enabled){
@@ -8295,6 +8322,7 @@ async function handle(request, env, ctx) {
    if(b.force===true){
      await ensureSystemSettings(env);
      await env.DB.prepare("DELETE FROM system_settings WHERE key='discord_update_announced_version'").run();
+     await env.DB.prepare("DELETE FROM system_settings WHERE key=?").bind(`discord_update_lock_${APP_VERSION}`).run();
    }
    const result=await announceVersionUpdateIfNeeded(env);
    return json(result,result.ok===false?500:200);
