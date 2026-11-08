@@ -1,4 +1,4 @@
-const APP_VERSION="2.79";
+const APP_VERSION="2.80";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -83,6 +83,25 @@ async function ensureTraineeProfiles(env) {
     try { await env.DB.prepare("ALTER TABLE trainee_profiles ADD COLUMN all_completed_at TEXT DEFAULT ''").run(); } catch (_) {}
   }
 
+
+}
+
+async function getFullyCompletedTraineeKeys(env){
+  await ensureTraineeProfiles(env);
+  const q=await env.DB.prepare(`
+    SELECT player_name,discord_id,login_name
+    FROM trainee_profiles
+    WHERE trim(COALESCE(all_completed_at,''))<>''
+  `).all();
+
+  const keys=new Set();
+  for(const row of (q.results||[])){
+    for(const value of [row.discord_id,row.login_name,row.player_name]){
+      const key=String(value||"").trim().toLowerCase();
+      if(key)keys.add(key);
+    }
+  }
+  return keys;
 }
 
 function randomToken(bytes=16){
@@ -4688,7 +4707,7 @@ const ADMIN_BODY = `
    </div>
    <div class="completedAdminBox" id="retakeHistoryBox">
      <div class="completedAdminHead"><div class="completedAdminTitle">再受講履歴</div><div id="retakeAdminCount" class="completedAdminCount">0</div></div>
-     <div class="sub" style="margin-bottom:8px">現在も再受講が必要な記録だけを表示します。Discord IDまたは研修生名で同一人物を判定し、同じ研修を後から受講済みにした場合は自動的に一覧から外れます。</div>
+     <div class="sub" style="margin-bottom:8px">現在も再受講が必要な記録だけを表示します。全研修修了済みの研修生は、過去の再受講記録が残っていても一覧・件数から除外します。</div>
      <div id="retakeAdminList"><div class="empty">再受講履歴はありません。</div></div>
    </div>
    <div class="completedAdminBox">
@@ -5679,6 +5698,27 @@ async function loadReservationControl(){
  }
  const all=Array.isArray(d)?d:[];
  const completed=all.filter(x=>x.status==='completed');
+ let fullCompletedKeys221=new Set();
+ try{
+   const tr=await fetch('/api/admin/trainees',{headers:auth(),cache:'no-store'});
+   const td=await tr.json().catch(()=>[]);
+   if(tr.ok && Array.isArray(td)){
+     for(const p of td){
+       if(!p?.all_completed)continue;
+       for(const v of [p.discord_id,p.login_name,p.player_name]){
+         const k=String(v||'').trim().toLowerCase();
+         if(k)fullCompletedKeys221.add(k);
+       }
+     }
+   }
+ }catch(_){}
+ const rowIsFullyCompleted221=(x)=>{
+   const keys=[
+     String(x?.discord_id||'').trim().toLowerCase(),
+     String(x?.player_name||'').trim().toLowerCase()
+   ].filter(Boolean);
+   return keys.some(k=>fullCompletedKeys221.has(k));
+ };
  const sameReservationPerson=(a,b)=>{
    const ad=String(a?.discord_id||'').trim().toLowerCase();
    const bd=String(b?.discord_id||'').trim().toLowerCase();
@@ -5694,6 +5734,7 @@ async function loadReservationControl(){
  };
  const retakeHistory=all.filter(x=>{
    if(x.status!=='retake')return false;
+   if(rowIsFullyCompleted221(x))return false;
    const retakeId=Number(x.id||0);
    return !all.some(y=>
      y.status==='completed' &&
@@ -7931,78 +7972,69 @@ async function handle(request, env) {
      "SELECT COUNT(*) c FROM reservations WHERE status='pending' AND trim(COALESCE(assigned_instructor,''))=''"
    ).first();
    const expired=await env.DB.prepare("SELECT COUNT(*) c FROM reservations WHERE status='expired'").first();
-   const retake=await env.DB.prepare(`
-     SELECT COUNT(*) c
+   const fullCompletedKeys=await getFullyCompletedTraineeKeys(env);
+
+   const retakeRowsQ=await env.DB.prepare(`
+     SELECT r.id,r.training_id,r.player_name,r.discord_id,COALESCE(rt.title,'') AS title
      FROM reservations r
      LEFT JOIN trainings rt ON rt.id=r.training_id
      WHERE r.status='retake'
-       AND NOT EXISTS (
-         SELECT 1
-         FROM reservations c
-         LEFT JOIN trainings ct ON ct.id=c.training_id
-         WHERE c.status='completed'
-           AND c.id>r.id
-           AND (
-             c.training_id=r.training_id
-             OR (
-               trim(COALESCE(ct.title,''))<>''
-               AND trim(COALESCE(rt.title,''))<>''
-               AND lower(trim(ct.title))=lower(trim(rt.title))
-             )
-           )
-           AND (
-             (
-               trim(COALESCE(c.discord_id,''))<>''
-               AND trim(COALESCE(r.discord_id,''))<>''
-               AND lower(trim(c.discord_id))=lower(trim(r.discord_id))
-             )
-             OR (
-               trim(COALESCE(c.player_name,''))<>''
-               AND trim(COALESCE(r.player_name,''))<>''
-               AND lower(trim(c.player_name))=lower(trim(r.player_name))
-             )
-           )
-       )
-   `).first();
+     ORDER BY r.id ASC
+   `).all();
+
+   const completedRowsQ=await env.DB.prepare(`
+     SELECT c.id,c.training_id,c.player_name,c.discord_id,COALESCE(ct.title,'') AS title
+     FROM reservations c
+     LEFT JOIN trainings ct ON ct.id=c.training_id
+     WHERE c.status='completed'
+     ORDER BY c.id ASC
+   `).all();
+
+   const samePersonStats=(a,b)=>{
+     const ad=String(a?.discord_id||"").trim().toLowerCase();
+     const bd=String(b?.discord_id||"").trim().toLowerCase();
+     const an=String(a?.player_name||"").trim().toLowerCase();
+     const bn=String(b?.player_name||"").trim().toLowerCase();
+     return (!!ad&&!!bd&&ad===bd)|| (!!an&&!!bn&&an===bn);
+   };
+
+   const sameTrainingStats=(a,b)=>{
+     const aid=Number(a?.training_id||0),bid=Number(b?.training_id||0);
+     const at=String(a?.title||"").trim().toLowerCase();
+     const bt=String(b?.title||"").trim().toLowerCase();
+     return (!!aid&&!!bid&&aid===bid)|| (!!at&&!!bt&&at===bt);
+   };
+
+   const isFullyCompletedStats=(r)=>{
+     const keys=[
+       String(r?.discord_id||"").trim().toLowerCase(),
+       String(r?.player_name||"").trim().toLowerCase()
+     ].filter(Boolean);
+     return keys.some(k=>fullCompletedKeys.has(k));
+   };
+
+   const unresolvedRetakes=(retakeRowsQ.results||[]).filter(r=>{
+     if(isFullyCompletedStats(r))return false;
+     return !(completedRowsQ.results||[]).some(c=>
+       Number(c.id||0)>Number(r.id||0) &&
+       samePersonStats(r,c) &&
+       sameTrainingStats(r,c)
+     );
+   });
+
+   const unresolvedRetakePeople=new Set();
+   for(const r of unresolvedRetakes){
+     const key=String(r.discord_id||r.player_name||"").trim().toLowerCase();
+     if(key)unresolvedRetakePeople.add(key);
+   }
+
+   const retake={c:unresolvedRetakes.length};
 
    const trainees=await env.DB.prepare("SELECT COUNT(*) c FROM trainee_profiles").first();
    const fullCompleted=await env.DB.prepare(
      "SELECT COUNT(*) c FROM trainee_profiles WHERE trim(COALESCE(all_completed_at,''))<>''"
    ).first();
-   const retakeTrainees=await env.DB.prepare(`
-     SELECT COUNT(DISTINCT lower(trim(COALESCE(NULLIF(r.discord_id,''),r.player_name,'')))) c
-     FROM reservations r
-     LEFT JOIN trainings rt ON rt.id=r.training_id
-     WHERE r.status='retake'
-       AND trim(COALESCE(NULLIF(r.discord_id,''),r.player_name,''))<>''
-       AND NOT EXISTS (
-         SELECT 1
-         FROM reservations c
-         LEFT JOIN trainings ct ON ct.id=c.training_id
-         WHERE c.status='completed'
-           AND c.id>r.id
-           AND (
-             c.training_id=r.training_id
-             OR (
-               trim(COALESCE(ct.title,''))<>''
-               AND trim(COALESCE(rt.title,''))<>''
-               AND lower(trim(ct.title))=lower(trim(rt.title))
-             )
-           )
-           AND (
-             (
-               trim(COALESCE(c.discord_id,''))<>''
-               AND trim(COALESCE(r.discord_id,''))<>''
-               AND lower(trim(c.discord_id))=lower(trim(r.discord_id))
-             )
-             OR (
-               trim(COALESCE(c.player_name,''))<>''
-               AND trim(COALESCE(r.player_name,''))<>''
-               AND lower(trim(c.player_name))=lower(trim(r.player_name))
-             )
-           )
-       )
-   `).first();
+   const retakeTrainees={c:unresolvedRetakePeople.size};
 
    const orientationTraining=await getOrientationTraining(env);
    let orientationPendingCount=0;
