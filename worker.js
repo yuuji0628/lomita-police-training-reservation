@@ -1,4 +1,4 @@
-const APP_VERSION="2.74";
+const APP_VERSION="2.75";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -5089,7 +5089,7 @@ async function setMaintenanceMode(enabled){
      '<div class="section">登録済みの休み／対応不可</div>'+
      '<div id="acOffList265"></div>'+
      '<div class="section">登録済みの空き時間</div>'+
-     '<div class="sub" style="margin:-4px 0 8px">教官ごとにまとめて表示します。各時間帯は「×」から個別削除できます。</div>'+
+     '<div class="sub" style="margin:-4px 0 8px">教官ごとにまとめて表示します。各時間帯の「削除」から個別に削除できます。</div>'+
      '<div id="acList265"></div>';
 
    let mode='slots';
@@ -5160,7 +5160,7 @@ async function setMaintenanceMode(enabled){
          const chips=items.map(x=>
            '<span style="display:inline-flex;align-items:center;gap:7px;padding:7px 10px;border:1px solid #dbe4ee;border-radius:999px;background:#f8fafc;font-size:12px;font-weight:700">'+
              '<span>'+esc(x.start_time||'')+'〜'+esc(x.end_time||'')+'</span>'+
-             '<button type="button" class="acDel274" data-id="'+Number(x.id||0)+'" aria-label="削除" style="border:0;background:transparent;color:#b42318;font-weight:900;font-size:14px;padding:0;line-height:1;min-width:18px">×</button>'+
+             '<button type="button" class="acDel274" data-id="'+Number(x.id||0)+'" aria-label="この時間帯を削除" style="border:1px solid #f3c7c3;background:#fff7f6;color:#b42318;font-weight:800;font-size:11px;padding:4px 7px;border-radius:999px;line-height:1.2">削除</button>'+
            '</span>'
          ).join('');
 
