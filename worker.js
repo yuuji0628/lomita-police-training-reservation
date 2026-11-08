@@ -1,11 +1,11 @@
-const APP_VERSION="3.03";
+const APP_VERSION="3.04";
 const SKIP_VERSION_ANNOUNCEMENT=true;
 
 const APP_CHANGELOG=[
-  "D1確認中表示が消えない問題を修正",
-  "worker-hotfix.jsによるD1ステータス自動注入を削除",
-  "管理画面トップはJST時刻と日付だけの表示に統一",
-  "D1内部処理やDB機能そのものは変更なし",
+  "研修開始済みなのに開始未確認表示が残る問題を修正",
+  "開始済み予約では開始未確認バッジ・赤い警告・研修開始ボタンを非表示",
+  "開始済み予約は研修中バッジと実際の開始時刻を表示",
+  "予約一覧取得時の開始済み状態判定を強化",
   "今回は更新履歴Discordへ投稿しない設定"
 ];
 
@@ -6143,6 +6143,15 @@ function toggleCompactHistory(id,btn){
  if(btn)btn.textContent=open?'もっと見る':'閉じる';
 }
 
+function formatTrainingStartedAt(value){
+ const s=String(value||'').trim();
+ if(!s)return '開始済み';
+ const d=new Date(s);
+ if(!Number.isFinite(d.getTime()))return s;
+ const j=new Date(d.getTime()+9*60*60*1000);
+ return j.getUTCFullYear()+'-'+String(j.getUTCMonth()+1).padStart(2,'0')+'-'+String(j.getUTCDate()).padStart(2,'0')+' '+String(j.getUTCHours()).padStart(2,'0')+':'+String(j.getUTCMinutes()).padStart(2,'0');
+}
+
 async function loadReservationControl(){
  const e=document.getElementById('reservationControlList');
  const completedEl=document.getElementById('completedAdminList');
@@ -6227,7 +6236,7 @@ async function loadReservationControl(){
  }else if(adminReservationFilter==='week'){
    displayActive=active.filter(x=>x.status==='reserved' && String(x.confirmed_date||'')>=dashboardToday && String(x.confirmed_date||'')<=dashboardWeekEnd);
  }else if(adminReservationFilter==='needsAction'){
-   displayActive=active.filter(x=>x.status==='pending' || (x.status==='reserved' && isPastConfirmedReservation(x)));
+   displayActive=active.filter(x=>x.status==='pending' || (x.status==='reserved' && !String(x.training_started_at||'').trim() && isPastConfirmedReservation(x)));
  }else if(adminReservationFilter==='pending'){
    displayActive=active.filter(x=>x.status==='pending');
  }else if(adminReservationFilter==='unassigned'){
@@ -6235,7 +6244,7 @@ async function loadReservationControl(){
  }else if(adminReservationFilter==='retake'){
    displayActive=[];
  }else if(adminReservationFilter==='overdue'){
-   displayActive=active.filter(x=>x.status==='reserved' && isPastConfirmedReservation(x));
+   displayActive=active.filter(x=>x.status==='reserved' && !String(x.training_started_at||'').trim() && isPastConfirmedReservation(x));
  }else if(adminReservationFilter==='expired'){
    displayActive=[];
  }
@@ -6327,7 +6336,7 @@ async function loadReservationControl(){
 
  e.innerHTML=displayActive.map(x=>{
    const overdueBase=isPastConfirmedReservation(x);
-   const trainingStarted=!!String(x.training_started_at||'').trim();
+   const trainingStarted=!!String(x.training_started_at||'').trim() || x.training_started===true;
    const overdue=!trainingStarted && !['completed','retake','absent','cancelled'].includes(String(x.status||'')) && overdueBase;
    const preferredText=[x.preferred_date||'',x.preferred_time||''].filter(Boolean).join(' ');
    const preferredText2=[x.preferred_date2||'',x.preferred_time2||''].filter(Boolean).join(' ');
@@ -6390,7 +6399,7 @@ const isFinalExam=isFinalEmploymentExamName(x.title);
      (preferredText2?'<div class="sub" style="font-weight:800">第2希望：'+esc(preferredText2)+'</div>':'')+
      (preferredText3?'<div class="sub" style="font-weight:800">第3希望：'+esc(preferredText3)+'</div>':'')+
      (confirmedText?'<div style="margin-top:8px;padding:7px 9px;border-radius:10px;background:#eef6ff;font-weight:900">✅ 確定日時：'+esc(confirmedText)+'</div>':'')+
-     (trainingStarted?'<div style="margin-top:7px;padding:7px 9px;border-radius:10px;background:#eaf8ef;font-weight:900">▶ 研修開始済み：'+esc(String(x.training_started_at||'').replace('T',' ').replace('Z',' UTC'))+'</div>':'')+
+     (trainingStarted?'<div style="margin-top:7px;padding:7px 9px;border-radius:10px;background:#eaf8ef;font-weight:900">▶ 研修開始済み：'+esc(formatTrainingStartedAt(x.training_started_at))+'</div>':'')+
      '</div></div>'+
      (overdue?'<div class="notice error" style="margin-top:10px"><b>研修開始が確認できません。</b><br>開始予定時刻を過ぎています。「研修開始」を押すか、状況に応じて受講済み・再受講・欠席へ処理してください。</div>':'')+
      '<div class="field" style="margin-top:8px"><label>承認する日時</label><select id="reservationPreference_'+x.id+'" data-confirmed-preference="'+Number(x.confirmed_preference||0)+'"><option value="">希望日時を選択</option>'+preferenceOptions+'</select></div>'+
@@ -9667,6 +9676,7 @@ async function handle(request, env, ctx) {
        COALESCE(r.exam_result,'') AS exam_result,
        r.exam_score,
        COALESCE(r.training_started_at,'') AS training_started_at,
+       CASE WHEN trim(COALESCE(r.training_started_at,''))<>'' THEN 1 ELSE 0 END AS training_started,
        r.created_at,
        t.title,
        t.training_date,
