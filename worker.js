@@ -1,4 +1,4 @@
-const APP_VERSION="2.73";
+const APP_VERSION="2.74";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -5089,6 +5089,7 @@ async function setMaintenanceMode(enabled){
      '<div class="section">登録済みの休み／対応不可</div>'+
      '<div id="acOffList265"></div>'+
      '<div class="section">登録済みの空き時間</div>'+
+     '<div class="sub" style="margin:-4px 0 8px">教官ごとにまとめて表示します。各時間帯は「×」から個別削除できます。</div>'+
      '<div id="acList265"></div>';
 
    let mode='slots';
@@ -5139,17 +5140,61 @@ async function setMaintenanceMode(enabled){
      if(!Array.isArray(data)||!data.length){
        box.innerHTML='<div class="empty">登録済みの空き時間はありません。</div>';return;
      }
-     box.innerHTML=data.map(x=>
-       '<div class="card" style="padding:10px"><div class="between">'+
-       '<div><b>'+esc(x.instructor_name||'')+'</b><div class="sub">'+esc(x.available_date||'')+' '+esc(x.start_time||'')+'〜'+esc(x.end_time||'')+'</div></div>'+
-       '<button type="button" class="btn small danger acDel265" data-id="'+Number(x.id||0)+'">削除</button>'+
-       '</div></div>'
-     ).join('');
-     box.querySelectorAll('.acDel265').forEach(b=>{
+
+     const groups=new Map();
+     data.forEach(x=>{
+       const instructor=String(x.instructor_name||'').trim();
+       const date=String(x.available_date||'').trim();
+       if(!instructor||!date)return;
+       if(!groups.has(instructor))groups.set(instructor,new Map());
+       const byDate=groups.get(instructor);
+       if(!byDate.has(date))byDate.set(date,[]);
+       byDate.get(date).push(x);
+     });
+
+     const cards=[];
+     for(const [instructor,byDate] of groups){
+       const days=[];
+       for(const [date,items] of byDate){
+         items.sort((a,b)=>String(a.start_time||'').localeCompare(String(b.start_time||'')));
+         const chips=items.map(x=>
+           '<span style="display:inline-flex;align-items:center;gap:7px;padding:7px 10px;border:1px solid #dbe4ee;border-radius:999px;background:#f8fafc;font-size:12px;font-weight:700">'+
+             '<span>'+esc(x.start_time||'')+'〜'+esc(x.end_time||'')+'</span>'+
+             '<button type="button" class="acDel274" data-id="'+Number(x.id||0)+'" aria-label="削除" style="border:0;background:transparent;color:#b42318;font-weight:900;font-size:14px;padding:0;line-height:1;min-width:18px">×</button>'+
+           '</span>'
+         ).join('');
+
+         days.push(
+           '<div style="padding:10px 0;border-top:1px solid #edf1f5">'+
+             '<div style="font-size:13px;font-weight:900;margin-bottom:7px">'+esc(date)+'</div>'+
+             '<div style="display:flex;gap:7px;flex-wrap:wrap">'+chips+'</div>'+
+           '</div>'
+         );
+       }
+
+       cards.push(
+         '<div class="card" style="padding:14px;margin-bottom:10px">'+
+           '<div class="between" style="align-items:center">'+
+             '<div style="font-size:18px;font-weight:900">'+esc(instructor)+'</div>'+
+             '<span class="pill">'+byDate.size+'日分</span>'+
+           '</div>'+
+           days.join('')+
+         '</div>'
+       );
+     }
+
+     box.innerHTML=cards.join('');
+
+     box.querySelectorAll('.acDel274').forEach(b=>{
        b.onclick=async()=>{
          if(!confirm('この空き時間を削除しますか？'))return;
-         const r=await fetch('/api/admin/instructor-availability/'+Number(b.dataset.id),{method:'DELETE',headers:auth()});
-         if(r.ok)openAvailabilityFromMenu();
+         const r=await fetch('/api/admin/instructor-availability/'+Number(b.dataset.id),{
+           method:'DELETE',
+           headers:auth()
+         });
+         const d=await r.json().catch(()=>({}));
+         if(!r.ok)return alert(d.error||'削除に失敗しました');
+         openAvailabilityFromMenu();
        };
      });
    };
