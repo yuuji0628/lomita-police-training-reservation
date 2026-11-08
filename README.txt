@@ -1,3 +1,69 @@
+LOMITA POLICE 研修管理システム Version 2.87
+
+更新履歴Discord通知のタイミングを改善
+
+■ 動作
+新VersionがCloudflareへ反映されたあと、
+研修生側・管理側を問わず「最初のアクセス」が来た時点で
+更新履歴専用Discordへ自動投稿します。
+
+管理画面を開くまで待つ必要はありません。
+
+■ 重複防止
+D1 system_settings に投稿済みVersionを記録するため、
+同じVersionは1回だけ投稿します。
+
+■ 補足
+Cloudflare Worker単体には「デプロイ完了イベント」がないため、
+デプロイ完了そのものではなく、
+反映後の最初のアクセスをトリガーにしています。
+通常運用では反映直後に近いタイミングで通知されます。
+
+LOMITA POLICE 研修管理システム Version 2.86
+
+Discord更新履歴の運用を改善
+
+■ 変更内容
+- 更新履歴専用Discordには「そのVersionで実際に変更した内容」を投稿
+- ZIP作成時にAPP_CHANGELOGへ今回の変更内容を反映
+- Discord投稿は
+  ・Version番号
+  ・更新日時
+  ・今回の更新内容
+  を表示
+- 同じVersionの重複投稿防止は維持
+
+■ 今後の運用
+今後のVersionアップでは、実際に追加・修正・変更した内容を
+APP_CHANGELOGへ入れてからZIPを作成する前提にします。
+
+LOMITA POLICE 研修管理システム Version 2.85
+
+Discord更新履歴チャンネル自動投稿
+
+■ 新しい環境変数
+DISCORD_UPDATE_WEBHOOK_URL
+- 更新履歴専用DiscordチャンネルのWebhook URLをCloudflare Secretとして登録してください
+- 既存の研修通知チャンネルとは別のWebhookを指定できます
+
+■ 動作
+- 新しいバージョンが稼働したあと、管理画面を開いた最初のタイミングで自動投稿
+- Cron実行時にも投稿チェック
+- 同じバージョンは1回だけ投稿
+- D1のsystem_settingsに最終投稿済みバージョンを保存
+- Worker再起動や再読込で重複投稿しない
+
+■ 投稿内容
+- システム名
+- Version番号
+- 更新日時（JST）
+- そのVersionの更新内容
+
+■ 手動再送API
+POST /api/admin/version-announcement
+body: {"force": true}
+※ 管理者認証が必要です
+
 LOMITA POLICE 研修管理システム Version 2.84
 
 事前登録時間外の研修申請に対応
