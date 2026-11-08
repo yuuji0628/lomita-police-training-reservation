@@ -1,11 +1,13 @@
-const APP_VERSION="2.99";
+const APP_VERSION="3.00";
 const SKIP_VERSION_ANNOUNCEMENT=true;
 
 const APP_CHANGELOG=[
-  "管理画面トップの表示を整理",
-  "管理状況から再受講件数カードを削除",
-  "JST時刻カードは時刻と日付だけのシンプル表示を維持",
-  "再受講履歴・再受講機能そのものは維持",
+  "予約カードに研修開始ボタンを追加",
+  "研修開始ボタン押下時に実際の開始時刻を記録",
+  "開始済み予約は研修中として表示",
+  "開始予定から10分経過しても開始ボタン未押下の場合のみDiscordへ警告通知",
+  "10分超過通知の文面を研修開始未確認に変更",
+  "開始済みの予約には10分超過通知を送らない",
   "今回は更新履歴Discordへ投稿しない設定"
 ];
 
@@ -409,6 +411,9 @@ async function ensureReservationNotifications(env){
     }
     if(!cols.includes("pending_announce_sent_at")){
       try{await env.DB.prepare("ALTER TABLE reservations ADD COLUMN pending_announce_sent_at TEXT DEFAULT ''").run()}catch(_){}
+    }
+    if(!cols.includes("training_started_at")){
+      try{await env.DB.prepare("ALTER TABLE reservations ADD COLUMN training_started_at TEXT DEFAULT ''").run()}catch(_){}
     }
   }catch(_){}
 }
@@ -6324,7 +6329,8 @@ async function loadReservationControl(){
 
  e.innerHTML=displayActive.map(x=>{
    const overdueBase=isPastConfirmedReservation(x);
-   const overdue=!['completed','retake','absent','cancelled'].includes(String(x.status||'')) && overdueBase;
+   const trainingStarted=!!String(x.training_started_at||'').trim();
+   const overdue=!trainingStarted && !['completed','retake','absent','cancelled'].includes(String(x.status||'')) && overdueBase;
    const preferredText=[x.preferred_date||'',x.preferred_time||''].filter(Boolean).join(' ');
    const preferredText2=[x.preferred_date2||'',x.preferred_time2||''].filter(Boolean).join(' ');
    const preferredText3=[x.preferred_date3||'',x.preferred_time3||''].filter(Boolean).join(' ');
@@ -6377,7 +6383,8 @@ const isFinalExam=isFinalEmploymentExamName(x.title);
    return '<div class="card" style="border-left:4px solid '+border+'">'+
      '<div class="between" style="gap:12px;align-items:flex-start"><div style="min-width:0">'+
      '<span class="pill '+esc(x.status)+'">'+esc(statusLabel)+'</span>'+
-     (overdue?'<span class="pill absent" style="margin-left:6px">処理待ち</span>':'')+
+     (trainingStarted?'<span class="pill" style="margin-left:6px;background:#e6f6ed;color:#147d43">▶ 研修中</span>':'')+
+     (overdue?'<span class="pill absent" style="margin-left:6px">開始未確認</span>':'')+
      '<div class="title" style="margin-top:7px">'+esc(x.title||'研修')+'</div>'+
      '<div class="sub" style="margin-top:5px">研修生：'+esc(x.player_name||'')+'</div>'+
      (x.affiliation?'<div class="sub">所属：'+esc(x.affiliation)+'</div>':'')+
@@ -6385,13 +6392,13 @@ const isFinalExam=isFinalEmploymentExamName(x.title);
      (preferredText2?'<div class="sub" style="font-weight:800">第2希望：'+esc(preferredText2)+'</div>':'')+
      (preferredText3?'<div class="sub" style="font-weight:800">第3希望：'+esc(preferredText3)+'</div>':'')+
      (confirmedText?'<div style="margin-top:8px;padding:7px 9px;border-radius:10px;background:#eef6ff;font-weight:900">✅ 確定日時：'+esc(confirmedText)+'</div>':'')+
+     (trainingStarted?'<div style="margin-top:7px;padding:7px 9px;border-radius:10px;background:#eaf8ef;font-weight:900">▶ 研修開始済み：'+esc(String(x.training_started_at||'').replace('T',' ').replace('Z',' UTC'))+'</div>':'')+
      '</div></div>'+
-     (overdue?'<div class="notice error" style="margin-top:10px"><b>予定時刻を過ぎています。</b><br>'+
-       (futureAlternatives.length
-         ?'未来の別候補が残っています。別候補で再承認するか、受講済み・再受講・欠席に処理してください。'
-         :'受講済み・再受講・欠席のいずれかに処理してください。')+
-       '</div>':'')+
+     (overdue?'<div class="notice error" style="margin-top:10px"><b>研修開始が確認できません。</b><br>開始予定時刻を過ぎています。「研修開始」を押すか、状況に応じて受講済み・再受講・欠席へ処理してください。</div>':'')+
      '<div class="field" style="margin-top:8px"><label>承認する日時</label><select id="reservationPreference_'+x.id+'" data-confirmed-preference="'+Number(x.confirmed_preference||0)+'"><option value="">希望日時を選択</option>'+preferenceOptions+'</select></div>'+
+     (x.status==='reserved' && !trainingStarted
+       ?'<button class="btn dark" style="width:100%;margin:4px 0 10px;background:#147d43;border-color:#147d43" type="button" onclick="startTrainingFromList('+Number(x.id)+')">▶ 研修開始</button>'
+       :'')+
      '<div class="field"><label>状態</label>'+renderReservationStatusButtons(x.id,x.status)+'</div>'+
      '<div class="field"><label>担当教官</label><select id="reservationInstructor_'+x.id+'">'+instructorOptions+'</select></div>'+
      examBox+
@@ -6492,6 +6499,23 @@ document.addEventListener('click',e=>{
  const status=String(btn.dataset.status||'');
  if(id&&status)chooseReservationStatus(id,status);
 });
+
+async function startTrainingFromList(id){
+ if(!id)return;
+ if(!confirm('この研修を開始しますか？\n\n開始時刻が記録されます。'))return;
+ const r=await fetch('/api/admin/reservations/'+Number(id)+'/start',{
+   method:'POST',
+   headers:auth()
+ });
+ const d=await r.json().catch(()=>({}));
+ if(!r.ok){
+   alert(d.error||'研修開始を記録できませんでした');
+   return;
+ }
+ alert('研修開始を記録しました。');
+ await loadReservationControl();
+ await loadAdmin();
+}
 
 async function reapproveReservationFromList(id){
  const preferenceEl=document.getElementById('reservationPreference_'+id);
@@ -9548,6 +9572,31 @@ async function handle(request, env, ctx) {
    return json({ok:true});
  }
 
+ let startReservationMatch=path.match(/^\/api\/admin\/reservations\/(\d+)\/start$/);
+ if(startReservationMatch && method==="POST"){
+   if(!(await isAdmin()))return json({error:"unauthorized"},401);
+   await ensureReservationNotifications(env);
+   const reservationId=Number(startReservationMatch[1]);
+   const row=await env.DB.prepare(`
+     SELECT id,status,confirmed_date,confirmed_time,COALESCE(training_started_at,'') AS training_started_at
+     FROM reservations
+     WHERE id=?
+   `).bind(reservationId).first();
+
+   if(!row)return json({error:"予約が見つかりません"},404);
+   if(row.status!=="reserved")return json({error:"予約確定中の研修だけ開始できます"},409);
+   if(String(row.training_started_at||"").trim()){
+     return json({ok:true,already_started:true,training_started_at:row.training_started_at});
+   }
+
+   const startedAt=new Date().toISOString();
+   await env.DB.prepare(
+     "UPDATE reservations SET training_started_at=? WHERE id=? AND status='reserved'"
+   ).bind(startedAt,reservationId).run();
+
+   return json({ok:true,training_started_at:startedAt});
+ }
+
  let acceptReservationMatch=path.match(/^\/api\/admin\/reservations\/(\d+)\/accept$/);
  if(acceptReservationMatch && method==="POST"){
    const reservationId=Number(acceptReservationMatch[1]);
@@ -9579,7 +9628,8 @@ async function handle(request, env, ctx) {
          assigned_instructor=?,
          confirmed_date=preferred_date,
          confirmed_time=preferred_time,
-         confirmed_preference=1
+         confirmed_preference=1,
+         training_started_at=''
      WHERE id=? AND status='pending'
    `).bind(instructor,reservationId).run();
 
@@ -9614,6 +9664,7 @@ async function handle(request, env, ctx) {
        r.confirmed_preference,
        COALESCE(r.exam_result,'') AS exam_result,
        r.exam_score,
+       COALESCE(r.training_started_at,'') AS training_started_at,
        r.created_at,
        t.title,
        t.training_date,
@@ -11010,7 +11061,7 @@ async function sendInstructorChannelReminder(env,row,type){
     before30:["🕒","研修開始30分前です","30分後に研修開始です。担当教官は準備状況をご確認ください。"],
     before10:["⏰","研修開始10分前です","まもなく研修開始です。担当教官は研修開始の準備をお願いします。"],
     start:["🚨","研修開始時刻です","研修開始時刻になりました。担当教官は開始状況をご確認ください。"],
-    late10:["🔴","研修開始時刻を10分過ぎています","まだ受講済みになっていません。担当教官または管理者は状況を確認してください。"]
+    late10:["🔴","研修開始が確認できません","開始予定から10分経過しています。担当教官または管理者は「研修開始」ボタンを確認してください。"]
   };
   const m=typeMap[type]||["🔔","研修のお知らせ","研修予定をご確認ください。"];
   const dt=[row.confirmed_date,row.confirmed_time].filter(Boolean).join(" ");
@@ -11043,6 +11094,7 @@ async function sendInstructorChannelReminder(env,row,type){
 
 async function runInstructorChannelReminders(env){
   await ensureReservationPreferredSchedule(env);
+  await ensureReservationNotifications(env);
   await ensureInstructorReminderLog(env);
 
   const now=Date.now();
@@ -11057,6 +11109,7 @@ async function runInstructorChannelReminders(env){
       r.confirmed_time,
       r.assigned_instructor,
       r.status,
+      COALESCE(r.training_started_at,'') AS training_started_at,
       COALESCE(t.title,'研修') AS training_title
     FROM reservations r
     LEFT JOIN trainings t ON t.id=r.training_id
@@ -11080,7 +11133,7 @@ async function runInstructorChannelReminders(env){
     if(diff>15*60*1000 && diff<=35*60*1000)type="before30";
     else if(diff>0 && diff<=15*60*1000)type="before10";
     else if(diff<=0 && diff>-10*60*1000)type="start";
-    else if(diff<=-10*60*1000 && diff>-30*60*1000)type="late10";
+    else if(diff<=-10*60*1000 && diff>-30*60*1000 && !String(row.training_started_at||"").trim())type="late10";
     else continue;
 
     const exists=await env.DB.prepare(
