@@ -1,12 +1,11 @@
-const APP_VERSION="3.02";
+const APP_VERSION="3.03";
 const SKIP_VERSION_ANNOUNCEMENT=true;
 
 const APP_CHANGELOG=[
-  "研修開始ボタンが押せない問題を修正",
-  "研修開始処理を既存の予約更新APIへ統合",
-  "iPhone/Safariからでも開始処理が通る方式へ変更",
-  "開始処理の失敗時にHTTP状態と詳細原因を表示",
-  "開始時刻記録・研修中表示・10分未開始通知はそのまま維持",
+  "D1確認中表示が消えない問題を修正",
+  "worker-hotfix.jsによるD1ステータス自動注入を削除",
+  "管理画面トップはJST時刻と日付だけの表示に統一",
+  "D1内部処理やDB機能そのものは変更なし",
   "今回は更新履歴Discordへ投稿しない設定"
 ];
 
