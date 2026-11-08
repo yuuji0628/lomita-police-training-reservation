@@ -1,4 +1,4 @@
-const APP_VERSION="2.70";
+const APP_VERSION="2.72";
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
@@ -638,6 +638,139 @@ async function ensureInstructorAvailability(env){
       UNIQUE(instructor_name,available_date,start_time,end_time)
     )
   `).run();
+}
+
+
+async function ensureInstructorDayStatus(env){
+  await env.DB.prepare(`
+    CREATE TABLE IF NOT EXISTS instructor_day_status(
+      instructor_name TEXT NOT NULL,
+      target_date TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'off',
+      note TEXT NOT NULL DEFAULT '',
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY(instructor_name,target_date)
+    )
+  `).run();
+}
+
+async function ensureAvailabilityReminderLog(env){
+  await env.DB.prepare(`
+    CREATE TABLE IF NOT EXISTS availability_reminder_log(
+      reminder_date TEXT NOT NULL,
+      target_date TEXT NOT NULL,
+      sent_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY(reminder_date,target_date)
+    )
+  `).run();
+}
+
+function jstYmdOffset(days=0){
+  const now=new Date(Date.now()+9*60*60*1000+Number(days||0)*86400000);
+  return [
+    now.getUTCFullYear(),
+    String(now.getUTCMonth()+1).padStart(2,"0"),
+    String(now.getUTCDate()).padStart(2,"0")
+  ].join("-");
+}
+
+async function getMissingAvailabilityInstructors(env,targetDate){
+  await ensureInstructors(env);
+  await ensureInstructorAvailability(env);
+  await ensureInstructorDayStatus(env);
+
+  const instructorsQ=await env.DB.prepare(
+    "SELECT name FROM instructors ORDER BY name COLLATE NOCASE"
+  ).all();
+  const availabilityQ=await env.DB.prepare(
+    "SELECT DISTINCT instructor_name FROM instructor_availability WHERE available_date=?"
+  ).bind(targetDate).all();
+  const offQ=await env.DB.prepare(
+    "SELECT instructor_name FROM instructor_day_status WHERE target_date=? AND status='off'"
+  ).bind(targetDate).all();
+
+  const registered=new Set(
+    (availabilityQ.results||[])
+      .map(x=>String(x.instructor_name||"").trim().toLowerCase())
+      .filter(Boolean)
+  );
+  const offNames=new Set(
+    (offQ.results||[])
+      .map(x=>String(x.instructor_name||"").trim().toLowerCase())
+      .filter(Boolean)
+  );
+
+  return (instructorsQ.results||[])
+    .map(x=>String(x.name||"").trim())
+    .filter(Boolean)
+    .filter(name=>{
+      const key=name.toLowerCase();
+      return !registered.has(key) && !offNames.has(key);
+    });
+}
+
+async function sendMissingAvailabilityReminder(env,targetDate,{automatic=false}={}){
+  const webhook=String(env.DISCORD_TRAINING_WEBHOOK_URL||"").trim();
+  if(!webhook)return {ok:false,skipped:true,reason:"webhook_not_configured",target_date:targetDate};
+
+  const missing=await getMissingAvailabilityInstructors(env,targetDate);
+  if(!missing.length){
+    return {ok:true,skipped:true,reason:"no_missing",target_date:targetDate,missing:[]};
+  }
+
+  const roleId=String(env.DISCORD_TRAINING_ROLE_ID||"").trim();
+  const mention=roleId?`<@&${roleId}> `:"";
+  const modeText=automatic?"自動確認":"管理者からの確認";
+  const lines=[
+    mention+"📅 **教官 空き時間登録のお願い**",
+    "",
+    `**対象日：${targetDate}**`,
+    `**確認：${modeText}**`,
+    "",
+    "以下の教官は、対象日の「空き時間」または「休み／対応不可」がまだ登録されていません。",
+    ...missing.map(name=>`・${name}`),
+    "",
+    "対応可能な時間が分かる場合は、研修管理システムの「空き時間を登録」から登録をお願いします。",
+    "対応できない日は「休み／対応不可」を登録してください。"
+  ];
+
+  const response=await fetch(webhook,{
+    method:"POST",
+    headers:{"content-type":"application/json"},
+    body:JSON.stringify({
+      content:lines.join("\n"),
+      allowed_mentions:roleId?{roles:[roleId]}:{parse:[]}
+    })
+  });
+
+  return {
+    ok:response.ok,
+    status:response.status,
+    target_date:targetDate,
+    missing
+  };
+}
+
+async function runDailyAvailabilityReminder(env){
+  const nowJst=new Date(Date.now()+9*60*60*1000);
+  if(nowJst.getUTCHours()!==18)return {ok:true,skipped:true,reason:"not_18_jst"};
+
+  await ensureAvailabilityReminderLog(env);
+  const reminderDate=jstYmdOffset(0);
+  const targetDate=jstYmdOffset(1);
+
+  const already=await env.DB.prepare(
+    "SELECT 1 AS ok FROM availability_reminder_log WHERE reminder_date=? AND target_date=?"
+  ).bind(reminderDate,targetDate).first();
+  if(already)return {ok:true,skipped:true,reason:"already_sent",target_date:targetDate};
+
+  const result=await sendMissingAvailabilityReminder(env,targetDate,{automatic:true});
+  if(result.ok){
+    await env.DB.prepare(
+      "INSERT OR IGNORE INTO availability_reminder_log(reminder_date,target_date,sent_at) VALUES(?,?,?)"
+    ).bind(reminderDate,targetDate,new Date().toISOString()).run();
+  }
+  return result;
 }
 
 function isValidQuarterHourTime(v){
@@ -4492,6 +4625,23 @@ const ADMIN_BODY = `
   </div>
   <div id="discordWebhookMsg" style="margin-top:8px"></div>
 </div>
+
+<div class="card" style="margin-bottom:12px;border:1px solid #d7ad45">
+  <div class="title">教官 空き時間登録の催促</div>
+  <div class="sub" style="margin-top:4px">指定日に「空き時間」も「休み／対応不可」も登録していない教官だけを確認し、Discordへまとめて催促できます。</div>
+  <div class="field" style="margin-top:10px">
+    <label>確認する日付</label>
+    <input id="availabilityReminderDate" type="date">
+  </div>
+  <div id="availabilityReminderStatus" class="sub" style="margin:8px 0">未確認</div>
+  <div style="display:flex;gap:8px;flex-wrap:wrap">
+    <button class="btn small" type="button" onclick="checkMissingAvailability()">未登録を確認</button>
+    <button class="btn primary small" type="button" onclick="sendMissingAvailabilityReminderNow()">Discordで催促</button>
+  </div>
+  <div class="sub" style="margin-top:8px">自動催促：毎日18:00に翌日分を確認し、空き時間・休み設定のどちらもない教官だけ通知します。</div>
+  <div id="availabilityReminderMsg" style="margin-top:8px"></div>
+</div>
+
 <div class="card ownerOnly" style="margin-bottom:12px;border:1px solid #e3a6a0;background:#fff8f7">
   <div class="title" style="color:#9d2d24">アンケート結果管理</div>
   <div class="sub" style="margin-top:4px">回答削除。元に戻せません。</div>
@@ -4728,7 +4878,68 @@ async function testDiscordWebhook(){
    if(btn){btn.disabled=false;btn.textContent='テスト通知を送る'}
  }
 }
-function openManageMenu(){setTimeout(checkDiscordWebhookStatus,150);setTimeout(loadAdminTrainingPolicy,150);setTimeout(loadSurveyDeleteManager,150);setTimeout(loadMaintenanceMode,120);document.getElementById('manageModal').classList.add('open');setTimeout(()=>loadBuildStatus(),150)}
+function openManageMenu(){setTimeout(checkDiscordWebhookStatus,150);setTimeout(loadAdminTrainingPolicy,150);setTimeout(loadSurveyDeleteManager,150);setTimeout(loadMaintenanceMode,120);setTimeout(initAvailabilityReminderDate,120);document.getElementById('manageModal').classList.add('open');setTimeout(()=>loadBuildStatus(),150)}
+function jstDateInputOffset(days){
+  const d=new Date(Date.now()+9*60*60*1000+Number(days||0)*86400000);
+  return d.getUTCFullYear()+'-'+String(d.getUTCMonth()+1).padStart(2,'0')+'-'+String(d.getUTCDate()).padStart(2,'0');
+}
+function initAvailabilityReminderDate(){
+  const el=document.getElementById('availabilityReminderDate');
+  if(el && !el.value)el.value=jstDateInputOffset(1);
+}
+async function checkMissingAvailability(){
+  initAvailabilityReminderDate();
+  const date=document.getElementById('availabilityReminderDate')?.value||jstDateInputOffset(1);
+  const status=document.getElementById('availabilityReminderStatus');
+  const msg=document.getElementById('availabilityReminderMsg');
+  if(status)status.textContent='確認中...';
+  if(msg)msg.innerHTML='';
+  try{
+    const r=await fetch('/api/admin/instructor-availability/missing?date='+encodeURIComponent(date),{headers:auth(),cache:'no-store'});
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok)throw new Error(d.error||'確認に失敗しました');
+    if(!d.count){
+      status.textContent=date+'：未登録の教官はいません。';
+      return d;
+    }
+    status.textContent=date+'：未登録 '+d.count+'名';
+    if(msg)msg.innerHTML='<div class="notice">'+d.missing.map(x=>'・'+esc(x)).join('<br>')+'</div>';
+    return d;
+  }catch(e){
+    if(status)status.textContent='確認エラー';
+    if(msg)msg.innerHTML='<div class="notice error">'+esc(String(e?.message||e))+'</div>';
+    return null;
+  }
+}
+async function sendMissingAvailabilityReminderNow(){
+  initAvailabilityReminderDate();
+  const date=document.getElementById('availabilityReminderDate')?.value||jstDateInputOffset(1);
+  const current=await checkMissingAvailability();
+  if(!current)return;
+  if(!current.count){
+    alert('未登録の教官はいません。');
+    return;
+  }
+  if(!confirm(date+' の空き時間未登録教官 '+current.count+'名へ、Discordで催促しますか？'))return;
+  const msg=document.getElementById('availabilityReminderMsg');
+  if(msg)msg.innerHTML='<div class="notice">Discordへ送信中...</div>';
+  try{
+    const r=await fetch('/api/admin/instructor-availability/remind',{
+      method:'POST',
+      headers:auth(),
+      body:JSON.stringify({date})
+    });
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok)throw new Error(d.error||'送信に失敗しました');
+    if(d.reason==='no_missing'){
+      if(msg)msg.innerHTML='<div class="notice success">未登録の教官はいません。</div>';
+      return;
+    }
+    if(msg)msg.innerHTML='<div class="notice success">✅ '+date+' の未登録教官 '+(d.missing?.length||0)+'名へ催促を送信しました。</div>';
+  }catch(e){
+    if(msg)msg.innerHTML='<div class="notice error">'+esc(String(e?.message||e))+'</div>';
+  }
+}
 async function loadMaintenanceMode(){
   const badge=document.getElementById('maintenanceStatusBadge');
   const text=document.getElementById('maintenanceStatusText');
@@ -4864,6 +5075,16 @@ async function setMaintenanceMode(enabled){
        '<div class="field"><label>メモ（任意）</label><input id="acNote265"></div>'+
        '<button id="acSave265" class="btn primary" type="button" style="width:100%">選択した空き時間をまとめて登録</button>'+
        '<div id="acMsg265"></div>'+
+       '<div class="card" style="margin-top:12px;background:#fff8f3;border:1px solid #f1c99a">'+
+         '<div class="title" style="font-size:14px">この日は休み／対応不可</div>'+
+         '<div class="sub" style="margin:4px 0 8px">対応できない日は、空き時間の代わりにこちらを登録してください。催促対象から除外されます。</div>'+
+         '<div class="field"><label>メモ（任意）</label><input id="acOffNote265" placeholder="例：公休、予定あり"></div>'+
+         '<div style="display:flex;gap:8px;flex-wrap:wrap">'+
+           '<button id="acOffSet265" class="btn small" type="button">休み／対応不可にする</button>'+
+           '<button id="acOffClear265" class="btn small" type="button">休み設定を解除</button>'+
+         '</div>'+
+         '<div id="acOffStatus265" class="sub" style="margin-top:7px">教官と日付を選択してください。</div>'+
+       '</div>'+
      '</div>'+
      '<div class="section">登録済みの空き時間</div>'+
      '<div id="acList265"></div>';
@@ -4931,6 +5152,68 @@ async function setMaintenanceMode(enabled){
      });
    };
    renderList(rows);
+
+   const refreshOffStatus=async()=>{
+     const instructor=String(body.querySelector('#acInstructor265')?.value||'').trim();
+     const date=String(body.querySelector('#acDate265')?.value||'').trim();
+     const statusBox=body.querySelector('#acOffStatus265');
+     if(!statusBox)return;
+     if(!instructor||!date){
+       statusBox.textContent='教官と日付を選択してください。';
+       return;
+     }
+     try{
+       const r=await fetch('/api/admin/instructor-day-status?date='+encodeURIComponent(date),{headers:auth(),cache:'no-store'});
+       const d=await r.json().catch(()=>({}));
+       if(!r.ok)throw new Error(d.error||'取得に失敗しました');
+       const row=(d.rows||[]).find(x=>String(x.instructor_name||'')===instructor);
+       statusBox.textContent=row
+         ? '現在：休み／対応不可'+(row.note?'（'+row.note+'）':'')
+         : '現在：休み設定なし';
+       body.querySelector('#acOffNote265').value=row?.note||'';
+     }catch(e){
+       statusBox.textContent='休み設定を確認できませんでした。';
+     }
+   };
+
+   body.querySelector('#acInstructor265').addEventListener('change',refreshOffStatus);
+   body.querySelector('#acDate265').addEventListener('change',refreshOffStatus);
+
+   body.querySelector('#acOffSet265').onclick=async()=>{
+     const instructor=String(body.querySelector('#acInstructor265').value||'').trim();
+     const date=String(body.querySelector('#acDate265').value||'').trim();
+     const note=String(body.querySelector('#acOffNote265').value||'').trim();
+     if(!instructor)return alert('教官を選択してください');
+     if(!date)return alert('日付を選択してください');
+     if(!confirm(instructor+' を '+date+' は「休み／対応不可」にしますか？'))return;
+
+     const r=await fetch('/api/admin/instructor-day-status',{
+       method:'POST',
+       headers:auth(),
+       body:JSON.stringify({instructor,date,note})
+     });
+     const d=await r.json().catch(()=>({}));
+     if(!r.ok)return alert(d.error||'休み設定を登録できませんでした');
+     await refreshOffStatus();
+     alert('休み／対応不可として登録しました');
+   };
+
+   body.querySelector('#acOffClear265').onclick=async()=>{
+     const instructor=String(body.querySelector('#acInstructor265').value||'').trim();
+     const date=String(body.querySelector('#acDate265').value||'').trim();
+     if(!instructor)return alert('教官を選択してください');
+     if(!date)return alert('日付を選択してください');
+     if(!confirm(instructor+' の '+date+' の休み設定を解除しますか？'))return;
+
+     const r=await fetch('/api/admin/instructor-day-status?instructor='+encodeURIComponent(instructor)+'&date='+encodeURIComponent(date),{
+       method:'DELETE',
+       headers:auth()
+     });
+     const d=await r.json().catch(()=>({}));
+     if(!r.ok)return alert(d.error||'休み設定を解除できませんでした');
+     await refreshOffStatus();
+     alert('休み設定を解除しました');
+   };
 
    body.querySelector('#acSave265').onclick=async()=>{
      const instructor=String(body.querySelector('#acInstructor265').value||'').trim();
@@ -8205,6 +8488,64 @@ async function handle(request, env) {
    });
  }
 
+ if(path==="/api/admin/instructor-day-status" && method==="GET"){
+   await ensureInstructorDayStatus(env);
+   const targetDate=String(url.searchParams.get("date")||jstYmdOffset(1)).trim();
+   if(!/^\d{4}-\d{2}-\d{2}$/.test(targetDate))return json({error:"日付が不正です"},400);
+   const q=await env.DB.prepare(
+     "SELECT instructor_name,target_date,status,note,updated_at FROM instructor_day_status WHERE target_date=? ORDER BY instructor_name COLLATE NOCASE"
+   ).bind(targetDate).all();
+   return json({ok:true,target_date:targetDate,rows:q.results||[]});
+ }
+
+ if(path==="/api/admin/instructor-day-status" && method==="POST"){
+   await ensureInstructorDayStatus(env);
+   const b=await request.json().catch(()=>({}));
+   const instructor=String(b.instructor||"").trim();
+   const targetDate=String(b.date||"").trim();
+   const note=String(b.note||"").trim().slice(0,200);
+   if(!instructor)return json({error:"教官を選択してください"},400);
+   if(!/^\d{4}-\d{2}-\d{2}$/.test(targetDate))return json({error:"日付が不正です"},400);
+
+   await env.DB.prepare(`
+     INSERT INTO instructor_day_status(instructor_name,target_date,status,note,updated_at)
+     VALUES(?,?,'off',?,CURRENT_TIMESTAMP)
+     ON CONFLICT(instructor_name,target_date) DO UPDATE SET
+       status='off',
+       note=excluded.note,
+       updated_at=CURRENT_TIMESTAMP
+   `).bind(instructor,targetDate,note).run();
+
+   return json({ok:true,instructor,date:targetDate,status:"off",note});
+ }
+
+ if(path==="/api/admin/instructor-day-status" && method==="DELETE"){
+   await ensureInstructorDayStatus(env);
+   const instructor=String(url.searchParams.get("instructor")||"").trim();
+   const targetDate=String(url.searchParams.get("date")||"").trim();
+   if(!instructor||!/^\d{4}-\d{2}-\d{2}$/.test(targetDate))return json({error:"教官または日付が不正です"},400);
+   await env.DB.prepare(
+     "DELETE FROM instructor_day_status WHERE instructor_name=? AND target_date=?"
+   ).bind(instructor,targetDate).run();
+   return json({ok:true});
+ }
+
+ if(path==="/api/admin/instructor-availability/missing" && method==="GET"){
+   const targetDate=String(url.searchParams.get("date")||jstYmdOffset(1)).trim();
+   if(!/^\d{4}-\d{2}-\d{2}$/.test(targetDate))return json({error:"日付が不正です"},400);
+   const missing=await getMissingAvailabilityInstructors(env,targetDate);
+   return json({ok:true,target_date:targetDate,missing,count:missing.length});
+ }
+
+ if(path==="/api/admin/instructor-availability/remind" && method==="POST"){
+   const b=await request.json().catch(()=>({}));
+   const targetDate=String(b.date||jstYmdOffset(1)).trim();
+   if(!/^\d{4}-\d{2}-\d{2}$/.test(targetDate))return json({error:"日付が不正です"},400);
+   const result=await sendMissingAvailabilityReminder(env,targetDate,{automatic:false});
+   if(!result.ok)return json({error:"Discord催促通知に失敗しました",...result},502);
+   return json({ok:true,...result});
+ }
+
  if(path==="/api/admin/instructor-availability" && method==="GET"){
    await ensureInstructorAvailability(env);
    const today=jstToday();
@@ -8241,7 +8582,13 @@ async function handle(request, env) {
      const slots=Array.isArray(b.slots)?[...new Set(b.slots.map(x=>String(x||"").trim()))]:[];
      if(!slots.length)return json({error:"開始時刻を1つ以上選択してください"},400);
      if(slots.some(x=>!/^(?:[01]\d|2[0-3]):(?:00|30)$/.test(x)))return json({error:"開始時刻は30分単位で指定してください"},400);
-     entries=slots.map(start=>({start_time:start,end_time:""}));
+     const slotEnd=(start)=>{
+       const [hh,mm]=start.split(":").map(Number);
+       const total=hh*60+mm+30;
+       if(total>=1440)return "24:00";
+       return String(Math.floor(total/60)).padStart(2,"0")+":"+String(total%60).padStart(2,"0");
+     };
+     entries=slots.map(start=>({start_time:start,end_time:slotEnd(start)}));
    }else{
      const startTime=String(b.start_time||"").trim();
      let endTime=String(b.end_time||"").trim();
@@ -9449,6 +9796,9 @@ async function scheduled(event,env,ctx){
     await runExpiredPendingReservations(env);
     await runPendingApprovalAnnouncement(env);
     await runOrientationPendingAnnouncement(env);
+
+    // 毎日18:00 JST：翌日分の空き時間未登録教官を自動催促
+    await runDailyAvailabilityReminder(env);
 
     // 念のため毎時処理でも開始リマインドを確認
     await runInstructorChannelReminders(env);
