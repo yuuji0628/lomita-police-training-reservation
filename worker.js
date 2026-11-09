@@ -1,13 +1,11 @@
-const APP_VERSION="3.07";
+const APP_VERSION="3.08";
 const SKIP_VERSION_ANNOUNCEMENT=true;
 
 const APP_CHANGELOG=[
-  "研修生カルテを見やすく全面整理",
-  "修了進捗を進捗バーと修了数/総研修数で表示",
-  "最終受講日・再受講履歴・合格数をサマリー表示",
-  "現在も再受講が必要な研修と未修了研修を要確認欄へ表示",
-  "教官引き継ぎメモを独立カード化",
-  "受講履歴を時系列カードで見やすく表示",
+  "指名手配及び市内巡回の実技試験で『合格 / 再受講』を選べるように調整",
+  "実技試験の受講済み表示を『合格』表記に統一",
+  "実技試験を合格で保存した時は pass、再受講で保存した時は fail を自動記録",
+  "研修生カルテでも実技試験の結果が分かりやすく表示されるよう改善",
   "今回は更新履歴Discordへ投稿しない設定"
 ];
 
@@ -1501,6 +1499,11 @@ async function refreshTraineeFullCompletionByDiscord(env,key){
 function isViolationTestTitle(v){
   const s=String(v||"").trim();
   return s==="違反テスト" || (s.includes("違反") && s.includes("テスト"));
+}
+
+function isPatrolPracticalExamTitle(v){
+  const s=String(v||"").trim();
+  return s==="指名手配及び市内巡回の実技試験" || (s.includes("指名手配") && s.includes("市内巡回") && s.includes("実技") && s.includes("試験"));
 }
 
 function isFinalEmploymentExamTitle(v){
@@ -6267,7 +6270,7 @@ async function loadReservationControl(){
        '<div class="meta">研修生：'+esc(x.player_name||'')+
        (x.assigned_instructor?' ／ 担当教官：'+esc(x.assigned_instructor):'')+
        (confirmed?' ／ '+esc(confirmed):'')+
-       (x.exam_result?(' ／ 判定：'+(x.exam_result==='pass'?'合格':'不合格')):'')+
+       (x.exam_result?(' ／ 判定：'+(x.exam_result==='pass'?'合格':'不合格')):(isPatrolPracticalExamName(x.title||'')&&x.status==='completed'?' ／ 判定：合格':''))+
        ((x.exam_score===null||x.exam_score===undefined)?'':' ／ 得点：'+esc(String(x.exam_score))+'点')+
        '</div>'+
        '<button type="button" class="btn small danger undoCompletedBtn" data-id="'+x.id+'" data-kind="'+undoKind+'" style="margin-top:9px">'+undoLabel+'</button>'+
@@ -6373,6 +6376,7 @@ async function loadReservationControl(){
 
 const isFinalExam=isFinalEmploymentExamName(x.title);
    const isViolationTest=isViolationTestName(x.title);
+   const isPatrolPracticalExam=isPatrolPracticalExamName(x.title);
    const isJudgementExam=isFinalExam||isViolationTest;
    const examResult=String(x.exam_result||'');
    const examScore=(x.exam_score===null||x.exam_score===undefined)?'':String(x.exam_score);
@@ -6408,7 +6412,7 @@ const isFinalExam=isFinalEmploymentExamName(x.title);
      (x.status==='reserved' && !trainingStarted
        ?'<button class="btn dark" style="width:100%;margin:4px 0 10px;background:#147d43;border-color:#147d43" type="button" onclick="startTrainingFromList('+Number(x.id)+')">▶ 研修開始</button>'
        :'')+
-     '<div class="field"><label>状態</label>'+renderReservationStatusButtons(x.id,x.status)+'</div>'+
+     '<div class="field"><label>状態</label>'+renderReservationStatusButtons(x.id,x.status,x.title)+'</div>'+
      '<div class="field"><label>担当教官</label><select id="reservationInstructor_'+x.id+'">'+instructorOptions+'</select></div>'+
      examBox+
      (overdue && futureAlternatives.length
@@ -6437,12 +6441,14 @@ function chooseReservationStatus(id,status){
    btn.classList.toggle('active',btn.dataset.status===status);
  });
 }
-function renderReservationStatusButtons(id,currentStatus){
+function renderReservationStatusButtons(id,currentStatus,title=''){
  const normalized=['reserved','completed','retake','absent','cancelled'].includes(currentStatus)?currentStatus:'reserved';
+ const isPatrolPracticalExam=isPatrolPracticalExamName(title);
+ const completedLabel=isPatrolPracticalExam?'合格':'受講済み';
  return '<input type="hidden" id="reservationStatus_'+id+'" value="'+esc(normalized)+'">'+
    '<div class="adminStatusButtons">'+
      '<button type="button" class="adminStatusBtn '+(normalized==='reserved'?'active':'')+'" data-reservation-id="'+id+'" data-status="reserved">予約確定</button>'+
-     '<button type="button" class="adminStatusBtn '+(normalized==='completed'?'active':'')+'" data-reservation-id="'+id+'" data-status="completed">受講済み</button>'+
+     '<button type="button" class="adminStatusBtn '+(normalized==='completed'?'active':'')+'" data-reservation-id="'+id+'" data-status="completed">'+completedLabel+'</button>'+
      '<button type="button" class="adminStatusBtn '+(normalized==='retake'?'active':'')+'" data-reservation-id="'+id+'" data-status="retake">再受講</button>'+
      '<button type="button" class="adminStatusBtn '+(normalized==='absent'?'active':'')+'" data-reservation-id="'+id+'" data-status="absent">欠席</button>'+
      '<button type="button" class="adminStatusBtn '+(normalized==='cancelled'?'active':'')+'" data-reservation-id="'+id+'" data-status="cancelled">キャンセル</button>'+
@@ -6617,7 +6623,8 @@ async function saveReservationFromList(id){
    alert('予約確定にする場合は担当教官を選択してください。');
    return;
  }
- const label=labels[status]||status;
+ const isPatrolPracticalExam=isPatrolPracticalExamName((document.querySelector('[data-reservation-id="'+id+'"]')||{}).closest?.('.card')?.querySelector('.title')?.textContent||'');
+ const label=(status==='completed' && isPatrolPracticalExam)?'合格':(labels[status]||status);
  const confirmText=status==='cancelled'
    ?'この予約をキャンセルしますか？\n研修生本人へDiscord DMで通知されます。'
    :status==='retake'?'この研修を「再受講」にしますか？\n修了扱いにはならず、本人へ再受講DMを送ります。':'この予約を「'+label+'」に変更しますか？';
@@ -6894,6 +6901,7 @@ async function deleteInstructor(id){
 
 function isFinalEmploymentExamName(v){const s=String(v||'').trim();return s.includes('本採用')&&s.includes('試験')}
 function isViolationTestName(v){const s=String(v||'').trim();return s==='違反テスト'||(s.includes('違反')&&s.includes('テスト'))}
+function isPatrolPracticalExamName(v){const s=String(v||'').trim();return s==='指名手配及び市内巡回の実技試験'||(s.includes('指名手配')&&s.includes('市内巡回')&&s.includes('実技')&&s.includes('試験'))}
 function isOrientationProgramName(v){return String(v||'').trim()==='オリエンテーション'}
 function isOrientationHistoryName(v){return String(v||'').trim()==='オリエンテーション'}
 let programRows=[];
@@ -7070,11 +7078,12 @@ async function loadTraineeRecordDetail(id){
    (history.length?history.map(x=>{
       const result=String(x.exam_result||'').trim();
       const dt=[x.completed_at||x.confirmed_date||'',x.confirmed_time||''].filter(Boolean).join(' ');
+      const isPatrolPracticalExam=isPatrolPracticalExamName(x.title||'');
       const isRetake=x.status==='retake';
       const isCompleted=x.status==='completed';
       const border=isRetake?'#e7aaa4':isCompleted?'#a9d5ba':'#d6dee8';
       const bg=isRetake?'#fff9f8':isCompleted?'#f8fffb':'#fff';
-      const resultText=result?(result==='pass'?'合格':result==='fail'?'不合格':result):'';
+      const resultText=result?(result==='pass'?'合格':result==='fail'?'不合格':result):((isPatrolPracticalExam && isCompleted)?'合格':'');
       return '<div class="card" style="margin-top:8px;border-left:5px solid '+border+';background:'+bg+'">'+
         '<div class="between" style="align-items:flex-start;gap:8px"><div style="min-width:0;flex:1"><div class="title" style="font-size:14px">'+esc(x.title||'研修')+'</div>'+(dt?'<div class="sub" style="margin-top:4px">'+esc(dt)+'</div>':'')+'</div>'+
         '<span class="pill '+esc(x.status||'')+'">'+esc(x.status_label||x.status||'')+'</span></div>'+
@@ -9780,7 +9789,11 @@ async function handle(request, env, ctx) {
    const q=await env.DB.prepare("SELECT r.id,r.training_id,r.player_name,r.discord_id,r.status,r.note,r.assigned_instructor,r.confirmed_date,r.confirmed_time,r.completed_at,r.exam_result,r.exam_score,COALESCE(t.title,'研修') AS title FROM reservations r LEFT JOIN trainings t ON t.id=r.training_id ORDER BY r.id DESC").all();
    const rows=(q.results||[]).filter(r=>[r.discord_id,r.player_name].map(x=>String(x||"").trim().toLowerCase()).filter(Boolean).some(k=>keys.includes(k)));
    const labels={completed:"受講済み",retake:"再受講",absent:"欠席",reserved:"予約確定",pending:"承認待ち",expired:"期限超過",cancelled:"取消"};
-   const history=rows.map(r=>({...r,status_label:labels[r.status]||r.status}));
+   const history=rows.map(r=>{
+     const isPatrolPracticalExam=isPatrolPracticalExamTitle(r.title);
+     const status_label=(isPatrolPracticalExam && r.status==='completed')?'合格':(labels[r.status]||r.status);
+     return {...r,status_label};
+   });
    const passValues=new Set(["pass","passed","合格","ok","success"]);
    const stats={completed:history.filter(x=>x.status==="completed").length,retake:history.filter(x=>x.status==="retake").length,absent:history.filter(x=>x.status==="absent").length,pass:history.filter(x=>passValues.has(String(x.exam_result||"").trim().toLowerCase())).length};
 
@@ -10565,10 +10578,18 @@ if(path==="/api/admin/instructor-ranking" && method==="GET"){
    const reapproveAlternative=b.reapprove_alternative===true;
    const finalExam=isFinalEmploymentExamTitle(before.title);
    const violationTest=isViolationTestTitle(before.title);
+   const patrolPracticalExam=isPatrolPracticalExamTitle(before.title);
    const judgementExam=finalExam||violationTest;
-   const examResult=String(b.exam_result||"").trim();
+   const rawExamResult=String(b.exam_result||"").trim();
+   let examResult=rawExamResult;
    const examScoreRaw=b.exam_score;
    const examScore=(examScoreRaw===null || examScoreRaw===undefined || examScoreRaw==="")?null:Number(examScoreRaw);
+
+   if(patrolPracticalExam){
+     if(b.status==="completed") examResult="pass";
+     else if(b.status==="retake") examResult="fail";
+     else examResult="";
+   }
 
    if(judgementExam && (b.status==="completed" || b.status==="retake")){
      if(!["pass","fail"].includes(examResult))return json({error:"合格・不合格を選択してください"},400);
@@ -10629,10 +10650,10 @@ if(path==="/api/admin/instructor-ranking" && method==="GET"){
 
    if(completedAt){
      await env.DB.prepare("UPDATE reservations SET status=?,assigned_instructor=?,confirmed_date=?,confirmed_time=?,confirmed_preference=?,completed_at=?,exam_result=?,exam_score=? WHERE id=?")
-       .bind(b.status,assigned,confirmedDate,confirmedTime,confirmedPref,completedAt,judgementExam?examResult:"",finalExam?examScore:null,reservationId).run();
+       .bind(b.status,assigned,confirmedDate,confirmedTime,confirmedPref,completedAt,(judgementExam||patrolPracticalExam)?examResult:"",finalExam?examScore:null,reservationId).run();
    }else{
      await env.DB.prepare("UPDATE reservations SET status=?,assigned_instructor=?,confirmed_date=?,confirmed_time=?,confirmed_preference=?,exam_result=?,exam_score=? WHERE id=?")
-       .bind(b.status,assigned,confirmedDate,confirmedTime,confirmedPref,judgementExam?examResult:"",finalExam?examScore:null,reservationId).run();
+       .bind(b.status,assigned,confirmedDate,confirmedTime,confirmedPref,(judgementExam||patrolPracticalExam)?examResult:"",finalExam?examScore:null,reservationId).run();
    }
 
    let dmResult={ok:false,skipped:true};
@@ -10732,7 +10753,7 @@ if(path==="/api/admin/instructor-ranking" && method==="GET"){
      confirmed_date:confirmedDate,
      confirmed_time:confirmedTime,
      confirmed_preference:confirmedPref,
-     exam_result:judgementExam?examResult:"",
+     exam_result:(judgementExam||patrolPracticalExam)?examResult:"",
      exam_score:finalExam?examScore:null,
      reapproved:reapproveAlternative && reservedDetailsChanged,
      dm_sent:!!dmResult.ok,
