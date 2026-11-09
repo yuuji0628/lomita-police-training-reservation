@@ -1,12 +1,11 @@
-const APP_VERSION="3.08";
-const SKIP_VERSION_ANNOUNCEMENT=true;
+const APP_VERSION="3.09";
+const SKIP_VERSION_ANNOUNCEMENT=false;
 
 const APP_CHANGELOG=[
-  "指名手配及び市内巡回の実技試験で『合格 / 再受講』を選べるように調整",
-  "実技試験の受講済み表示を『合格』表記に統一",
-  "実技試験を合格で保存した時は pass、再受講で保存した時は fail を自動記録",
-  "研修生カルテでも実技試験の結果が分かりやすく表示されるよう改善",
-  "今回は更新履歴Discordへ投稿しない設定"
+  "教官の休み／対応不可を複数日まとめて設定できるように改善",
+  "月カレンダーから複数の日付をタップ選択できるUIを追加",
+  "選択した複数日の休み設定を一括登録・一括解除できる機能を追加",
+  "登録済みの休み日をカレンダー上で確認できるよう改善"
 ];
 
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
@@ -5687,17 +5686,22 @@ async function setMaintenanceMode(enabled){
        '<button id="acSave265" class="btn primary" type="button" style="width:100%">選択した空き時間をまとめて登録</button>'+
        '<div id="acMsg265"></div>'+
        '<div class="card" style="margin-top:12px;background:#fff8f3;border:1px solid #f1c99a">'+
-         '<div class="title" style="font-size:14px">この日は休み／対応不可</div>'+
-         '<div class="sub" style="margin:4px 0 8px">対応できない日は、空き時間の代わりにこちらを登録してください。催促対象から除外されます。</div>'+
-         '<div class="field"><label>メモ（任意）</label><input id="acOffNote265" placeholder="例：公休、予定あり"></div>'+
-         '<div style="display:flex;gap:8px;flex-wrap:wrap">'+
-           '<button id="acOffSet265" class="btn small" type="button">休み／対応不可にする</button>'+
-           '<button id="acOffClear265" class="btn small" type="button">休み設定を解除</button>'+
-         '</div>'+
-         '<div id="acOffStatus265" class="sub" style="margin-top:7px">教官と日付を選択してください。</div>'+
-       '</div>'+
-     '</div>'+
-     '<div class="section">登録済みの休み／対応不可</div>'+
+         '<div class="title" style="font-size:14px">休み／対応不可を複数日設定</div>'+ 
+         '<div class="sub" style="margin:4px 0 8px">カレンダーから複数の日付をタップして選択できます。選択した日はまとめて登録・解除できます。</div>'+ 
+         '<div style="display:grid;grid-template-columns:auto 1fr auto;gap:8px;align-items:center;margin-top:8px">'+
+           '<button id="acOffPrev265" class="btn small" type="button">←</button>'+ 
+           '<div id="acOffMonth265" style="text-align:center;font-weight:1000"></div>'+ 
+           '<button id="acOffNext265" class="btn small" type="button">→</button>'+ 
+         '</div>'+ 
+         '<div id="acOffCalendar265" style="margin-top:8px"></div>'+ 
+         '<div id="acOffSelected265" class="sub" style="margin-top:8px;font-weight:900">0日選択中</div>'+ 
+         '<div class="field"><label>共通メモ（任意）</label><input id="acOffNote265" placeholder="例：公休、予定あり"></div>'+ 
+         '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">'+
+           '<button id="acOffSet265" class="btn small" type="button">選択日をまとめて休みにする</button>'+ 
+           '<button id="acOffClear265" class="btn small danger" type="button">選択日の休みをまとめて解除</button>'+ 
+         '</div>'+ 
+         '<div id="acOffStatus265" class="sub" style="margin-top:7px">教官を選択して、日付をタップしてください。</div>'+ 
+       '</div>'+     '<div class="section">登録済みの休み／対応不可</div>'+
      '<div id="acOffList265"></div>'+
      '<div class="section">登録済みの空き時間</div>'+
      '<div class="sub" style="margin:-4px 0 8px">教官ごとにまとめて表示します。日付をまたぐ連続枠は「翌」を付けて1本にまとめます。</div>'+
@@ -5705,6 +5709,40 @@ async function setMaintenanceMode(enabled){
 
    let mode='slots';
    let selected=new Set();
+   let selectedOffDates=new Set();
+   let offRowsCache=[];
+   const nowJst=new Date(Date.now()+9*60*60*1000);
+   let offMonthCursor=new Date(nowJst.getUTCFullYear(),nowJst.getUTCMonth(),1);
+
+   const offYmd=(y,m,d)=>String(y)+'-'+String(m+1).padStart(2,'0')+'-'+String(d).padStart(2,'0');
+   const renderOffCalendar=()=>{
+     const box=body.querySelector('#acOffCalendar265');
+     const label=body.querySelector('#acOffMonth265');
+     const count=body.querySelector('#acOffSelected265');
+     if(!box||!label||!count)return;
+     const y=offMonthCursor.getFullYear(),m=offMonthCursor.getMonth();
+     label.textContent=y+'年 '+(m+1)+'月';
+     const first=new Date(y,m,1), last=new Date(y,m+1,0), start=first.getDay();
+     const instructor=String(body.querySelector('#acInstructor265')?.value||'').trim();
+     const registered=new Set(offRowsCache.filter(x=>String(x.instructor_name||'')===instructor && String(x.status||'')==='off').map(x=>String(x.target_date||'')));
+     let html='<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:5px">';
+     ['日','月','火','水','木','金','土'].forEach(w=>html+='<div style="text-align:center;font-size:10px;font-weight:900;color:#64748b;padding:3px 0">'+w+'</div>');
+     for(let i=0;i<start;i++)html+='<div></div>';
+     for(let d=1;d<=last.getDate();d++){
+       const ymd=offYmd(y,m,d), sel=selectedOffDates.has(ymd), reg=registered.has(ymd);
+       html+='<button type="button" class="acOffDate265" data-date="'+ymd+'" style="min-height:48px;border-radius:10px;border:1px solid '+(sel?'#1659a7':reg?'#e3b95a':'#d7dee8')+';background:'+(sel?'#1659a7':reg?'#fff8dc':'#fff')+';color:'+(sel?'#fff':'#0b1726')+';font-weight:1000;font-size:12px;padding:4px">'+d+(reg?'<div style="font-size:8px;margin-top:2px">登録済</div>':'')+'</button>';
+     }
+     html+='</div>';
+     box.innerHTML=html;
+     count.textContent=selectedOffDates.size+'日選択中'+(selectedOffDates.size?'：'+[...selectedOffDates].sort().join(' / '):'');
+     box.querySelectorAll('.acOffDate265').forEach(btn=>btn.onclick=()=>{
+       const date=String(btn.dataset.date||'');
+       if(selectedOffDates.has(date))selectedOffDates.delete(date);else selectedOffDates.add(date);
+       renderOffCalendar();
+     });
+   };
+   body.querySelector('#acOffPrev265').onclick=()=>{offMonthCursor=new Date(offMonthCursor.getFullYear(),offMonthCursor.getMonth()-1,1);renderOffCalendar()};
+   body.querySelector('#acOffNext265').onclick=()=>{offMonthCursor=new Date(offMonthCursor.getFullYear(),offMonthCursor.getMonth()+1,1);renderOffCalendar()};
 
    const setMode=(m)=>{
      mode=m;
@@ -5854,6 +5892,8 @@ async function setMaintenanceMode(enabled){
        const d=await r.json().catch(()=>({}));
        if(!r.ok)throw new Error(d.error||'取得に失敗しました');
        const rows=(d.rows||[]).filter(x=>String(x.status||'')==='off');
+       offRowsCache=rows;
+       renderOffCalendar();
        if(!rows.length){
          list.innerHTML='<div class="empty">登録済みの休み／対応不可はありません。</div>';
          return;
@@ -5879,7 +5919,8 @@ async function setMaintenanceMode(enabled){
            );
            const dd=await rr.json().catch(()=>({}));
            if(!rr.ok)return alert(dd.error||'解除に失敗しました');
-           await renderOffList();
+           renderOffCalendar();
+   await renderOffList();
            await refreshOffStatus();
          };
        });
@@ -5890,66 +5931,56 @@ async function setMaintenanceMode(enabled){
 
    const refreshOffStatus=async()=>{
      const instructor=String(body.querySelector('#acInstructor265')?.value||'').trim();
-     const date=String(body.querySelector('#acDate265')?.value||'').trim();
      const statusBox=body.querySelector('#acOffStatus265');
      if(!statusBox)return;
-     if(!instructor||!date){
-       statusBox.textContent='教官と日付を選択してください。';
+     if(!instructor){
+       statusBox.textContent='教官を選択して、日付をタップしてください。';
+       renderOffCalendar();
        return;
      }
-     try{
-       const r=await fetch('/api/admin/instructor-day-status?date='+encodeURIComponent(date),{headers:auth(),cache:'no-store'});
-       const d=await r.json().catch(()=>({}));
-       if(!r.ok)throw new Error(d.error||'取得に失敗しました');
-       const row=(d.rows||[]).find(x=>String(x.instructor_name||'')===instructor);
-       statusBox.textContent=row
-         ? '現在：休み／対応不可'+(row.note?'（'+row.note+'）':'')
-         : '現在：休み設定なし';
-       body.querySelector('#acOffNote265').value=row?.note||'';
-     }catch(e){
-       statusBox.textContent='休み設定を確認できませんでした。';
-     }
+     statusBox.textContent=selectedOffDates.size
+       ? '選択中：'+selectedOffDates.size+'日'
+       : '日付をタップして複数選択できます。';
+     renderOffCalendar();
    };
 
    body.querySelector('#acInstructor265').addEventListener('change',refreshOffStatus);
-   body.querySelector('#acDate265').addEventListener('change',refreshOffStatus);
 
    body.querySelector('#acOffSet265').onclick=async()=>{
      const instructor=String(body.querySelector('#acInstructor265').value||'').trim();
-     const date=String(body.querySelector('#acDate265').value||'').trim();
+     const dates=[...selectedOffDates].sort();
      const note=String(body.querySelector('#acOffNote265').value||'').trim();
      if(!instructor)return alert('教官を選択してください');
-     if(!date)return alert('日付を選択してください');
-     if(!confirm(instructor+' を '+date+' は「休み／対応不可」にしますか？'))return;
+     if(!dates.length)return alert('休みにする日付を1日以上選択してください');
+     if(!confirm(instructor+' の '+dates.length+'日分を「休み／対応不可」にしますか？'))return;
 
      const r=await fetch('/api/admin/instructor-day-status',{
-       method:'POST',
-       headers:auth(),
-       body:JSON.stringify({instructor,date,note})
+       method:'POST',headers:auth(),body:JSON.stringify({instructor,dates,note})
      });
      const d=await r.json().catch(()=>({}));
      if(!r.ok)return alert(d.error||'休み設定を登録できませんでした');
-     await refreshOffStatus();
+     selectedOffDates.clear();
      await renderOffList();
-     alert('休み／対応不可として登録しました');
+     await refreshOffStatus();
+     alert(d.count+'日分を休み／対応不可として登録しました');
    };
 
    body.querySelector('#acOffClear265').onclick=async()=>{
      const instructor=String(body.querySelector('#acInstructor265').value||'').trim();
-     const date=String(body.querySelector('#acDate265').value||'').trim();
+     const dates=[...selectedOffDates].sort();
      if(!instructor)return alert('教官を選択してください');
-     if(!date)return alert('日付を選択してください');
-     if(!confirm(instructor+' の '+date+' の休み設定を解除しますか？'))return;
+     if(!dates.length)return alert('解除する日付を1日以上選択してください');
+     if(!confirm(instructor+' の '+dates.length+'日分の休み設定を解除しますか？'))return;
 
-     const r=await fetch('/api/admin/instructor-day-status?instructor='+encodeURIComponent(instructor)+'&date='+encodeURIComponent(date),{
-       method:'DELETE',
-       headers:auth()
+     const r=await fetch('/api/admin/instructor-day-status/bulk-delete',{
+       method:'POST',headers:auth(),body:JSON.stringify({instructor,dates})
      });
      const d=await r.json().catch(()=>({}));
      if(!r.ok)return alert(d.error||'休み設定を解除できませんでした');
-     await refreshOffStatus();
+     selectedOffDates.clear();
      await renderOffList();
-     alert('休み設定を解除しました');
+     await refreshOffStatus();
+     alert(d.count+'日分の休み設定を解除しました');
    };
 
    await renderOffList();
@@ -10025,21 +10056,41 @@ if(path==="/api/admin/instructor-ranking" && method==="GET"){
    await ensureInstructorDayStatus(env);
    const b=await request.json().catch(()=>({}));
    const instructor=String(b.instructor||"").trim();
-   const targetDate=String(b.date||"").trim();
    const note=String(b.note||"").trim().slice(0,200);
+   const rawDates=Array.isArray(b.dates)?b.dates:[b.date];
+   const dates=[...new Set(rawDates.map(x=>String(x||"").trim()).filter(Boolean))];
    if(!instructor)return json({error:"教官を選択してください"},400);
-   if(!/^\d{4}-\d{2}-\d{2}$/.test(targetDate))return json({error:"日付が不正です"},400);
+   if(!dates.length || dates.length>62)return json({error:"日付は1〜62日まで選択できます"},400);
+   if(dates.some(x=>!/^\d{4}-\d{2}-\d{2}$/.test(x)))return json({error:"日付が不正です"},400);
 
-   await env.DB.prepare(`
-     INSERT INTO instructor_day_status(instructor_name,target_date,status,note,updated_at)
-     VALUES(?,?,'off',?,CURRENT_TIMESTAMP)
-     ON CONFLICT(instructor_name,target_date) DO UPDATE SET
-       status='off',
-       note=excluded.note,
-       updated_at=CURRENT_TIMESTAMP
-   `).bind(instructor,targetDate,note).run();
+   for(const targetDate of dates){
+     await env.DB.prepare(`
+       INSERT INTO instructor_day_status(instructor_name,target_date,status,note,updated_at)
+       VALUES(?,?,'off',?,CURRENT_TIMESTAMP)
+       ON CONFLICT(instructor_name,target_date) DO UPDATE SET
+         status='off',note=excluded.note,updated_at=CURRENT_TIMESTAMP
+     `).bind(instructor,targetDate,note).run();
+   }
 
-   return json({ok:true,instructor,date:targetDate,status:"off",note});
+   return json({ok:true,instructor,dates,count:dates.length,status:"off",note});
+ }
+
+ if(path==="/api/admin/instructor-day-status/bulk-delete" && method==="POST"){
+   await ensureInstructorDayStatus(env);
+   const b=await request.json().catch(()=>({}));
+   const instructor=String(b.instructor||"").trim();
+   const dates=[...new Set((Array.isArray(b.dates)?b.dates:[]).map(x=>String(x||"").trim()).filter(Boolean))];
+   if(!instructor)return json({error:"教官を選択してください"},400);
+   if(!dates.length || dates.length>62)return json({error:"日付は1〜62日まで選択できます"},400);
+   if(dates.some(x=>!/^\d{4}-\d{2}-\d{2}$/.test(x)))return json({error:"日付が不正です"},400);
+   let count=0;
+   for(const targetDate of dates){
+     const result=await env.DB.prepare(
+       "DELETE FROM instructor_day_status WHERE instructor_name=? AND target_date=?"
+     ).bind(instructor,targetDate).run();
+     count+=Number(result?.meta?.changes||0);
+   }
+   return json({ok:true,instructor,dates,count});
  }
 
  if(path==="/api/admin/instructor-day-status" && method==="DELETE"){
