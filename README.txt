@@ -1,4 +1,11 @@
-LOMITA POLICE 研修管理システム Version 3.07
+LOMITA POLICE 研修管理システム Version 3.08
+
+■ 今回の更新
+- 指名手配及び市内巡回の実技試験で『合格 / 再受講』を選べるように調整
+- 実技試験の受講済み表示を『合格』表記に統一
+- 実技試験を合格で保存した時は pass、再受講で保存した時は fail を自動記録
+- 研修生カルテでも実技試験の結果が分かりやすく表示されるよう改善
+- 今回はDiscord更新履歴へ投稿しません
 
 ■ 今回の更新
 - 研修生カルテを全面的に見やすく整理
@@ -1089,7 +1096,6 @@ LOMITA POLICE Training Reservation - Version 2.40
 - pageshow / click 後も再確認
 - JST欄生成後に自動挿入
 - Version 2.39までの機能を維持
-
 
 
 
