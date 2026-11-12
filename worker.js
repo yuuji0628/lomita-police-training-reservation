@@ -1,7 +1,9 @@
-const APP_VERSION="3.09";
-const SKIP_VERSION_ANNOUNCEMENT=false;
+const APP_VERSION="3.10";
+const SKIP_VERSION_ANNOUNCEMENT=true;
 
 const APP_CHANGELOG=[
+  "研修生ごとの30日研修期限に救済延長ボタンを追加（Discord通知なし）",
+  "延長日数を期限へ加算し、自動リセット期限も連動して延長",
   "教官の休み／対応不可を複数日まとめて設定できるように改善",
   "月カレンダーから複数の日付をタップ選択できるUIを追加",
   "選択した複数日の休み設定を一括登録・一括解除できる機能を追加",
@@ -93,6 +95,12 @@ async function ensureTraineeProfiles(env) {
   }
   if (!cols.includes("all_completed_at")) {
     try { await env.DB.prepare("ALTER TABLE trainee_profiles ADD COLUMN all_completed_at TEXT DEFAULT ''").run(); } catch (_) {}
+  }
+  if (!cols.includes("training_deadline_extension_days")) {
+    try { await env.DB.prepare("ALTER TABLE trainee_profiles ADD COLUMN training_deadline_extension_days INTEGER DEFAULT 0").run(); } catch (_) {}
+  }
+  if (!cols.includes("training_deadline_extension_cycle")) {
+    try { await env.DB.prepare("ALTER TABLE trainee_profiles ADD COLUMN training_deadline_extension_cycle TEXT DEFAULT ''").run(); } catch (_) {}
   }
 
 
@@ -1327,7 +1335,20 @@ async function getTraineeCycleInfo(env,profile){
     };
   }
 
-  const deadlineDate=addCalendarDaysYmd(startDate,30);
+  let extensionDays=0;
+  try{
+    const ext=await env.DB.prepare(`
+      SELECT COALESCE(training_deadline_extension_days,0) AS days,
+             COALESCE(training_deadline_extension_cycle,'') AS cycle
+      FROM trainee_profiles WHERE id=?
+    `).bind(Number(profile?.id||0)).first();
+    if(String(ext?.cycle||'')===startDate){
+      extensionDays=Math.max(0,Number(ext?.days||0));
+    }
+  }catch(_){}
+
+  const baseDeadlineDate=addCalendarDaysYmd(startDate,30);
+  const deadlineDate=addCalendarDaysYmd(startDate,30+extensionDays);
   const daysRemaining=calendarDaysBetweenYmd(today,deadlineDate);
 
   return {
@@ -1336,7 +1357,9 @@ async function getTraineeCycleInfo(env,profile){
     total,
     completed,
     start_date:startDate,
+    base_deadline_date:baseDeadlineDate,
     deadline_date:deadlineDate,
+    extension_days:extensionDays,
     days_remaining:daysRemaining,
     expired:today>deadlineDate
   };
@@ -1427,7 +1450,7 @@ async function resetOneExpiredTrainingCycle(env,profile){
 
   await env.DB.prepare(`
     UPDATE trainee_profiles
-    SET all_completed_at='',updated_at=CURRENT_TIMESTAMP
+    SET all_completed_at='',training_deadline_extension_days=0,training_deadline_extension_cycle='',updated_at=CURRENT_TIMESTAMP
     WHERE id=?
   `).bind(Number(profile.id||0)).run();
 
@@ -7245,12 +7268,14 @@ function renderAdminTrainingDeadline(cycle){
  const start=String(c.start_date||'').replaceAll('-','/');
  const deadline=String(c.deadline_date||'').replaceAll('-','/');
  const left=Number(c.days_remaining);
+ const ext=Number(c.extension_days||0);
+ const extText=ext>0?' ｜ 救済延長 +'+ext+'日':'';
 
  if(c.expired || (Number.isFinite(left) && left<0)){
-   return '<div class="adminDeadlineLine expired">開始 '+esc(start)+' ｜ 期限 '+esc(deadline)+' ｜ 期限超過・リセット対象</div>';
+   return '<div class="adminDeadlineLine expired">開始 '+esc(start)+' ｜ 期限 '+esc(deadline)+extText+' ｜ 期限超過・リセット対象</div>';
  }
  const urgent=Number.isFinite(left) && left<=7;
- return '<div class="adminDeadlineLine '+(urgent?'urgent':'')+'">開始 '+esc(start)+' ｜ 期限 '+esc(deadline)+' ｜ 残り '+(Number.isFinite(left)?Math.max(0,left):'-')+'日</div>';
+ return '<div class="adminDeadlineLine '+(urgent?'urgent':'')+'">開始 '+esc(start)+' ｜ 期限 '+esc(deadline)+extText+' ｜ 残り '+(Number.isFinite(left)?Math.max(0,left):'-')+'日</div>';
 }
 
 function compactDeadlineHtml(cycle){
@@ -7348,6 +7373,13 @@ function renderTrainees(){
          (x.all_completed?
            '<div style="margin-top:5px;padding:7px;border:1px solid #d7ad45;border-radius:9px;background:#fff9df;font-size:9px;font-weight:1000">🏅 全研修修了 '+esc(String(x.all_completed_at||'').replaceAll('-','/'))+'</div>'
            :'')+
+         ((!x.all_completed && x.training_cycle?.started)?
+           '<div style="margin-top:7px;padding:8px;border:1px solid #e0b954;border-radius:10px;background:#fffaf0">'+
+             '<div style="font-size:10px;font-weight:1000;color:#8b6715">🛟 救済措置・研修期限延長</div>'+
+             '<div class="sub" style="margin-top:3px">現在の期限：'+esc(String(x.training_cycle.deadline_date||'').replaceAll('-','/'))+(Number(x.training_cycle.extension_days||0)>0?'（延長合計 +'+Number(x.training_cycle.extension_days||0)+'日）':'')+'</div>'+
+             '<button class="btn small primary extendTrainingDeadlineBtn" data-id="'+x.id+'" data-name="'+encodeURIComponent(x.player_name||'研修生')+'" style="width:100%;margin-top:6px">🛟 研修期限を延長</button>'+
+           '</div>'
+           :'')+
          '<div class="transferStartBox">'+
            '<div class="transferStartTitle" style="font-size:10px">途中参加・開始研修</div>'+
            '<div class="transferStartGrid">'+
@@ -7384,8 +7416,26 @@ function renderTrainees(){
  document.querySelectorAll('.orientationResetBtn').forEach(btn=>btn.addEventListener('click',()=>setOrientationStatus(Number(btn.dataset.id),false)));
  document.querySelectorAll('.saveTraineeMemoBtn').forEach(btn=>btn.addEventListener('click',()=>saveTraineeMemo(Number(btn.dataset.id))));
  document.querySelectorAll('.setTraineeStartBtn').forEach(btn=>btn.addEventListener('click',()=>setTraineeStartTraining(Number(btn.dataset.id))));
+ document.querySelectorAll('.extendTrainingDeadlineBtn').forEach(btn=>btn.addEventListener('click',()=>extendTrainingDeadline(Number(btn.dataset.id),decodeURIComponent(btn.dataset.name))));
  document.querySelectorAll('.traineeDeleteBtn').forEach(btn=>btn.addEventListener('click',()=>deleteTrainee(Number(btn.dataset.id),decodeURIComponent(btn.dataset.name))));
 }
+
+async function extendTrainingDeadline(id,name){
+ const raw=prompt((name||'研修生')+' の研修期限を何日延長しますか？\n\n救済措置として現在の期限に日数を追加します。\n1〜60日で入力してください。\nDiscord通知は送信されません。','7');
+ if(raw===null)return;
+ const days=Number(String(raw).trim());
+ if(!Number.isInteger(days)||days<1||days>60){alert('1〜60の整数で入力してください。');return;}
+ if(!confirm((name||'研修生')+' の研修期限を +'+days+'日 延長しますか？\n\n自動リセット期限も同じだけ延長されます。\nDiscord通知は送信されません。'))return;
+ const r=await fetch('/api/admin/trainees/'+id+'/extend-training-deadline',{
+   method:'POST',headers:auth(),body:JSON.stringify({days})
+ });
+ const d=await r.json().catch(()=>({}));
+ if(!r.ok){alert(d.error||'研修期限を延長できませんでした');return;}
+ alert('研修期限を +'+days+'日 延長しました。\n新しい期限：'+String(d.deadline_date||'')+'\n延長合計：+'+Number(d.extension_days||0)+'日\n\nDiscord通知は送信していません。');
+ await loadTrainees();
+ await loadAdmin();
+}
+
 async function setTraineeStartTraining(id){
  const select=document.querySelector('.traineeStartSelect[data-id="'+id+'"]');
  const dateEl=document.querySelector('.traineeRecognitionDate[data-id="'+id+'"]');
@@ -9045,7 +9095,9 @@ async function handle(request, env, ctx) {
          started:!!c.started,
          all_completed:!!c.all_completed,
          start_date:String(c.start_date||""),
+         base_deadline_date:String(c.base_deadline_date||""),
          deadline_date:String(c.deadline_date||""),
+         extension_days:Number(c.extension_days||0),
          days_remaining:c.days_remaining===null?null:Number(c.days_remaining),
          expired:!!c.expired,
          limit_days:30
@@ -9054,6 +9106,30 @@ async function handle(request, env, ctx) {
      out.push({...p,total:(hist||[]).length,pending,reserved,retake,completed,absent,cancelled,orientation_completed,all_completed:full.completed,all_completed_at:full.date,progress_completed:completed,progress_total:totalPrograms,progress_percent:totalPrograms?Math.round(completed/totalPrograms*100):0,current_training:current,current_training_id,training_cycle:cycle});
    }
    return json(out);
+ }
+
+ let traineeDeadlineExtendMatch=path.match(/^\/api\/admin\/trainees\/(\d+)\/extend-training-deadline$/);
+ if(traineeDeadlineExtendMatch && method==="POST"){
+   if(!(await isAdmin()))return json({error:"unauthorized"},401);
+   await ensureTraineeProfiles(env);
+   const profileId=Number(traineeDeadlineExtendMatch[1]);
+   const profile=await env.DB.prepare(`SELECT id,player_name,login_name,discord_id FROM trainee_profiles WHERE id=?`).bind(profileId).first();
+   if(!profile)return json({error:"研修生が見つかりません"},404);
+   const cycle=await getTraineeCycleInfo(env,profile);
+   if(!cycle.started)return json({error:"まだ30日研修期限が開始されていません"},409);
+   if(cycle.all_completed)return json({error:"全研修修了済みのため延長できません"},409);
+   const b=await request.json().catch(()=>({}));
+   const days=Number(b.days||0);
+   if(!Number.isInteger(days)||days<1||days>60)return json({error:"延長日数は1〜60日で指定してください"},400);
+   const current=Number(cycle.extension_days||0);
+   const total=current+days;
+   await env.DB.prepare(`
+     UPDATE trainee_profiles
+     SET training_deadline_extension_days=?,training_deadline_extension_cycle=?,updated_at=CURRENT_TIMESTAMP
+     WHERE id=?
+   `).bind(total,String(cycle.start_date||""),profileId).run();
+   const deadlineDate=addCalendarDaysYmd(String(cycle.start_date||""),30+total);
+   return json({ok:true,days_added:days,extension_days:total,deadline_date:deadlineDate,discord_notification:false});
  }
 
  let traineeStartMatch=path.match(/^\/api\/admin\/trainees\/(\d+)\/start-training$/);
