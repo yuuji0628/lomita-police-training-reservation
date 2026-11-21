@@ -66,6 +66,63 @@ async function ensureAdminAccounts(env){
  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS admin_accounts (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT NOT NULL UNIQUE COLLATE NOCASE, display_name TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'manager', salt TEXT NOT NULL, password_hash TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1, created_at TEXT DEFAULT CURRENT_TIMESTAMP)`).run();
  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS admin_login_sessions (token_hash TEXT PRIMARY KEY, account_id INTEGER NOT NULL, expires_at INTEGER NOT NULL, created_at TEXT DEFAULT CURRENT_TIMESTAMP)`).run();
 }
+async function ensureDiscordAdmins(env){
+ await ensureAdminAccounts(env);
+ const cols=(await env.DB.prepare('PRAGMA table_info(admin_accounts)').all()).results||[];
+ if(!cols.some(c=>c.name==='discord_user_id'))await env.DB.prepare('ALTER TABLE admin_accounts ADD COLUMN discord_user_id TEXT').run();
+ await env.DB.prepare('CREATE UNIQUE INDEX IF NOT EXISTS idx_admin_discord_user ON admin_accounts(discord_user_id)').run();
+ await env.DB.prepare('CREATE TABLE IF NOT EXISTS discord_owner_claims(token_hash TEXT PRIMARY KEY,account_id INTEGER NOT NULL,expires_at INTEGER NOT NULL)').run();
+}
+function discordRedirect(request){return new URL('/admin/discord/callback',request.url).toString()}
+function oauthCookie(value,age){return `lomita_discord_state=${value}; Max-Age=${age}; Path=/admin/discord; HttpOnly; Secure; SameSite=Lax`}
+function redirectAdmin(path,headers={}){return new Response(null,{status:302,headers:{location:path,'cache-control':'no-store',...headers}})}
+async function discordLoginStart(request,env){
+ if(!env.DISCORD_CLIENT_ID||!env.DISCORD_CLIENT_SECRET)return json({error:'Discord OAuth設定がありません'},503);
+ const state=adminRandomHex();
+ const q=new URLSearchParams({client_id:String(env.DISCORD_CLIENT_ID),redirect_uri:discordRedirect(request),response_type:'code',scope:'identify',state,prompt:'consent'});
+ return redirectAdmin('https://discord.com/oauth2/authorize?'+q.toString(),{'set-cookie':oauthCookie(state,600)});
+}
+async function discordLoginCallback(request,env){
+ const u=new URL(request.url),state=u.searchParams.get('state')||'',code=u.searchParams.get('code')||'';
+ const cookie=(request.headers.get('cookie')||'').match(/(?:^|;\s*)lomita_discord_state=([a-f0-9]{64})/);
+ const clear=oauthCookie('',0);
+ if(!cookie||!state||state!==cookie[1]||!code)return redirectAdmin('/admin?discord_error=state',{'set-cookie':clear});
+ try{
+  const response=await fetch('https://discord.com/api/v10/oauth2/token',{method:'POST',headers:{'content-type':'application/x-www-form-urlencoded'},body:new URLSearchParams({client_id:String(env.DISCORD_CLIENT_ID),client_secret:String(env.DISCORD_CLIENT_SECRET),grant_type:'authorization_code',code,redirect_uri:discordRedirect(request)})});
+  if(!response.ok)throw Error('token');
+  const token=await response.json();
+  const profileResponse=await fetch('https://discord.com/api/v10/users/@me',{headers:{authorization:'Bearer '+token.access_token}});
+  if(!profileResponse.ok)throw Error('profile');
+  const profile=await profileResponse.json();
+  if(!/^\d{15,25}$/.test(String(profile.id||'')))throw Error('profile');
+  await ensureDiscordAdmins(env);
+  let account=await env.DB.prepare('SELECT * FROM admin_accounts WHERE discord_user_id=?').bind(String(profile.id)).first();
+  if(!account){
+   const count=await env.DB.prepare('SELECT COUNT(*) n FROM admin_accounts').first();
+   const role='manager';
+   const username='discord_'+profile.id;
+   await env.DB.prepare('INSERT OR IGNORE INTO admin_accounts(username,display_name,role,salt,password_hash,active,discord_user_id) VALUES(?,?,?,?,?,0,?)').bind(username,String(profile.global_name||profile.username||'Discordユーザー').slice(0,80),role,'discord-only','disabled',String(profile.id)).run();
+   account=await env.DB.prepare('SELECT * FROM admin_accounts WHERE discord_user_id=?').bind(String(profile.id)).first();
+  }
+  if(!account?.active){
+   const ownerCount=await env.DB.prepare("SELECT COUNT(*) n FROM admin_accounts WHERE role='owner' AND active=1").first();
+   if(Number(ownerCount?.n||0)===0){
+    const claim=adminRandomHex();
+    await env.DB.prepare('INSERT INTO discord_owner_claims(token_hash,account_id,expires_at) VALUES(?,?,?)').bind(await adminDigest(claim),account.id,Date.now()+600000).run();
+    const headers=new Headers({location:'/admin?discord_claim=1','cache-control':'no-store'});
+    headers.append('set-cookie',clear);
+    headers.append('set-cookie',`lomita_discord_claim=${claim}; Max-Age=600; Path=/api/admin/discord/claim-owner; HttpOnly; Secure; SameSite=Strict`);
+    return new Response(null,{status:302,headers});
+   }
+   return redirectAdmin('/admin?discord_pending=1',{'set-cookie':clear});
+  }
+  const session=adminRandomHex(),expires=Date.now()+12*60*60*1000;
+  await env.DB.prepare('INSERT INTO admin_login_sessions(token_hash,account_id,expires_at) VALUES(?,?,?)').bind(await adminDigest(session),account.id,expires).run();
+  const headers=new Headers({location:'/admin','cache-control':'no-store'});
+  headers.append('set-cookie',clear);headers.append('set-cookie',adminCookie(session,43200));
+  return new Response(null,{status:302,headers});
+ }catch(e){return redirectAdmin('/admin?discord_error=auth',{'set-cookie':clear})}
+}
 function adminRandomHex(){return Array.from(crypto.getRandomValues(new Uint8Array(32)),x=>x.toString(16).padStart(2,'0')).join('')}
 async function adminDigest(s){return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(s))),x=>x.toString(16).padStart(2,'0')).join('')}
 async function adminPasswordHash(password,salt){
@@ -4951,12 +5008,15 @@ const ADMIN_BODY = `
  </div>
  <div class="card" style="padding:20px">
    <div class="title" style="font-size:22px">管理者ログイン</div>
-   <div class="sub" style="margin:6px 0 14px">個人IDとパスワードでログインしてください。</div>
-   <div class="notice">一度ログインすると、この端末では12時間ログイン状態を保持します。</div>
-   <div id="loginMsg"></div>
-   <div class="field"><label>ログインID</label><input id="adminUsername" autocomplete="username" placeholder="ログインID"></div><div class="field"><label>パスワード</label><input id="password" type="password" placeholder="管理パスワード" autocomplete="current-password" autofocus></div>
-   <button id="adminLoginBtn" type="button" class="btn dark" style="width:100%">管理画面を開く</button>
-   <button class="btn small" type="button" onclick="showInitialAdminSetup()" style="margin-top:10px">初回のみ：管理者アカウントを作成</button><div id="adminSetupArea"></div><a href="/" class="btn" style="display:block;text-align:center;margin-top:8px">トップへ戻る</a>
+   <div class="sub" style="margin:6px 0 14px">Discordアカウントでログインしてください。</div>
+   <a href="/admin/discord/login" class="btn dark" style="display:block;text-align:center;margin:14px 0">Discordでログイン</a>
+   <div class="notice" id="discordLoginStatus">初回ログイン後は、システム管理者による承認が必要です。</div>
+   <details style="margin-top:16px"><summary>既存の管理者IDでログイン（移行用）</summary>
+   <div id="loginMsg"></div><div class="field"><label>ログインID</label><input id="adminUsername"></div>
+   <div class="field"><label>パスワード</label><input id="password" type="password"></div>
+   <button id="adminLoginBtn" type="button" class="btn dark">管理画面を開く</button></details>
+   <details style="margin-top:14px"><summary>初回のシステム管理者設定（移行用）</summary><div id="adminSetupArea"></div><button class="btn small" type="button" onclick="showInitialAdminSetup()">初回設定を開く</button></details>
+   <a href="/" class="btn" style="display:block;text-align:center;margin-top:8px">トップへ戻る</a>
  </div>
 </div>
 <div id="adminView" style="display:none"><div class="wrap">
@@ -5444,7 +5504,7 @@ async function loadCurrentAdminRole(){
 async function loadAdminAccounts(){
  const el=document.getElementById('adminAccountsList');if(!el)return;
  const r=await fetch('/api/admin/accounts');if(!r.ok)return;
- const d=await r.json();el.innerHTML=(d.accounts||[]).map(a=>'<div style="padding:9px 0;border-bottom:1px solid #ddd">'+esc(a.display_name)+'（'+esc(a.username)+'） '+(a.role==='owner'?'システム管理者':'管理者')+' ／ '+(a.active?'有効':'停止中')+' <button class="btn small" onclick="changeAdminAccount('+a.id+',\''+(a.active?'disable':'enable')+'\')">'+(a.active?'利用停止':'再有効化')+'</button> <button class="btn small" onclick="changeAdminAccount('+a.id+',\'password\')">パスワード再設定</button></div>').join('');
+ const d=await r.json();el.innerHTML=(d.accounts||[]).map(a=>'<div style="padding:9px 0;border-bottom:1px solid #ddd">'+esc(a.display_name)+'（'+(a.discord_user_id?'Discord連携':'個人ID：'+esc(a.username))+'） '+(a.role==='owner'?'システム管理者':'管理者')+' ／ '+(a.active?'有効':'承認待ち・停止中')+' <button class="btn small" onclick="changeAdminAccount('+a.id+',\''+(a.active?'disable':'enable')+'\')">'+(a.active?'利用停止':'承認・有効化')+'</button>'+(a.discord_user_id?'':' <button class="btn small" onclick="changeAdminAccount('+a.id+',\'password\')">パスワード再設定</button>')+'</div>').join('');
 }
 async function createAdminAccount(){
  const b={username:document.getElementById('newAdminUsername').value.trim(),display_name:document.getElementById('newAdminName').value.trim(),password:document.getElementById('newAdminPassword').value,role:document.getElementById('newAdminRole').value};
@@ -5475,7 +5535,19 @@ function scheduleAdminInitialRefresh(){
  },3200);
 }
 
+async function claimDiscordOwner(){
+ const password=document.getElementById('discordLegacyPass')?.value||'';
+ const r=await fetch('/api/admin/discord/claim-owner',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({legacy_password:password})});
+ const d=await r.json().catch(()=>({}));alert(d.message||d.error||'登録に失敗しました');if(r.ok)location.href='/admin/discord/login';
+}
 async function restoreAdmin(){
+ const params=new URLSearchParams(location.search);
+ const status=document.getElementById('discordLoginStatus');
+ if(status&&params.has('discord_claim')){
+  status.innerHTML='初回のみ、従来の管理パスワードでシステム管理者として承認してください。<div class="field"><input type="password" id="discordLegacyPass" placeholder="従来の管理パスワード"></div><button type="button" class="btn dark" onclick="claimDiscordOwner()">最初の管理者として登録</button>';
+ }
+ if(status&&params.has('discord_pending'))status.textContent='Discord認証が完了しました。管理者の承認をお待ちください。';
+ if(status&&params.has('discord_error'))status.textContent='Discord認証に失敗しました。設定とリダイレクトURLを確認してください。';
  const r=await fetch('/api/admin/check');
  if(r.ok){showAdmin();await loadCurrentAdminRole();await loadAdmin();await loadReservationControl();scheduleAdminInitialRefresh()}
 }
@@ -8412,6 +8484,8 @@ async function handle(request, env, ctx) {
  const url=new URL(request.url), path=url.pathname, method=request.method;
  const adminPass=env.ADMIN_PASSWORD || "";
  if(path==="/api/version" && method==="GET") return json({version:APP_VERSION});
+ if(path==='/admin/discord/login' && method==='GET')return discordLoginStart(request,env);
+ if(path==='/admin/discord/callback' && method==='GET')return discordLoginCallback(request,env);
  const getAdminAccount=async()=>individualAdminSession(request,env);
  const getAdminRole=async()=>{const account=await getAdminAccount();return account?.role||null};
  const isAdmin=async()=>Boolean(await getAdminRole());
@@ -8865,6 +8939,21 @@ async function handle(request, env, ctx) {
    },201);
  }
 
+ if(path==='/api/admin/discord/claim-owner' && method==='POST'){
+   await ensureDiscordAdmins(env);
+   const ownerCount=await env.DB.prepare("SELECT COUNT(*) n FROM admin_accounts WHERE role='owner' AND active=1").first();
+   if(Number(ownerCount?.n||0)>0)return json({error:'システム管理者が既にいます。管理者に承認を依頼してください。'},409);
+   const b=await request.json().catch(()=>({}));
+   if(!adminPass||String(b.legacy_password||'')!==adminPass)return json({error:'従来の管理パスワードが違います'},401);
+   const match=(request.headers.get('cookie')||'').match(/(?:^|;\s*)lomita_discord_claim=([a-f0-9]{64})/);
+   if(!match)return json({error:'Discord認証をやり直してください'},401);
+   const row=await env.DB.prepare('SELECT account_id FROM discord_owner_claims WHERE token_hash=? AND expires_at>?').bind(await adminDigest(match[1]),Date.now()).first();
+   if(!row)return json({error:'Discord認証をやり直してください'},401);
+   const account={id:row.account_id};
+   await env.DB.prepare('DELETE FROM discord_owner_claims WHERE token_hash=?').bind(await adminDigest(match[1])).run();
+   await env.DB.prepare("UPDATE admin_accounts SET role='owner',active=1 WHERE id=?").bind(account.id).run();
+   return json({ok:true,message:'管理者登録が完了しました。Discordからログインしてください。'});
+ }
  if(path==="/api/admin/setup" && method==="POST"){
    await ensureAdminAccounts(env);
    const count=await env.DB.prepare('SELECT COUNT(*) AS n FROM admin_accounts').first();
@@ -8894,7 +8983,7 @@ async function handle(request, env, ctx) {
  }
  if(path==="/api/admin/accounts" && method==="GET"){
    if(!(await isOwnerAdmin()))return json({error:'forbidden'},403);
-   const result=await env.DB.prepare('SELECT id,username,display_name,role,active,created_at FROM admin_accounts ORDER BY id').all();
+   const result=await env.DB.prepare('SELECT id,username,display_name,role,active,created_at,discord_user_id FROM admin_accounts ORDER BY id').all();
    return json({accounts:result.results||[]});
  }
  if(path==="/api/admin/accounts" && method==="POST"){
@@ -8909,10 +8998,11 @@ async function handle(request, env, ctx) {
  if(accountAction && method==="POST"){
    if(!(await isOwnerAdmin()))return json({error:'forbidden'},403);
    const id=Number(accountAction[1]),action=accountAction[2],current=await getAdminAccount();
-   const target=await env.DB.prepare('SELECT id,role,active FROM admin_accounts WHERE id=?').bind(id).first();
+   const target=await env.DB.prepare('SELECT id,role,active,discord_user_id FROM admin_accounts WHERE id=?').bind(id).first();
    if(!target)return json({error:'not_found'},404);
    if(action==='disable' && id===current.id)return json({error:'自分自身は無効化できません'},400);
    if(action==='disable' && target.role==='owner' && target.active){const count=await env.DB.prepare("SELECT COUNT(*) AS n FROM admin_accounts WHERE role='owner' AND active=1").first();if(count.n<=1)return json({error:'最後のシステム管理者は無効化できません'},400)}
+   if(action==='password' && target.discord_user_id)return json({error:'Discordアカウントはパスワード再設定不要です'},400);
    if(action==='password'){
      const b=await request.json().catch(()=>({}));const password=String(b.password||'');if(password.length<12||password.length>200)return json({error:'パスワードは12文字以上'},400);
      const salt=adminRandomHex();await env.DB.prepare('UPDATE admin_accounts SET salt=?,password_hash=? WHERE id=?').bind(salt,await adminPasswordHash(password,salt),id).run();
