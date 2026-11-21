@@ -5022,6 +5022,21 @@ const ADMIN_BODY = `
 <div id="adminView" style="display:none"><div class="wrap">
  <div class="header"><div class="between"><div><span class="badge">LOMITA POLICE</span><div class="brand">研修管理本部</div><div class="sub">研修・参加申請・受講状況を一括管理</div><div class="sub" style="margin-top:6px;opacity:.78">Version ${APP_VERSION}</div><div id="adminRoleLabel" class="sub" style="margin-top:4px"></div></div><div class="row"><button class="btn small" onclick="logout()">ログアウト</button><button class="btn small" onclick="openManageMenu()">⚠️ここは触らない⚠️</button> </div></div></div>
  <div id="msg"></div>
+ <details class="card ownerOnly" id="adminAccountsPanel" style="margin:12px 0 16px;padding:15px;display:none">
+  <summary style="font-weight:900;cursor:pointer;font-size:16px">🔐 管理者の承認・利用停止</summary>
+  <p class="sub" style="margin:12px 0">Discordで初回ログインした人は承認待ちに表示されます。退職者は利用停止にすると既存のログインも無効になります。</p>
+  <div id="adminAccountsList" style="margin:12px 0">読み込み中...</div>
+  <button class="btn small" type="button" onclick="loadAdminAccounts()">一覧を更新</button>
+  <details style="margin-top:16px"><summary>個人IDの管理者を追加（必要な場合のみ）</summary>
+   <div class="field"><label>ログインID</label><input id="newAdminUsername" placeholder="例: officer01"></div>
+   <div class="field"><label>表示名</label><input id="newAdminName"></div>
+   <div class="field"><label>初期パスワード（12文字以上）</label><input id="newAdminPassword" type="password"></div>
+   <div class="field"><label>権限</label><select id="newAdminRole"><option value="manager">管理者</option><option value="owner">システム管理者</option></select></div>
+   <button class="btn small" type="button" onclick="createAdminAccount()">追加</button>
+   <div id="adminAccountsMessage"></div>
+  </details>
+ </details>
+
  <div class="currentTimeBar" style="display:flex;align-items:center;justify-content:space-between;gap:14px;padding:14px 16px">
   <div class="currentTimeLabel" style="font-size:11px;letter-spacing:.18em;font-weight:900;opacity:.72">JST</div>
   <div style="text-align:right">
