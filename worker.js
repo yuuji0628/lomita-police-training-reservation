@@ -60,6 +60,29 @@ async function verifyAdminSession(request, secret) {
   return Boolean(await getAdminSessionRole(request, secret));
 }
 
+
+// Individual admin accounts: revocable, database-backed sessions.
+async function ensureAdminAccounts(env){
+ await env.DB.prepare(`CREATE TABLE IF NOT EXISTS admin_accounts (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT NOT NULL UNIQUE COLLATE NOCASE, display_name TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'manager', salt TEXT NOT NULL, password_hash TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1, created_at TEXT DEFAULT CURRENT_TIMESTAMP)`).run();
+ await env.DB.prepare(`CREATE TABLE IF NOT EXISTS admin_login_sessions (token_hash TEXT PRIMARY KEY, account_id INTEGER NOT NULL, expires_at INTEGER NOT NULL, created_at TEXT DEFAULT CURRENT_TIMESTAMP)`).run();
+}
+function adminRandomHex(){return Array.from(crypto.getRandomValues(new Uint8Array(32)),x=>x.toString(16).padStart(2,'0')).join('')}
+async function adminDigest(s){return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(s))),x=>x.toString(16).padStart(2,'0')).join('')}
+async function adminPasswordHash(password,salt){
+ const material=await crypto.subtle.importKey('raw',new TextEncoder().encode(password),'PBKDF2',false,['deriveBits']);
+ const bits=await crypto.subtle.deriveBits({name:'PBKDF2',salt:new TextEncoder().encode(salt),iterations:210000,hash:'SHA-256'},material,256);
+ return Array.from(new Uint8Array(bits),x=>x.toString(16).padStart(2,'0')).join('');
+}
+async function individualAdminSession(request,env){
+ await ensureAdminAccounts(env);
+ const match=(request.headers.get('cookie')||'').match(/(?:^|;\s*)lomita_admin_v2=([a-f0-9]{64})/);
+ if(!match)return null;
+ const hash=await adminDigest(match[1]);
+ const row=await env.DB.prepare(`SELECT a.id,a.username,a.display_name,a.role FROM admin_login_sessions s JOIN admin_accounts a ON a.id=s.account_id WHERE s.token_hash=? AND s.expires_at>? AND a.active=1`).bind(hash,Date.now()).first();
+ return row||null;
+}
+const adminCookie=(token,maxAge)=>`lomita_admin_v2=${token}; Max-Age=${maxAge}; Path=/; HttpOnly; Secure; SameSite=Strict`;
+
 async function ensureTraineeProfiles(env) {
   await env.DB.prepare(`
     CREATE TABLE IF NOT EXISTS trainee_profiles (
@@ -4104,7 +4127,7 @@ const PUBLIC_BODY = `
     <div id="myHistory" style="margin-top:8px"></div>
   </div>
 </div>
-    <div id="msg"></div>
+    <div id="msg"></div><div class="card ownerOnly" style="margin-bottom:12px"><div class="title">管理者アカウント管理</div><div class="sub">退職者は「利用停止」で即時ログアウト。ほかの管理者のパスワードは変更不要です。</div><div id="adminAccountsList"></div><div class="field"><label>新規ログインID</label><input id="newAdminUsername" placeholder="例: officer01"></div><div class="field"><label>表示名</label><input id="newAdminName" placeholder="例: 研修担当A"></div><div class="field"><label>初期パスワード（12文字以上）</label><input id="newAdminPassword" type="password"></div><div class="field"><label>権限</label><select id="newAdminRole"><option value="manager">管理者</option><option value="owner">システム管理者</option></select></div><button class="btn small" onclick="createAdminAccount()">管理者を追加</button><div id="adminAccountsMessage"></div></div>
     <div class="section">現在の研修</div>
     <div id="list"><div class="empty">読み込み中...</div></div>
   </div>
@@ -4928,12 +4951,12 @@ const ADMIN_BODY = `
  </div>
  <div class="card" style="padding:20px">
    <div class="title" style="font-size:22px">管理者ログイン</div>
-   <div class="sub" style="margin:6px 0 14px">管理パスワードを入力してください。</div>
+   <div class="sub" style="margin:6px 0 14px">個人IDとパスワードでログインしてください。</div>
    <div class="notice">一度ログインすると、この端末では12時間ログイン状態を保持します。</div>
    <div id="loginMsg"></div>
-   <div class="field"><label>管理パスワード</label><input id="password" type="password" placeholder="管理パスワード" autocomplete="current-password" autofocus></div>
+   <div class="field"><label>ログインID</label><input id="adminUsername" autocomplete="username" placeholder="ログインID"></div><div class="field"><label>パスワード</label><input id="password" type="password" placeholder="管理パスワード" autocomplete="current-password" autofocus></div>
    <button id="adminLoginBtn" type="button" class="btn dark" style="width:100%">管理画面を開く</button>
-   <a href="/" class="btn" style="display:block;text-align:center;margin-top:8px">トップへ戻る</a>
+   <button class="btn small" type="button" onclick="showInitialAdminSetup()" style="margin-top:10px">初回のみ：管理者アカウントを作成</button><div id="adminSetupArea"></div><a href="/" class="btn" style="display:block;text-align:center;margin-top:8px">トップへ戻る</a>
  </div>
 </div>
 <div id="adminView" style="display:none"><div class="wrap">
@@ -5391,16 +5414,17 @@ function msg(t,c){const e=document.getElementById('msg');e.innerHTML='<div class
 async function login(){
  const btn=document.getElementById('adminLoginBtn');
  const password=document.getElementById('password').value;
+ const username=document.getElementById('adminUsername').value.trim();
  if(!password){document.getElementById('loginMsg').innerHTML='<div class="notice error">管理パスワードを入力してください</div>';return}
  btn.disabled=true;btn.textContent='確認中...';
  try{
-   const r=await fetch('/api/admin/login',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({password})});
+   const r=await fetch('/api/admin/login',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({username,password})});
    const d=await r.json().catch(()=>({}));
    if(!r.ok){
      document.getElementById('loginMsg').innerHTML='<div class="notice error">'+(r.status===401?'パスワードが違います':'ログイン処理に失敗しました（HTTP '+r.status+'）')+'</div>';
      return;
    }
-   adminPassword=password;showAdmin();await loadCurrentAdminRole();await loadAdmin();await loadReservationControl();
+   adminPassword="";showAdmin();await loadCurrentAdminRole();await loadAdmin();await loadReservationControl();
  await loadAdminSurveys();scheduleAdminInitialRefresh();
  }finally{btn.disabled=false;btn.textContent='管理画面を開く'}
 }
@@ -5411,10 +5435,32 @@ async function logout(){
 }
 function showAdmin(){document.getElementById('loginView').style.display='none';document.getElementById('adminView').style.display='block'}
 async function loadCurrentAdminRole(){
- currentAdminRole='owner';
- document.querySelectorAll('.ownerOnly').forEach(el=>el.style.display='');
- const label=document.getElementById('adminRoleLabel');
- if(label)label.textContent='システム管理者';
+ const r=await fetch('/api/admin/role');const d=await r.json().catch(()=>({}));
+ currentAdminRole=d.role||'manager';
+ document.querySelectorAll('.ownerOnly').forEach(el=>el.style.display=currentAdminRole==='owner'?'':'none');
+ const label=document.getElementById('adminRoleLabel');if(label)label.textContent=currentAdminRole==='owner'?'システム管理者':'管理者';
+ if(currentAdminRole==='owner')await loadAdminAccounts();
+}
+async function loadAdminAccounts(){
+ const el=document.getElementById('adminAccountsList');if(!el)return;
+ const r=await fetch('/api/admin/accounts');if(!r.ok)return;
+ const d=await r.json();el.innerHTML=(d.accounts||[]).map(a=>'<div style="padding:9px 0;border-bottom:1px solid #ddd">'+esc(a.display_name)+'（'+esc(a.username)+'） '+(a.role==='owner'?'システム管理者':'管理者')+' ／ '+(a.active?'有効':'停止中')+' <button class="btn small" onclick="changeAdminAccount('+a.id+',\''+(a.active?'disable':'enable')+'\')">'+(a.active?'利用停止':'再有効化')+'</button> <button class="btn small" onclick="changeAdminAccount('+a.id+',\'password\')">パスワード再設定</button></div>').join('');
+}
+async function createAdminAccount(){
+ const b={username:document.getElementById('newAdminUsername').value.trim(),display_name:document.getElementById('newAdminName').value.trim(),password:document.getElementById('newAdminPassword').value,role:document.getElementById('newAdminRole').value};
+ const r=await fetch('/api/admin/accounts',{method:'POST',headers:auth(),body:JSON.stringify(b)});const d=await r.json();document.getElementById('adminAccountsMessage').textContent=r.ok?'追加しました':(d.error||'登録失敗');if(r.ok){document.getElementById('newAdminPassword').value='';await loadAdminAccounts()}
+}
+async function changeAdminAccount(id,action){
+ if(!confirm(action==='disable'?'この管理者を利用停止し、ログイン中の端末もログアウトさせますか？':action==='enable'?'再有効化しますか？':'パスワードを再設定しますか？'))return;
+ const password=action==='password'?prompt('新しいパスワード（12文字以上）'):null;if(action==='password'&&password===null)return;
+ const r=await fetch('/api/admin/accounts/'+id+'/'+action,{method:'POST',headers:auth(),body:JSON.stringify({password})});const d=await r.json();if(!r.ok)alert(d.error||'失敗しました');await loadAdminAccounts();
+}
+function showInitialAdminSetup(){
+ document.getElementById('adminSetupArea').innerHTML='<div class="notice">初回のみ、従来の管理パスワードで最初のシステム管理者を登録します。登録後、共通パスワードではログインできません。</div><div class="field"><label>従来の管理パスワード</label><input id="legacyAdminPassword" type="password"></div><div class="field"><label>新しいログインID（英数字3文字以上）</label><input id="setupAdminUsername"></div><div class="field"><label>新しい個人パスワード（12文字以上）</label><input id="setupAdminPassword" type="password"></div><button class="btn dark" onclick="setupInitialAdmin()">初回登録</button>';
+}
+async function setupInitialAdmin(){
+ const b={legacy_password:document.getElementById('legacyAdminPassword').value,username:document.getElementById('setupAdminUsername').value.trim(),password:document.getElementById('setupAdminPassword').value};
+ const r=await fetch('/api/admin/setup',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(b)});const d=await r.json();alert(r.ok?'登録しました。個人IDでログインしてください。':(d.error||'登録できませんでした'));if(r.ok)document.getElementById('adminSetupArea').innerHTML='';
 }
 let adminInitialRefreshTimer1=null;
 let adminInitialRefreshTimer2=null;
@@ -5630,7 +5676,7 @@ async function setMaintenanceMode(enabled){
         if(msgBox)msgBox.innerHTML='<div class="notice error">切り替えをキャンセルしました</div>';
         return;
       }
-      adminPassword=password;
+      adminPassword="";
       result=await send({
         'content-type':'application/json',
         'x-admin-password':password
@@ -8364,12 +8410,10 @@ async function handle(request, env, ctx) {
    }
  }catch(_){}
  const url=new URL(request.url), path=url.pathname, method=request.method;
- const adminPass=env.ADMIN_PASSWORD || "lomita2026";
+ const adminPass=env.ADMIN_PASSWORD || "";
  if(path==="/api/version" && method==="GET") return json({version:APP_VERSION});
- const getAdminRole=async()=>{
-   if(request.headers.get("x-admin-password")===adminPass)return "owner";
-   return await getAdminSessionRole(request,adminPass);
- };
+ const getAdminAccount=async()=>individualAdminSession(request,env);
+ const getAdminRole=async()=>{const account=await getAdminAccount();return account?.role||null};
  const isAdmin=async()=>Boolean(await getAdminRole());
  const isOwnerAdmin=async()=>await getAdminRole()==="owner";
  if(path==="/api/maintenance" && method==="GET"){
@@ -8821,32 +8865,61 @@ async function handle(request, env, ctx) {
    },201);
  }
 
- if(path==="/api/admin/login" && method==="POST"){
+ if(path==="/api/admin/setup" && method==="POST"){
+   await ensureAdminAccounts(env);
+   const count=await env.DB.prepare('SELECT COUNT(*) AS n FROM admin_accounts').first();
+   if(Number(count?.n||0)>0)return json({error:'already_configured'},409);
    const b=await request.json().catch(()=>({}));
-   if(String(b.password||"")!==adminPass)return json({error:"unauthorized"},401);
-   const expires=String(Date.now()+12*60*60*1000);
-   const role="owner";
-   const sig=await adminSessionSignature(adminPass,expires,role);
-   return new Response(JSON.stringify({ok:true,expires:Number(expires),role}),{
-     status:200,
-     headers:{
-       "content-type":"application/json; charset=utf-8",
-       "cache-control":"no-store",
-       "set-cookie":"lomita_admin="+encodeURIComponent(expires+"."+role+"."+sig)+"; Max-Age=43200; Path=/; HttpOnly; Secure; SameSite=Strict"
-     }
-   });
+   if(!adminPass || String(b.legacy_password||'')!==adminPass)return json({error:'unauthorized'},401);
+   const username=String(b.username||'').trim(),password=String(b.password||'');
+   if(!/^[a-zA-Z0-9_.-]{3,40}$/.test(username)||password.length<12||password.length>200)return json({error:'IDは英数字3〜40文字、パスワードは12文字以上で入力してください'},400);
+   const salt=adminRandomHex(),hash=await adminPasswordHash(password,salt);
+   try{await env.DB.prepare(`INSERT INTO admin_accounts(username,display_name,role,salt,password_hash) VALUES(?,?,'owner',?,?)`).bind(username,username,salt,hash).run()}catch(_){return json({error:'already_configured'},409)}
+   return json({ok:true});
  }
-
+ if(path==="/api/admin/login" && method==="POST"){
+   await ensureAdminAccounts(env);
+   const b=await request.json().catch(()=>({}));
+   const username=String(b.username||'').trim(),password=String(b.password||'');
+   const row=await env.DB.prepare('SELECT * FROM admin_accounts WHERE username=? AND active=1').bind(username).first();
+   if(!row||!password||await adminPasswordHash(password,row.salt)!==row.password_hash)return json({error:'unauthorized'},401);
+   const token=adminRandomHex(),expires=Date.now()+12*60*60*1000;
+   await env.DB.prepare('INSERT INTO admin_login_sessions(token_hash,account_id,expires_at) VALUES(?,?,?)').bind(await adminDigest(token),row.id,expires).run();
+   return new Response(JSON.stringify({ok:true,role:row.role}),{headers:{'content-type':'application/json','cache-control':'no-store','set-cookie':adminCookie(token,43200)}});
+ }
  if(path==="/api/admin/logout" && method==="POST"){
-   return new Response(JSON.stringify({ok:true}),{
-     headers:{
-       "content-type":"application/json; charset=utf-8",
-       "cache-control":"no-store",
-       "set-cookie":"lomita_admin=; Max-Age=0; Path=/; HttpOnly; Secure; SameSite=Strict"
-     }
-   });
+   const match=(request.headers.get('cookie')||'').match(/(?:^|;\s*)lomita_admin_v2=([a-f0-9]{64})/);
+   if(match){await ensureAdminAccounts(env);await env.DB.prepare('DELETE FROM admin_login_sessions WHERE token_hash=?').bind(await adminDigest(match[1])).run()}
+   return new Response(JSON.stringify({ok:true}),{headers:{'content-type':'application/json','set-cookie':adminCookie('',0)}});
  }
-
+ if(path==="/api/admin/accounts" && method==="GET"){
+   if(!(await isOwnerAdmin()))return json({error:'forbidden'},403);
+   const result=await env.DB.prepare('SELECT id,username,display_name,role,active,created_at FROM admin_accounts ORDER BY id').all();
+   return json({accounts:result.results||[]});
+ }
+ if(path==="/api/admin/accounts" && method==="POST"){
+   if(!(await isOwnerAdmin()))return json({error:'forbidden'},403);
+   const b=await request.json().catch(()=>({}));const username=String(b.username||'').trim(),password=String(b.password||''),name=String(b.display_name||username).trim();
+   if(!/^[a-zA-Z0-9_.-]{3,40}$/.test(username)||password.length<12||password.length>200||!name||name.length>80||!['owner','manager'].includes(b.role))return json({error:'入力内容を確認してください（パスワード12文字以上）'},400);
+   const salt=adminRandomHex(),hash=await adminPasswordHash(password,salt);
+   try{await env.DB.prepare('INSERT INTO admin_accounts(username,display_name,role,salt,password_hash) VALUES(?,?,?,?,?)').bind(username,name,b.role,salt,hash).run()}catch(_){return json({error:'IDが重複しています'},409)}
+   return json({ok:true});
+ }
+ const accountAction=path.match(/^\/api\/admin\/accounts\/(\d+)\/(disable|enable|password)$/);
+ if(accountAction && method==="POST"){
+   if(!(await isOwnerAdmin()))return json({error:'forbidden'},403);
+   const id=Number(accountAction[1]),action=accountAction[2],current=await getAdminAccount();
+   const target=await env.DB.prepare('SELECT id,role,active FROM admin_accounts WHERE id=?').bind(id).first();
+   if(!target)return json({error:'not_found'},404);
+   if(action==='disable' && id===current.id)return json({error:'自分自身は無効化できません'},400);
+   if(action==='disable' && target.role==='owner' && target.active){const count=await env.DB.prepare("SELECT COUNT(*) AS n FROM admin_accounts WHERE role='owner' AND active=1").first();if(count.n<=1)return json({error:'最後のシステム管理者は無効化できません'},400)}
+   if(action==='password'){
+     const b=await request.json().catch(()=>({}));const password=String(b.password||'');if(password.length<12||password.length>200)return json({error:'パスワードは12文字以上'},400);
+     const salt=adminRandomHex();await env.DB.prepare('UPDATE admin_accounts SET salt=?,password_hash=? WHERE id=?').bind(salt,await adminPasswordHash(password,salt),id).run();
+   }else await env.DB.prepare('UPDATE admin_accounts SET active=? WHERE id=?').bind(action==='enable'?1:0,id).run();
+   if(action!=='enable')await env.DB.prepare('DELETE FROM admin_login_sessions WHERE account_id=?').bind(id).run();
+   return json({ok:true});
+ }
  let traineeCancelMatch=path.match(/^\/api\/trainee\/reservations\/(\d+)\/cancel$/);
  if(traineeCancelMatch && method==="POST"){
    const profile=await getTraineeSession(request,env);
