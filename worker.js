@@ -4184,7 +4184,7 @@ const PUBLIC_BODY = `
     <div id="myHistory" style="margin-top:8px"></div>
   </div>
 </div>
-    <div id="msg"></div><div class="card ownerOnly" style="margin-bottom:12px"><div class="title">管理者アカウント管理</div><div class="sub">退職者は「利用停止」で即時ログアウト。ほかの管理者のパスワードは変更不要です。</div><div id="adminAccountsList"></div><div class="field"><label>新規ログインID</label><input id="newAdminUsername" placeholder="例: officer01"></div><div class="field"><label>表示名</label><input id="newAdminName" placeholder="例: 研修担当A"></div><div class="field"><label>初期パスワード（12文字以上）</label><input id="newAdminPassword" type="password"></div><div class="field"><label>権限</label><select id="newAdminRole"><option value="manager">管理者</option><option value="owner">システム管理者</option></select></div><button class="btn small" onclick="createAdminAccount()">管理者を追加</button><div id="adminAccountsMessage"></div></div>
+    <div id="msg"></div><div class="card ownerOnly" style="margin-bottom:12px"><div class="title">管理者アカウント管理</div><div class="sub">退職者は「利用停止」で即時ログアウト。ほかの管理者のパスワードは変更不要です。</div><div id="adminAccountsList"></div><div class="field"><label>新規ログインID</label><input id="newAdminUsername" placeholder="例: officer01"></div><div class="field"><label>表示名</label><input id="newAdminName" placeholder="例: 研修担当A"></div><div class="field"><label>初期パスワード（12文字以上）</label><input id="newAdminPassword" type="password"></div><div class="notice">追加するアカウントの権限は一般管理者のみです。</div><button class="btn small" onclick="createAdminAccount()">管理者を追加</button><div id="adminAccountsMessage"></div></div>
     <div class="section">現在の研修</div>
     <div id="list"><div class="empty">読み込み中...</div></div>
   </div>
@@ -5031,7 +5031,7 @@ const ADMIN_BODY = `
    <div class="field"><label>ログインID</label><input id="newAdminUsername" placeholder="例: officer01"></div>
    <div class="field"><label>表示名</label><input id="newAdminName"></div>
    <div class="field"><label>初期パスワード（12文字以上）</label><input id="newAdminPassword" type="password"></div>
-   <div class="field"><label>権限</label><select id="newAdminRole"><option value="manager">管理者</option><option value="owner">システム管理者</option></select></div>
+   <div class="notice">追加するアカウントの権限は一般管理者のみです。</div>
    <button class="btn small" type="button" onclick="createAdminAccount()">追加</button>
    <div id="adminAccountsMessage"></div>
   </details>
@@ -5519,10 +5519,10 @@ async function loadCurrentAdminRole(){
 async function loadAdminAccounts(){
  const el=document.getElementById('adminAccountsList');if(!el)return;
  const r=await fetch('/api/admin/accounts');if(!r.ok)return;
- const d=await r.json();el.innerHTML=(d.accounts||[]).map(a=>'<div style="padding:9px 0;border-bottom:1px solid #ddd">'+esc(a.display_name)+'（'+(a.discord_user_id?'Discord連携':'個人ID：'+esc(a.username))+'） '+(a.role==='owner'?'システム管理者':'管理者')+' ／ '+(a.active?'有効':'承認待ち・停止中')+' <button class="btn small" onclick="changeAdminAccount('+a.id+',\''+(a.active?'disable':'enable')+'\')">'+(a.active?'利用停止':'承認・有効化')+'</button>'+(a.discord_user_id?'':' <button class="btn small" onclick="changeAdminAccount('+a.id+',\'password\')">パスワード再設定</button>')+'</div>').join('');
+ const d=await r.json();el.innerHTML=(d.accounts||[]).map(a=>'<div style="padding:9px 0;border-bottom:1px solid #ddd">'+esc(a.display_name)+'（'+(a.discord_user_id?'Discord連携':'個人ID：'+esc(a.username))+'） '+(a.role==='owner'?'システム管理者':'管理者')+' ／ '+(a.active?'有効':'承認待ち・停止中')+(a.role==='owner'?' <span class="sub">（保護されたシステム管理者）</span>':' <button class="btn small" onclick="changeAdminAccount('+a.id+',\''+(a.active?'disable':'enable')+'\')">'+(a.active?'利用停止':'承認・有効化')+'</button>')+(a.discord_user_id?'':' <button class="btn small" onclick="changeAdminAccount('+a.id+',\'password\')">パスワード再設定</button>')+'</div>').join('');
 }
 async function createAdminAccount(){
- const b={username:document.getElementById('newAdminUsername').value.trim(),display_name:document.getElementById('newAdminName').value.trim(),password:document.getElementById('newAdminPassword').value,role:document.getElementById('newAdminRole').value};
+ const b={username:document.getElementById('newAdminUsername').value.trim(),display_name:document.getElementById('newAdminName').value.trim(),password:document.getElementById('newAdminPassword').value,role:'manager'};
  const r=await fetch('/api/admin/accounts',{method:'POST',headers:auth(),body:JSON.stringify(b)});const d=await r.json();document.getElementById('adminAccountsMessage').textContent=r.ok?'追加しました':(d.error||'登録失敗');if(r.ok){document.getElementById('newAdminPassword').value='';await loadAdminAccounts()}
 }
 async function changeAdminAccount(id,action){
@@ -9004,7 +9004,7 @@ async function handle(request, env, ctx) {
  if(path==="/api/admin/accounts" && method==="POST"){
    if(!(await isOwnerAdmin()))return json({error:'forbidden'},403);
    const b=await request.json().catch(()=>({}));const username=String(b.username||'').trim(),password=String(b.password||''),name=String(b.display_name||username).trim();
-   if(!/^[a-zA-Z0-9_.-]{3,40}$/.test(username)||password.length<12||password.length>200||!name||name.length>80||!['owner','manager'].includes(b.role))return json({error:'入力内容を確認してください（パスワード12文字以上）'},400);
+   if(!/^[a-zA-Z0-9_.-]{3,40}$/.test(username)||password.length<12||password.length>200||!name||name.length>80||b.role!=='manager')return json({error:'入力内容を確認してください（パスワード12文字以上）'},400);
    const salt=adminRandomHex(),hash=await adminPasswordHash(password,salt);
    try{await env.DB.prepare('INSERT INTO admin_accounts(username,display_name,role,salt,password_hash) VALUES(?,?,?,?,?)').bind(username,name,b.role,salt,hash).run()}catch(_){return json({error:'IDが重複しています'},409)}
    return json({ok:true});
@@ -9016,7 +9016,7 @@ async function handle(request, env, ctx) {
    const target=await env.DB.prepare('SELECT id,role,active,discord_user_id FROM admin_accounts WHERE id=?').bind(id).first();
    if(!target)return json({error:'not_found'},404);
    if(action==='disable' && id===current.id)return json({error:'自分自身は無効化できません'},400);
-   if(action==='disable' && target.role==='owner' && target.active){const count=await env.DB.prepare("SELECT COUNT(*) AS n FROM admin_accounts WHERE role='owner' AND active=1").first();if(count.n<=1)return json({error:'最後のシステム管理者は無効化できません'},400)}
+   if(action==='disable' && target.role==='owner')return json({error:'システム管理者はこの画面から利用停止できません'},403);
    if(action==='password' && target.discord_user_id)return json({error:'Discordアカウントはパスワード再設定不要です'},400);
    if(action==='password'){
      const b=await request.json().catch(()=>({}));const password=String(b.password||'');if(password.length<12||password.length>200)return json({error:'パスワードは12文字以上'},400);
