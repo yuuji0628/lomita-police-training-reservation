@@ -1,4 +1,7 @@
-const APP_VERSION="3.10";
+const APP_VERSION="3.12";
+// Discord administrator and instructor sessions: fixed 90-day lifetime.
+const DISCORD_SESSION_SECONDS = 90 * 24 * 60 * 60;
+const DISCORD_SESSION_MS = DISCORD_SESSION_SECONDS * 1000;
 const SKIP_VERSION_ANNOUNCEMENT=true;
 
 const APP_CHANGELOG=[
@@ -73,6 +76,32 @@ async function ensureDiscordAdmins(env){
  await env.DB.prepare('CREATE UNIQUE INDEX IF NOT EXISTS idx_admin_discord_user ON admin_accounts(discord_user_id)').run();
  await env.DB.prepare('CREATE TABLE IF NOT EXISTS discord_owner_claims(token_hash TEXT PRIMARY KEY,account_id INTEGER NOT NULL,expires_at INTEGER NOT NULL)').run();
 }
+
+// 教官専用Discord OAuth: 管理者権限とは完全に分離する。
+async function ensureInstructorDiscord(env){
+ await ensureInstructors(env);
+ const cols=(await env.DB.prepare('PRAGMA table_info(instructors)').all()).results||[];
+ if(!cols.some(x=>x.name==='discord_user_id'))await env.DB.prepare('ALTER TABLE instructors ADD COLUMN discord_user_id TEXT').run();
+ await env.DB.prepare('CREATE UNIQUE INDEX IF NOT EXISTS idx_instructor_discord ON instructors(discord_user_id)').run();
+ await env.DB.prepare('CREATE TABLE IF NOT EXISTS instructor_sessions(token_hash TEXT PRIMARY KEY,instructor_id INTEGER NOT NULL,expires_at INTEGER NOT NULL)').run();
+}
+function instructorCookie(token,age){return `lomita_instructor=${token}; Max-Age=${age}; Path=/; HttpOnly; Secure; SameSite=Lax`}
+async function instructorSession(request,env){
+ await ensureInstructorDiscord(env);
+ const m=(request.headers.get('cookie')||'').match(/(?:^|;\s*)lomita_instructor=([a-f0-9]{64})/);
+ if(!m)return null;
+ return await env.DB.prepare('SELECT i.id,i.name,i.instructor_rank,i.discord_user_id FROM instructor_sessions s JOIN instructors i ON i.id=s.instructor_id WHERE s.token_hash=? AND s.expires_at>? AND i.discord_user_id IS NOT NULL').bind(await adminDigest(m[1]),Date.now()).first();
+}
+function instructorPage(){return `<!doctype html><html lang="ja"><meta name="viewport" content="width=device-width,initial-scale=1"><meta charset="utf-8"><title>教官マイページ</title><style>body{font:16px system-ui;background:#f6f7fa;color:#182230;margin:0;padding:20px}main{max-width:720px;margin:auto}.card{background:white;border-radius:14px;padding:18px;margin:14px 0;box-shadow:0 1px 5px #ddd}button,a.btn{display:inline-block;background:#5865f2;color:white;border:0;padding:12px 18px;border-radius:9px;text-decoration:none}small{color:#667085}</style><main><h2>🚓 教官マイページ <small>v3.12</small></h2><div id="body" class="card">読み込み中…</div><p><a class="btn" href="/instructor/discord/login">Discordでログイン</a> <button onclick="logout()">ログアウト</button></p></main><script>
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+async function load(){const r=await fetch('/api/instructor/me');const d=await r.json();const el=document.getElementById('body');if(!r.ok){el.textContent='教官として未連携です。管理者にDiscord IDの登録を依頼してください。';return;}el.innerHTML='<h3>'+esc(d.name)+'（'+esc(d.rank)+'）</h3><h4>担当研修・予約</h4>'+(d.reservations.length?d.reservations.map(x=>'<div class="card"><b>'+esc(x.title)+'</b><p>'+esc(x.confirmed_date)+' '+esc(x.confirmed_time)+' / '+esc(x.player_name)+'</p><small>状態：'+esc(x.status)+'</small></div>').join(''):'担当研修はありません。');}
+async function logout(){await fetch('/api/instructor/logout',{method:'POST'});location.href='/instructor';}load();</script></html>`}
+async function notifyInstructor(env,name,lines){
+ if(!name)return;
+ await ensureInstructorDiscord(env);
+ const i=await env.DB.prepare('SELECT discord_user_id FROM instructors WHERE name=? COLLATE NOCASE').bind(name).first();
+ if(i?.discord_user_id)try{await sendDiscordDM(env,i.discord_user_id,lines)}catch(_){}
+}
 function discordRedirect(request){return new URL('/admin/discord/callback',request.url).toString()}
 function oauthCookie(value,age){return `lomita_discord_state=${value}; Max-Age=${age}; Path=/admin/discord; HttpOnly; Secure; SameSite=Lax`}
 function redirectAdmin(path,headers={}){return new Response(null,{status:302,headers:{location:path,'cache-control':'no-store',...headers}})}
@@ -116,10 +145,10 @@ async function discordLoginCallback(request,env){
    }
    return redirectAdmin('/admin?discord_pending=1',{'set-cookie':clear});
   }
-  const session=adminRandomHex(),expires=Date.now()+12*60*60*1000;
+  const session=adminRandomHex(),expires=Date.now()+DISCORD_SESSION_MS;
   await env.DB.prepare('INSERT INTO admin_login_sessions(token_hash,account_id,expires_at) VALUES(?,?,?)').bind(await adminDigest(session),account.id,expires).run();
   const headers=new Headers({location:'/admin','cache-control':'no-store'});
-  headers.append('set-cookie',clear);headers.append('set-cookie',adminCookie(session,43200));
+  headers.append('set-cookie',clear);headers.append('set-cookie',adminCookie(session,DISCORD_SESSION_SECONDS));
   return new Response(null,{status:302,headers});
  }catch(e){return redirectAdmin('/admin?discord_error=auth',{'set-cookie':clear})}
 }
@@ -4098,7 +4127,8 @@ const PUBLIC_BODY = `
     </div>
   </div>
 
-  <div class="currentTimeBar">
+  <details class="card ownerOnly" id="instructorDiscordPanel" style="margin:12px 0;padding:15px;display:none"><summary>👮 教官のDiscord連携</summary><p class="sub">教官を選び、DiscordユーザーIDを登録します。解除する場合は空欄で保存してください。教官用URL：/instructor</p><select id="linkInstructorId"></select><input id="linkInstructorDiscord" placeholder="DiscordユーザーID（数字）" inputmode="numeric"><button class="btn small" type="button" onclick="saveInstructorDiscord()">連携を保存</button><button class="btn small" type="button" onclick="loadInstructorDiscordLinks()">一覧更新</button><div id="instructorLinkMessage"></div></details>
+ <div class="currentTimeBar">
   <div class="currentTimeLabel">JST</div>
   <div>
     <div id="traineeCurrentTime" class="currentTimeClock">--:--:--</div>
@@ -8483,7 +8513,20 @@ const calPrev=document.getElementById('calendarPrevBtn');if(calPrev)calPrev.addE
 const calNext=document.getElementById('calendarNextBtn');if(calNext)calNext.addEventListener('click',()=>{calendarMonthCursor=new Date(calendarMonthCursor.getFullYear(),calendarMonthCursor.getMonth()+1,1);loadInstructorCalendar();});
 const calFilter=document.getElementById('calendarInstructorFilter');if(calFilter)calFilter.addEventListener('change',()=>{window.__calendarSelectedInstructor=calFilter.value||'';loadInstructorCalendar();});
 
+async function loadInstructorDiscordLinks(){
+ const r=await fetch('/api/admin/instructors');if(!r.ok)return;
+ const items=await r.json();window.instructorDiscordItems=items;
+ const sel=document.getElementById('linkInstructorId');if(!sel)return;
+ sel.innerHTML=items.map(x=>'<option value="'+x.id+'">'+esc(x.name)+(x.discord_user_id?'（連携済み）':'')+'</option>').join('');
+ sel.onchange=()=>{const i=items.find(x=>String(x.id)===sel.value);document.getElementById('linkInstructorDiscord').value=i?.discord_user_id||''};sel.onchange();
+}
+async function saveInstructorDiscord(){
+ const id=Number(document.getElementById('linkInstructorId').value),discord_user_id=document.getElementById('linkInstructorDiscord').value.trim();
+ const r=await fetch('/api/admin/instructors/discord-link',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({id,discord_user_id})});const d=await r.json();
+ document.getElementById('instructorLinkMessage').textContent=r.ok?'保存しました':(d.error||'保存できませんでした');if(r.ok)loadInstructorDiscordLinks();
+}
 restoreAdmin();
+setTimeout(loadInstructorDiscordLinks,1200);
 
 
 
@@ -8498,6 +8541,38 @@ async function handle(request, env, ctx) {
  }catch(_){}
  const url=new URL(request.url), path=url.pathname, method=request.method;
  const adminPass=env.ADMIN_PASSWORD || "";
+ if(path==='/instructor' && method==='GET')return new Response(instructorPage(),{headers:{'content-type':'text/html; charset=utf-8','cache-control':'no-store'}});
+ if(path==='/instructor/discord/login' && method==='GET'){
+  if(!env.DISCORD_CLIENT_ID||!env.DISCORD_CLIENT_SECRET)return json({error:'Discord設定がありません'},503);
+  const state=adminRandomHex(),redirect=new URL('/instructor/discord/callback',request.url).toString();
+  const params=new URLSearchParams({client_id:String(env.DISCORD_CLIENT_ID),redirect_uri:redirect,response_type:'code',scope:'identify',state});
+  return redirectAdmin('https://discord.com/oauth2/authorize?'+params,{'set-cookie':`lomita_instructor_state=${state}; Max-Age=600; Path=/instructor/discord; HttpOnly; Secure; SameSite=Lax`});
+ }
+ if(path==='/instructor/discord/callback' && method==='GET'){
+  const state=url.searchParams.get('state')||'',code=url.searchParams.get('code')||'';
+  const m=(request.headers.get('cookie')||'').match(/(?:^|;\s*)lomita_instructor_state=([a-f0-9]{64})/);
+  if(!m||m[1]!==state||!code)return json({error:'認証状態が一致しません'},400);
+  const redirect=new URL('/instructor/discord/callback',request.url).toString();
+  const tr=await fetch('https://discord.com/api/v10/oauth2/token',{method:'POST',headers:{'content-type':'application/x-www-form-urlencoded'},body:new URLSearchParams({client_id:String(env.DISCORD_CLIENT_ID),client_secret:String(env.DISCORD_CLIENT_SECRET),grant_type:'authorization_code',code,redirect_uri:redirect})});
+  if(!tr.ok)return json({error:'Discord認証に失敗しました'},401);
+  const tk=await tr.json();const pr=await fetch('https://discord.com/api/v10/users/@me',{headers:{authorization:'Bearer '+tk.access_token}});
+  if(!pr.ok)return json({error:'Discordユーザーを確認できません'},401);
+  const profile=await pr.json();await ensureInstructorDiscord(env);
+  const i=await env.DB.prepare('SELECT id FROM instructors WHERE discord_user_id=?').bind(String(profile.id)).first();
+  if(!i)return redirectAdmin('/instructor?unlinked=1',{'set-cookie':'lomita_instructor_state=; Max-Age=0; Path=/instructor/discord; HttpOnly; Secure; SameSite=Lax'});
+  const token=adminRandomHex();await env.DB.prepare('INSERT INTO instructor_sessions(token_hash,instructor_id,expires_at) VALUES(?,?,?)').bind(await adminDigest(token),i.id,Date.now()+DISCORD_SESSION_MS).run();
+  const h=new Headers({location:'/instructor','cache-control':'no-store'});h.append('set-cookie',instructorCookie(token,DISCORD_SESSION_SECONDS));h.append('set-cookie','lomita_instructor_state=; Max-Age=0; Path=/instructor/discord; HttpOnly; Secure; SameSite=Lax');return new Response(null,{status:302,headers:h});
+ }
+ if(path==='/api/instructor/me' && method==='GET'){
+  const i=await instructorSession(request,env);if(!i)return json({error:'unauthorized'},401);
+  const q=await env.DB.prepare("SELECT r.id,r.player_name,r.status,r.confirmed_date,r.confirmed_time,COALESCE(t.title,'研修') title FROM reservations r LEFT JOIN trainings t ON t.id=r.training_id WHERE r.assigned_instructor=? COLLATE NOCASE ORDER BY r.confirmed_date DESC,r.confirmed_time DESC LIMIT 100").bind(i.name).all();
+  return json({name:i.name,rank:i.instructor_rank,reservations:q.results||[]});
+ }
+ if(path==='/api/instructor/logout' && method==='POST'){
+  const m=(request.headers.get('cookie')||'').match(/(?:^|;\s*)lomita_instructor=([a-f0-9]{64})/);
+  if(m){await ensureInstructorDiscord(env);await env.DB.prepare('DELETE FROM instructor_sessions WHERE token_hash=?').bind(await adminDigest(m[1])).run()}
+  return new Response(JSON.stringify({ok:true}),{headers:{'content-type':'application/json','set-cookie':instructorCookie('',0)}});
+ }
  if(path==="/api/version" && method==="GET") return json({version:APP_VERSION});
  if(path==='/admin/discord/login' && method==='GET')return discordLoginStart(request,env);
  if(path==='/admin/discord/callback' && method==='GET')return discordLoginCallback(request,env);
@@ -10458,9 +10533,17 @@ if(path==="/api/admin/instructor-ranking" && method==="GET"){
    return json({ok:true});
  }
 
+ if(path==='/api/admin/instructors/discord-link' && method==='POST'){
+  if(!(await isOwnerAdmin()))return json({error:'forbidden'},403);
+  await ensureInstructorDiscord(env);const b=await request.json().catch(()=>({}));const id=Number(b.id),discordId=String(b.discord_user_id||'').trim();
+  if(!Number.isSafeInteger(id)||id<1||(discordId&&!/^\d{15,25}$/.test(discordId)))return json({error:'教官IDまたはDiscord IDが不正です'},400);
+  const existing=await env.DB.prepare('SELECT id FROM instructors WHERE id=?').bind(id).first();if(!existing)return json({error:'教官が見つかりません'},404);
+  try{await env.DB.prepare('UPDATE instructors SET discord_user_id=? WHERE id=?').bind(discordId||null,id).run();await env.DB.prepare('DELETE FROM instructor_sessions WHERE instructor_id=?').bind(id).run();return json({ok:true})}catch(_){return json({error:'Discord IDが他の教官と重複しています'},409)}
+ }
  if(path==="/api/admin/instructors" && method==="GET"){
    await ensureInstructors(env);
-   const {results}=await env.DB.prepare("SELECT id,name,instructor_rank,created_at FROM instructors ORDER BY name COLLATE NOCASE").all();
+   await ensureInstructorDiscord(env);
+   const {results}=await env.DB.prepare("SELECT id,name,instructor_rank,discord_user_id,created_at FROM instructors ORDER BY name COLLATE NOCASE").all();
    return json(results);
  }
 
@@ -10797,6 +10880,11 @@ if(path==="/api/admin/instructor-ranking" && method==="GET"){
      action="reapply_enabled";
    }
 
+   if(oldInstructor!==assigned || oldDate!==confirmedDate || oldTime!==confirmedTime || previousStatus!==b.status){
+     const lines=['🚓 **担当研修のお知らせ**',String(before.title||'研修'),'研修生：'+String(before.player_name||''),'日時：'+(newDateTime||'未定'),'状態：'+String(b.status)];
+     if(assigned)await notifyInstructor(env,assigned,lines);
+     if(oldInstructor && oldInstructor!==assigned)await notifyInstructor(env,oldInstructor,['🚓 **担当変更のお知らせ**',String(before.title||'研修'),'担当から外れました。']);
+   }
    await refreshTraineeFullCompletionByDiscord(env,String(before.discord_id||""));
 
    return json({
