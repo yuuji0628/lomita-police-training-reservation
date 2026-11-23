@@ -2,15 +2,14 @@ const APP_VERSION="3.12";
 // Discord administrator and instructor sessions: fixed 90-day lifetime.
 const DISCORD_SESSION_SECONDS = 90 * 24 * 60 * 60;
 const DISCORD_SESSION_MS = DISCORD_SESSION_SECONDS * 1000;
-const SKIP_VERSION_ANNOUNCEMENT=true;
+const SKIP_VERSION_ANNOUNCEMENT=false;
 
 const APP_CHANGELOG=[
-  "研修生ごとの30日研修期限に救済延長ボタンを追加（Discord通知なし）",
-  "延長日数を期限へ加算し、自動リセット期限も連動して延長",
-  "教官の休み／対応不可を複数日まとめて設定できるように改善",
-  "月カレンダーから複数の日付をタップ選択できるUIを追加",
-  "選択した複数日の休み設定を一括登録・一括解除できる機能を追加",
-  "登録済みの休み日をカレンダー上で確認できるよう改善"
+  "Discordログイン状態を90日間保持する機能を追加",
+  "管理者・教官の両方にログイン保持機能を適用",
+  "ブラウザを閉じてもログイン状態を維持するよう改善",
+  "利用停止時に既存のログインセッションを無効化する処理を追加",
+  "Discordへの再ログイン操作を削減"
 ];
 
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
@@ -5052,6 +5051,12 @@ const ADMIN_BODY = `
 <div id="adminView" style="display:none"><div class="wrap">
  <div class="header"><div class="between"><div><span class="badge">LOMITA POLICE</span><div class="brand">研修管理本部</div><div class="sub">研修・参加申請・受講状況を一括管理</div><div class="sub" style="margin-top:6px;opacity:.78">Version ${APP_VERSION}</div><div id="adminRoleLabel" class="sub" style="margin-top:4px"></div></div><div class="row"><button class="btn small" onclick="logout()">ログアウト</button><button class="btn small" onclick="openManageMenu()">⚠️ここは触らない⚠️</button> </div></div></div>
  <div id="msg"></div>
+ <div class="card ownerOnly" id="updateAnnouncementPanel" style="margin:12px 0;padding:15px;display:none">
+  <div class="title">📢 Discord更新履歴</div>
+  <div class="sub">Version 3.12｜投稿は確認ボタンを押した場合のみ実行します。重複投稿は防止します。</div>
+  <button type="button" class="btn small" onclick="postVersionAnnouncement()">Discordへ更新履歴を投稿</button>
+  <div id="updateAnnouncementResult" role="status" style="margin-top:8px"></div>
+ </div>
  <details class="card ownerOnly" id="adminAccountsPanel" style="margin:12px 0 16px;padding:15px;display:none">
   <summary style="font-weight:900;cursor:pointer;font-size:16px">🔐 管理者の承認・利用停止</summary>
   <p class="sub" style="margin:12px 0">Discordで初回ログインした人は承認待ちに表示されます。退職者は利用停止にすると既存のログインも無効になります。</p>
@@ -5545,6 +5550,16 @@ async function loadCurrentAdminRole(){
  document.querySelectorAll('.ownerOnly').forEach(el=>el.style.display=currentAdminRole==='owner'?'':'none');
  const label=document.getElementById('adminRoleLabel');if(label)label.textContent=currentAdminRole==='owner'?'システム管理者':'管理者';
  if(currentAdminRole==='owner')await loadAdminAccounts();
+}
+async function postVersionAnnouncement(){
+ if(!confirm('Version 3.12 の更新履歴をDiscordへ投稿しますか？'))return;
+ const out=document.getElementById('updateAnnouncementResult');
+ out.textContent='送信中…';
+ try{
+  const r=await fetch('/api/admin/version-announcement',{method:'POST',headers:{'content-type':'application/json'}});
+  const d=await r.json();
+  out.textContent=!r.ok?'送信失敗：'+(d.error||d.reason||r.status):d.announced?'Discordへの投稿が完了しました。':d.reason==='already_locked_or_announced'?'このバージョンは投稿済みです。':'投稿されませんでした：'+(d.reason||'不明');
+ }catch(e){out.textContent='通信エラー：'+e.message}
 }
 async function loadAdminAccounts(){
  const el=document.getElementById('adminAccountsList');if(!el)return;
@@ -8534,11 +8549,6 @@ updateJstCurrentTime('admin');setInterval(()=>updateJstCurrentTime('admin'),1000
 `;
 
 async function handle(request, env, ctx) {
- try{
-   if(ctx && typeof ctx.waitUntil==="function"){
-     ctx.waitUntil(announceVersionUpdateIfNeeded(env));
-   }
- }catch(_){}
  const url=new URL(request.url), path=url.pathname, method=request.method;
  const adminPass=env.ADMIN_PASSWORD || "";
  if(path==='/instructor' && method==='GET')return new Response(instructorPage(),{headers:{'content-type':'text/html; charset=utf-8','cache-control':'no-store'}});
@@ -9122,14 +9132,9 @@ async function handle(request, env, ctx) {
  if(path.startsWith("/api/admin/") && !(await isAdmin())) return json({error:"unauthorized"},401);
 
  if(path==="/api/admin/version-announcement" && method==="POST"){
-   const b=await request.json().catch(()=>({}));
-   if(b.force===true){
-     await ensureSystemSettings(env);
-     await env.DB.prepare("DELETE FROM system_settings WHERE key='discord_update_announced_version'").run();
-     await env.DB.prepare("DELETE FROM system_settings WHERE key=?").bind(`discord_update_lock_${APP_VERSION}`).run();
-   }
+   if((await getAdminRole())!=="owner")return json({error:"forbidden"},403);
    const result=await announceVersionUpdateIfNeeded(env);
-   return json(result,result.ok===false?500:200);
+   return json(result,result.ok===false?502:200);
  }
 
  if(path==="/api/admin/maintenance" && method==="GET"){
@@ -9145,7 +9150,7 @@ async function handle(request, env, ctx) {
 
  if(path==="/api/admin/stats" && method==="GET"){
    if(!(await isAdmin()))return json({error:"unauthorized"},401);
-   try{await announceVersionUpdateIfNeeded(env)}catch(_){}
+
    await ensureTraineeProfiles(env);
    await ensureReservationInstructor(env);
    await ensureReservationPreferredSchedule(env);
