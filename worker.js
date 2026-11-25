@@ -1,10 +1,44 @@
-const APP_VERSION="3.12";
+// WebAuthn ES256, discoverable platform credentials. No external dependencies.
+const pkDecode=s=>{if(typeof s!=='string'||!/^[A-Za-z0-9_-]+$/.test(s)||s.length>16000)throw Error('encoding');return Uint8Array.from(atob(s.replace(/-/g,'+').replace(/_/g,'/')+'='.repeat((4-s.length%4)%4)),c=>c.charCodeAt(0))};
+const pkHash=async b=>new Uint8Array(await crypto.subtle.digest('SHA-256',b));
+const pkText=s=>new TextEncoder().encode(s);
+async function pkSchema(env){
+ await ensureDiscordAdmins(env);await ensureInstructorDiscord(env);
+ await env.DB.batch([
+ 'CREATE TABLE IF NOT EXISTS passkeys (credential TEXT PRIMARY KEY, kind TEXT NOT NULL, account_id INTEGER NOT NULL, discord_id TEXT NOT NULL, public_key TEXT NOT NULL, counter INTEGER NOT NULL DEFAULT 0)',
+ 'CREATE TABLE IF NOT EXISTS passkey_challenges (challenge TEXT PRIMARY KEY, kind TEXT NOT NULL, purpose TEXT NOT NULL, session_hash TEXT NOT NULL, expires INTEGER NOT NULL)',
+ 'CREATE TABLE IF NOT EXISTS passkey_enrollment (session_hash TEXT PRIMARY KEY, kind TEXT NOT NULL, expires INTEGER NOT NULL)',
+ "CREATE TRIGGER IF NOT EXISTS pk_admin_revoke AFTER UPDATE OF active,discord_user_id ON admin_accounts WHEN NEW.active=0 OR OLD.discord_user_id IS NOT NEW.discord_user_id BEGIN DELETE FROM passkeys WHERE kind='admin' AND account_id=OLD.id; DELETE FROM passkey_enrollment WHERE kind='admin' AND session_hash IN (SELECT token_hash FROM admin_login_sessions WHERE account_id=OLD.id); DELETE FROM admin_login_sessions WHERE account_id=OLD.id; END",
+ "CREATE TRIGGER IF NOT EXISTS pk_instructor_revoke AFTER UPDATE OF discord_user_id ON instructors WHEN OLD.discord_user_id IS NOT NEW.discord_user_id BEGIN DELETE FROM passkeys WHERE kind='instructor' AND account_id=OLD.id; DELETE FROM passkey_enrollment WHERE kind='instructor' AND session_hash IN (SELECT token_hash FROM instructor_sessions WHERE instructor_id=OLD.id); DELETE FROM instructor_sessions WHERE instructor_id=OLD.id; END",
+ "CREATE TRIGGER IF NOT EXISTS pk_instructor_delete AFTER DELETE ON instructors BEGIN DELETE FROM passkeys WHERE kind='instructor' AND account_id=OLD.id; DELETE FROM instructor_sessions WHERE instructor_id=OLD.id; END"
+ ].map(s=>env.DB.prepare(s)));
+}
+async function pkTicket(env,kind,token){await pkSchema(env);await env.DB.prepare('DELETE FROM passkey_enrollment WHERE expires<?').bind(Date.now()).run();await env.DB.prepare('INSERT INTO passkey_enrollment VALUES(?,?,?)').bind(await adminDigest(token),kind,Date.now()+600000).run()}
+async function pkAccount(env,kind,id){return env.DB.prepare(kind==='admin'?'SELECT id,discord_user_id FROM admin_accounts WHERE id=? AND active=1 AND discord_user_id IS NOT NULL':'SELECT id,discord_user_id FROM instructors WHERE id=? AND discord_user_id IS NOT NULL').bind(id).first()}
+function pkDer(b){if(b[0]!==48||b[1]!==b.length-2)throw Error('signature');let p=2;const out=new Uint8Array(64);for(let i=0;i<2;i++){if(b[p++]!==2)throw Error('signature');let n=b[p++];if(!n||n>33||p+n>b.length)throw Error('signature');let v=b.slice(p,p+n);p+=n;if(v[0]&128)throw Error('signature');if(v.length===33){if(v[0]!==0)throw Error('signature');v=v.slice(1)}out.set(v,i*32+32-v.length)}if(p!==b.length)throw Error('signature');return out}
+async function pkAPI(request,env,kind,action){
+ const u=new URL(request.url);if(u.protocol!=='https:'||request.headers.get('origin')!==u.origin)return json({error:'origin'},403);
+ try{await pkSchema(env);const b=await request.json();const register=action.startsWith('register');const purpose=register?'register':'login';let account=null,sessionHash='';
+ if(register){const s=kind==='admin'?await individualAdminSession(request,env):await instructorSession(request,env);if(!s)throw Error('Discordログインが必要です');account=await pkAccount(env,kind,s.id);const m=(request.headers.get('cookie')||'').match(kind==='admin'?/(?:^|;\s*)lomita_admin_v2=([a-f0-9]{64})/:/(?:^|;\s*)lomita_instructor=([a-f0-9]{64})/);sessionHash=await adminDigest(m[1]);if(!account||!await env.DB.prepare('SELECT 1 FROM passkey_enrollment WHERE session_hash=? AND kind=? AND expires>?').bind(sessionHash,kind,Date.now()).first())throw Error('Discordで再ログインしてください');}
+ if(action.endsWith('options')){const challenge=b64url(crypto.getRandomValues(new Uint8Array(32)));await env.DB.batch([env.DB.prepare('DELETE FROM passkey_challenges WHERE expires<?').bind(Date.now()),env.DB.prepare('INSERT INTO passkey_challenges VALUES(?,?,?,?,?)').bind(challenge,kind,purpose,sessionHash,Date.now()+300000)]);return json(register?{challenge,rp:{id:u.hostname,name:'LOMITA POLICE'},user:{id:b64url(pkText(kind+':'+account.id)),name:kind+':'+account.discord_user_id,displayName:kind==='admin'?'LOMITA 管理者':'LOMITA 教官'},pubKeyCredParams:[{type:'public-key',alg:-7}],authenticatorSelection:{authenticatorAttachment:'platform',residentKey:'required',userVerification:'required'},attestation:'none',timeout:60000}:{challenge,rpId:u.hostname,userVerification:'required',timeout:60000});}
+ const client=pkDecode(b.clientDataJSON),c=JSON.parse(new TextDecoder().decode(client));if(c.type!==(register?'webauthn.create':'webauthn.get')||c.origin!==u.origin||c.crossOrigin===true)throw Error('client data');
+ const consumed=await env.DB.prepare('DELETE FROM passkey_challenges WHERE challenge=? AND kind=? AND purpose=? AND session_hash=? AND expires>?').bind(c.challenge,kind,purpose,sessionHash,Date.now()).run();if(consumed.meta.changes!==1)throw Error('認証期限切れ');
+ const a=pkDecode(b.authenticatorData),id=pkDecode(b.id);if(a.length<37||b64url(a.slice(0,32))!==b64url(await pkHash(pkText(u.hostname)))||(a[32]&5)!==5)throw Error('本人確認に失敗しました');const counter=new DataView(a.buffer,a.byteOffset,a.byteLength).getUint32(33);
+ if(register){if(!(a[32]&64)||a.length<55||b.algorithm!==-7)throw Error('credential');const n=new DataView(a.buffer,a.byteOffset,a.byteLength).getUint16(53);if(!n||55+n>=a.length||b64url(a.slice(55,55+n))!==b64url(id))throw Error('credential ID');await crypto.subtle.importKey('spki',pkDecode(b.publicKey),{name:'ECDSA',namedCurve:'P-256'},false,['verify']);const sessionTable=kind==='admin'?'admin_login_sessions':'instructor_sessions';const result=await env.DB.prepare(`INSERT INTO passkeys SELECT ?,?,?,?,?,? WHERE EXISTS (SELECT 1 FROM passkey_enrollment e JOIN ${sessionTable} s ON s.token_hash=e.session_hash WHERE e.session_hash=? AND e.kind=? AND e.expires>? AND s.expires_at>?)`).bind(b64url(id),kind,account.id,account.discord_user_id,b.publicKey,counter,sessionHash,kind,Date.now(),Date.now()).run();if(result.meta.changes!==1)throw Error('登録期限切れ');return json({ok:true});}
+ const row=await env.DB.prepare('SELECT * FROM passkeys WHERE credential=? AND kind=?').bind(b64url(id),kind).first();if(!row)throw Error('パスキーが登録されていません');account=await pkAccount(env,kind,row.account_id);if(!account||account.discord_user_id!==row.discord_id)throw Error('利用停止中');if((counter||row.counter)&&counter<=row.counter)throw Error('counter');const key=await crypto.subtle.importKey('spki',pkDecode(row.public_key),{name:'ECDSA',namedCurve:'P-256'},false,['verify']);const signed=new Uint8Array(a.length+32);signed.set(a);signed.set(await pkHash(client),a.length);if(!await crypto.subtle.verify({name:'ECDSA',hash:'SHA-256'},key,pkDer(pkDecode(b.signature)),signed))throw Error('署名不一致');const token=adminRandomHex();const table=kind==='admin'?'admin_login_sessions':'instructor_sessions',column=kind==='admin'?'account_id':'instructor_id';const results=await env.DB.batch([env.DB.prepare('UPDATE passkeys SET counter=? WHERE credential=? AND counter=?').bind(counter,row.credential,row.counter),env.DB.prepare(`INSERT INTO ${table}(token_hash,${column},expires_at) SELECT ?,account_id,? FROM passkeys WHERE credential=? AND changes()=1`).bind(await adminDigest(token),Date.now()+DISCORD_SESSION_MS,row.credential)]);if(results[1].meta.changes!==1)throw Error('認証をやり直してください');return new Response(JSON.stringify({ok:true}),{headers:{'content-type':'application/json','cache-control':'no-store','set-cookie':kind==='admin'?adminCookie(token,DISCORD_SESSION_SECONDS):instructorCookie(token,DISCORD_SESSION_SECONDS)}});
+ }catch(e){return json({error:String(e.message||'認証失敗')},400)}
+}
+function pkPage(kind){const home=kind==='admin'?'/admin':'/instructor';return new Response(`<!doctype html><html lang="ja"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>パスキー認証</title><style>body{font:16px system-ui;padding:24px;max-width:480px;margin:auto}button,a{display:block;margin:16px 0;padding:12px}button{width:100%}</style><h2>LOMITA POLICE パスキー</h2><p>初回はDiscord認証後に登録してください。Face IDなど端末の本人確認を使用します。</p><button onclick="run(false)">パスキーでログイン</button><button onclick="run(true)">パスキーを登録</button><a href="${home}/discord/login">Discordでログイン・再登録</a><a href="${home}">戻る</a><p id="msg" role="status"></p><script>
+const base='/api/passkey/${kind}/',home='${home}';const dec=s=>Uint8Array.from(atob(s.replace(/-/g,'+').replace(/_/g,'/')+'='.repeat((4-s.length%4)%4)),c=>c.charCodeAt(0));const enc=b=>btoa(String.fromCharCode(...new Uint8Array(b))).replace(/\\+/g,'-').replace(/\\//g,'_').replace(/=+$/,'');async function post(p,b){const r=await fetch(base+p,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(b)});const d=await r.json();if(!r.ok)throw Error(d.error);return d}async function run(reg){const msg=document.getElementById('msg');try{if(!window.PublicKeyCredential)throw Error('このブラウザはパスキー非対応です');const p=reg?'register':'login',o=await post(p+'-options',{});o.challenge=dec(o.challenge);if(reg)o.user.id=dec(o.user.id);const c=await navigator.credentials[reg?'create':'get']({publicKey:o}),r=c.response;const b={id:enc(c.rawId),clientDataJSON:enc(r.clientDataJSON),authenticatorData:enc(reg?r.getAuthenticatorData():r.authenticatorData)};if(reg){b.publicKey=enc(r.getPublicKey());b.algorithm=r.getPublicKeyAlgorithm()}else b.signature=enc(r.signature);await post(p+'-finish',b);location.href=home}catch(e){msg.textContent=e.message}}</script></html>`,{headers:{'content-type':'text/html; charset=utf-8','cache-control':'no-store'}})}
+
+const APP_VERSION="3.13";
 // Discord administrator and instructor sessions: fixed 90-day lifetime.
 const DISCORD_SESSION_SECONDS = 90 * 24 * 60 * 60;
 const DISCORD_SESSION_MS = DISCORD_SESSION_SECONDS * 1000;
-const SKIP_VERSION_ANNOUNCEMENT=false;
+const SKIP_VERSION_ANNOUNCEMENT=true;
 
 const APP_CHANGELOG=[
+  "管理者・教官のパスキー認証を追加",
   "Discordログイン状態を90日間保持する機能を追加",
   "管理者・教官の両方にログイン保持機能を適用",
   "ブラウザを閉じてもログイン状態を維持するよう改善",
@@ -91,7 +125,7 @@ async function instructorSession(request,env){
  if(!m)return null;
  return await env.DB.prepare('SELECT i.id,i.name,i.instructor_rank,i.discord_user_id FROM instructor_sessions s JOIN instructors i ON i.id=s.instructor_id WHERE s.token_hash=? AND s.expires_at>? AND i.discord_user_id IS NOT NULL').bind(await adminDigest(m[1]),Date.now()).first();
 }
-function instructorPage(){return `<!doctype html><html lang="ja"><meta name="viewport" content="width=device-width,initial-scale=1"><meta charset="utf-8"><title>教官マイページ</title><style>body{font:16px system-ui;background:#f6f7fa;color:#182230;margin:0;padding:20px}main{max-width:720px;margin:auto}.card{background:white;border-radius:14px;padding:18px;margin:14px 0;box-shadow:0 1px 5px #ddd}button,a.btn{display:inline-block;background:#5865f2;color:white;border:0;padding:12px 18px;border-radius:9px;text-decoration:none}small{color:#667085}</style><main><h2>🚓 教官マイページ <small>v3.12</small></h2><div id="body" class="card">読み込み中…</div><p><a class="btn" href="/instructor/discord/login">Discordでログイン</a> <button onclick="logout()">ログアウト</button></p></main><script>
+function instructorPage(){return `<!doctype html><html lang="ja"><meta name="viewport" content="width=device-width,initial-scale=1"><meta charset="utf-8"><title>教官マイページ</title><style>body{font:16px system-ui;background:#f6f7fa;color:#182230;margin:0;padding:20px}main{max-width:720px;margin:auto}.card{background:white;border-radius:14px;padding:18px;margin:14px 0;box-shadow:0 1px 5px #ddd}button,a.btn{display:inline-block;background:#5865f2;color:white;border:0;padding:12px 18px;border-radius:9px;text-decoration:none}small{color:#667085}</style><main><h2>🚓 教官マイページ <small>v3.13</small></h2><div id="body" class="card">読み込み中…</div><p><a class="btn" href="/instructor/discord/login">Discordでログイン</a> <a class="btn" href="/passkey/instructor">パスキー認証</a> <button onclick="logout()">ログアウト</button></p></main><script>
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 async function load(){const r=await fetch('/api/instructor/me');const d=await r.json();const el=document.getElementById('body');if(!r.ok){el.textContent='教官として未連携です。管理者にDiscord IDの登録を依頼してください。';return;}el.innerHTML='<h3>'+esc(d.name)+'（'+esc(d.rank)+'）</h3><h4>担当研修・予約</h4>'+(d.reservations.length?d.reservations.map(x=>'<div class="card"><b>'+esc(x.title)+'</b><p>'+esc(x.confirmed_date)+' '+esc(x.confirmed_time)+' / '+esc(x.player_name)+'</p><small>状態：'+esc(x.status)+'</small></div>').join(''):'担当研修はありません。');}
 async function logout(){await fetch('/api/instructor/logout',{method:'POST'});location.href='/instructor';}load();</script></html>`}
@@ -146,7 +180,8 @@ async function discordLoginCallback(request,env){
   }
   const session=adminRandomHex(),expires=Date.now()+DISCORD_SESSION_MS;
   await env.DB.prepare('INSERT INTO admin_login_sessions(token_hash,account_id,expires_at) VALUES(?,?,?)').bind(await adminDigest(session),account.id,expires).run();
-  const headers=new Headers({location:'/admin','cache-control':'no-store'});
+  await pkTicket(env,"admin",session);
+  const headers=new Headers({location:'/passkey/admin','cache-control':'no-store'});
   headers.append('set-cookie',clear);headers.append('set-cookie',adminCookie(session,DISCORD_SESSION_SECONDS));
   return new Response(null,{status:302,headers});
  }catch(e){return redirectAdmin('/admin?discord_error=auth',{'set-cookie':clear})}
@@ -5039,6 +5074,7 @@ const ADMIN_BODY = `
    <div class="title" style="font-size:22px">管理者ログイン</div>
    <div class="sub" style="margin:6px 0 14px">Discordアカウントでログインしてください。</div>
    <a href="/admin/discord/login" class="btn dark" style="display:block;text-align:center;margin:14px 0">Discordでログイン</a>
+   <a href="/passkey/admin" class="btn">パスキーでログイン</a>
    <div class="notice" id="discordLoginStatus">初回ログイン後は、システム管理者による承認が必要です。</div>
    <details style="margin-top:16px"><summary>既存の管理者IDでログイン（移行用）</summary>
    <div id="loginMsg"></div><div class="field"><label>ログインID</label><input id="adminUsername"></div>
@@ -5049,11 +5085,11 @@ const ADMIN_BODY = `
  </div>
 </div>
 <div id="adminView" style="display:none"><div class="wrap">
- <div class="header"><div class="between"><div><span class="badge">LOMITA POLICE</span><div class="brand">研修管理本部</div><div class="sub">研修・参加申請・受講状況を一括管理</div><div class="sub" style="margin-top:6px;opacity:.78">Version ${APP_VERSION}</div><div id="adminRoleLabel" class="sub" style="margin-top:4px"></div></div><div class="row"><button class="btn small" onclick="logout()">ログアウト</button><button class="btn small" onclick="openManageMenu()">⚠️ここは触らない⚠️</button> </div></div></div>
+ <div class="header"><div class="between"><div><span class="badge">LOMITA POLICE</span><div class="brand">研修管理本部</div><div class="sub">研修・参加申請・受講状況を一括管理</div><div class="sub" style="margin-top:6px;opacity:.78">Version ${APP_VERSION}</div><div id="adminRoleLabel" class="sub" style="margin-top:4px"></div></div><div class="row"><a class="btn small" href="/passkey/admin">パスキー</a><button class="btn small" onclick="logout()">ログアウト</button><button class="btn small" onclick="openManageMenu()">⚠️ここは触らない⚠️</button> </div></div></div>
  <div id="msg"></div>
  <div class="card ownerOnly" id="updateAnnouncementPanel" style="margin:12px 0;padding:15px;display:none">
   <div class="title">📢 Discord更新履歴</div>
-  <div class="sub">Version 3.12｜投稿は確認ボタンを押した場合のみ実行します。重複投稿は防止します。</div>
+  <div class="sub">Version 3.13｜投稿は確認ボタンを押した場合のみ実行します。重複投稿は防止します。</div>
   <button type="button" class="btn small" onclick="postVersionAnnouncement()">Discordへ更新履歴を投稿</button>
   <div id="updateAnnouncementResult" role="status" style="margin-top:8px"></div>
  </div>
@@ -5552,7 +5588,7 @@ async function loadCurrentAdminRole(){
  if(currentAdminRole==='owner')await loadAdminAccounts();
 }
 async function postVersionAnnouncement(){
- if(!confirm('Version 3.12 の更新履歴をDiscordへ投稿しますか？'))return;
+ if(!confirm('Version 3.13 の更新履歴をDiscordへ投稿しますか？'))return;
  const out=document.getElementById('updateAnnouncementResult');
  out.textContent='送信中…';
  try{
@@ -8551,6 +8587,8 @@ updateJstCurrentTime('admin');setInterval(()=>updateJstCurrentTime('admin'),1000
 async function handle(request, env, ctx) {
  const url=new URL(request.url), path=url.pathname, method=request.method;
  const adminPass=env.ADMIN_PASSWORD || "";
+ const pkRoute=path.match(/^\/passkey\/(admin|instructor)$/);if(pkRoute&&method==='GET')return pkPage(pkRoute[1]);
+ const pkApi=path.match(/^\/api\/passkey\/(admin|instructor)\/(register-options|register-finish|login-options|login-finish)$/);if(pkApi&&method==='POST')return pkAPI(request,env,pkApi[1],pkApi[2]);
  if(path==='/instructor' && method==='GET')return new Response(instructorPage(),{headers:{'content-type':'text/html; charset=utf-8','cache-control':'no-store'}});
  if(path==='/instructor/discord/login' && method==='GET'){
   if(!env.DISCORD_CLIENT_ID||!env.DISCORD_CLIENT_SECRET)return json({error:'Discord設定がありません'},503);
@@ -8571,7 +8609,8 @@ async function handle(request, env, ctx) {
   const i=await env.DB.prepare('SELECT id FROM instructors WHERE discord_user_id=?').bind(String(profile.id)).first();
   if(!i)return redirectAdmin('/instructor?unlinked=1',{'set-cookie':'lomita_instructor_state=; Max-Age=0; Path=/instructor/discord; HttpOnly; Secure; SameSite=Lax'});
   const token=adminRandomHex();await env.DB.prepare('INSERT INTO instructor_sessions(token_hash,instructor_id,expires_at) VALUES(?,?,?)').bind(await adminDigest(token),i.id,Date.now()+DISCORD_SESSION_MS).run();
-  const h=new Headers({location:'/instructor','cache-control':'no-store'});h.append('set-cookie',instructorCookie(token,DISCORD_SESSION_SECONDS));h.append('set-cookie','lomita_instructor_state=; Max-Age=0; Path=/instructor/discord; HttpOnly; Secure; SameSite=Lax');return new Response(null,{status:302,headers:h});
+  await pkTicket(env,'instructor',token);
+  const h=new Headers({location:'/passkey/instructor','cache-control':'no-store'});h.append('set-cookie',instructorCookie(token,DISCORD_SESSION_SECONDS));h.append('set-cookie','lomita_instructor_state=; Max-Age=0; Path=/instructor/discord; HttpOnly; Secure; SameSite=Lax');return new Response(null,{status:302,headers:h});
  }
  if(path==='/api/instructor/me' && method==='GET'){
   const i=await instructorSession(request,env);if(!i)return json({error:'unauthorized'},401);
