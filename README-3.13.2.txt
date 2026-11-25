@@ -1,0 +1,2 @@
+Version 3.13.2
+Discord更新履歴の手動投稿を復旧。自動投稿なし。owner専用APIとD1ロックを維持。worker.jsのみ更新。Webhook設定は既存のDISCORD_UPDATE_WEBHOOK_URLを使用。
