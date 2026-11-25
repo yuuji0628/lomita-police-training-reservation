@@ -14,7 +14,7 @@ async function pkSchema(env){
  ].map(s=>env.DB.prepare(s)));
 }
 async function pkTicket(env,kind,token){await pkSchema(env);await env.DB.prepare('DELETE FROM passkey_enrollment WHERE expires<?').bind(Date.now()).run();await env.DB.prepare('INSERT INTO passkey_enrollment VALUES(?,?,?)').bind(await adminDigest(token),kind,Date.now()+600000).run()}
-async function pkAccount(env,kind,id){return env.DB.prepare(kind==='admin'?'SELECT id,discord_user_id FROM admin_accounts WHERE id=? AND active=1 AND discord_user_id IS NOT NULL':'SELECT id,discord_user_id FROM instructors WHERE id=? AND discord_user_id IS NOT NULL').bind(id).first()}
+async function pkAccount(env,kind,id){return env.DB.prepare(kind==='admin'?'SELECT id,discord_user_id FROM admin_accounts WHERE id=? AND active=1 AND discord_user_id IS NOT NULL':'SELECT id,discord_user_id FROM instructors WHERE id=? AND discord_user_id IS NOT NULL  AND length(trim(discord_user_id))>0 AND (SELECT COUNT(*) FROM instructors x WHERE x.discord_user_id=instructors.discord_user_id)=1').bind(id).first()}
 function pkDer(b){if(b[0]!==48||b[1]!==b.length-2)throw Error('signature');let p=2;const out=new Uint8Array(64);for(let i=0;i<2;i++){if(b[p++]!==2)throw Error('signature');let n=b[p++];if(!n||n>33||p+n>b.length)throw Error('signature');let v=b.slice(p,p+n);p+=n;if(v[0]&128)throw Error('signature');if(v.length===33){if(v[0]!==0)throw Error('signature');v=v.slice(1)}out.set(v,i*32+32-v.length)}if(p!==b.length)throw Error('signature');return out}
 async function pkAPI(request,env,kind,action){
  const u=new URL(request.url);if(u.protocol!=='https:'||request.headers.get('origin')!==u.origin)return json({error:'origin'},403);
@@ -31,7 +31,7 @@ async function pkAPI(request,env,kind,action){
 function pkPage(kind){const home=kind==='admin'?'/admin':'/instructor';return new Response(`<!doctype html><html lang="ja"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>パスキー認証</title><style>body{font:16px system-ui;padding:24px;max-width:480px;margin:auto}button,a{display:block;margin:16px 0;padding:12px}button{width:100%}</style><h2>LOMITA POLICE パスキー</h2><p>初回はDiscord認証後に登録してください。Face IDなど端末の本人確認を使用します。</p><button onclick="run(false)">パスキーでログイン</button><button onclick="run(true)">パスキーを登録</button><a href="${home}/discord/login">Discordでログイン・再登録</a><a href="${home}">戻る</a><p id="msg" role="status"></p><script>
 const base='/api/passkey/${kind}/',home='${home}';const dec=s=>Uint8Array.from(atob(s.replace(/-/g,'+').replace(/_/g,'/')+'='.repeat((4-s.length%4)%4)),c=>c.charCodeAt(0));const enc=b=>btoa(String.fromCharCode(...new Uint8Array(b))).replace(/\\+/g,'-').replace(/\\//g,'_').replace(/=+$/,'');async function post(p,b){const r=await fetch(base+p,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(b)});const d=await r.json();if(!r.ok)throw Error(d.error);return d}async function run(reg){const msg=document.getElementById('msg');try{if(!window.PublicKeyCredential)throw Error('このブラウザはパスキー非対応です');const p=reg?'register':'login',o=await post(p+'-options',{});o.challenge=dec(o.challenge);if(reg)o.user.id=dec(o.user.id);const c=await navigator.credentials[reg?'create':'get']({publicKey:o}),r=c.response;const b={id:enc(c.rawId),clientDataJSON:enc(r.clientDataJSON),authenticatorData:enc(reg?r.getAuthenticatorData():r.authenticatorData)};if(reg){b.publicKey=enc(r.getPublicKey());b.algorithm=r.getPublicKeyAlgorithm()}else b.signature=enc(r.signature);await post(p+'-finish',b);location.href=home}catch(e){msg.textContent=e.message}}</script></html>`,{headers:{'content-type':'text/html; charset=utf-8','cache-control':'no-store'}})}
 
-const APP_VERSION="3.13";
+const APP_VERSION="3.13.1";
 // Discord administrator and instructor sessions: fixed 90-day lifetime.
 const DISCORD_SESSION_SECONDS = 90 * 24 * 60 * 60;
 const DISCORD_SESSION_MS = DISCORD_SESSION_SECONDS * 1000;
@@ -115,7 +115,10 @@ async function ensureInstructorDiscord(env){
  await ensureInstructors(env);
  const cols=(await env.DB.prepare('PRAGMA table_info(instructors)').all()).results||[];
  if(!cols.some(x=>x.name==='discord_user_id'))await env.DB.prepare('ALTER TABLE instructors ADD COLUMN discord_user_id TEXT').run();
- await env.DB.prepare('CREATE UNIQUE INDEX IF NOT EXISTS idx_instructor_discord ON instructors(discord_user_id)').run();
+ // Preserve existing instructor rows; blank IDs are not linked accounts.
+ await env.DB.prepare("UPDATE instructors SET discord_user_id=NULL WHERE discord_user_id IS NOT NULL AND TRIM(discord_user_id)=''").run();
+ try { await env.DB.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_instructor_discord ON instructors(discord_user_id)").run(); } catch(e) { if(!/UNIQUE constraint failed/i.test(String(e.message)))throw e; }
+ // Legacy duplicate IDs are blocked from authentication, never assigned arbitrarily.
  await env.DB.prepare('CREATE TABLE IF NOT EXISTS instructor_sessions(token_hash TEXT PRIMARY KEY,instructor_id INTEGER NOT NULL,expires_at INTEGER NOT NULL)').run();
 }
 function instructorCookie(token,age){return `lomita_instructor=${token}; Max-Age=${age}; Path=/; HttpOnly; Secure; SameSite=Lax`}
@@ -123,9 +126,9 @@ async function instructorSession(request,env){
  await ensureInstructorDiscord(env);
  const m=(request.headers.get('cookie')||'').match(/(?:^|;\s*)lomita_instructor=([a-f0-9]{64})/);
  if(!m)return null;
- return await env.DB.prepare('SELECT i.id,i.name,i.instructor_rank,i.discord_user_id FROM instructor_sessions s JOIN instructors i ON i.id=s.instructor_id WHERE s.token_hash=? AND s.expires_at>? AND i.discord_user_id IS NOT NULL').bind(await adminDigest(m[1]),Date.now()).first();
+ return await env.DB.prepare('SELECT i.id,i.name,i.instructor_rank,i.discord_user_id FROM instructor_sessions s JOIN instructors i ON i.id=s.instructor_id WHERE s.token_hash=? AND s.expires_at>? AND i.discord_user_id IS NOT NULL AND length(trim(i.discord_user_id))>0 AND (SELECT COUNT(*) FROM instructors x WHERE x.discord_user_id=i.discord_user_id)=1').bind(await adminDigest(m[1]),Date.now()).first();
 }
-function instructorPage(){return `<!doctype html><html lang="ja"><meta name="viewport" content="width=device-width,initial-scale=1"><meta charset="utf-8"><title>教官マイページ</title><style>body{font:16px system-ui;background:#f6f7fa;color:#182230;margin:0;padding:20px}main{max-width:720px;margin:auto}.card{background:white;border-radius:14px;padding:18px;margin:14px 0;box-shadow:0 1px 5px #ddd}button,a.btn{display:inline-block;background:#5865f2;color:white;border:0;padding:12px 18px;border-radius:9px;text-decoration:none}small{color:#667085}</style><main><h2>🚓 教官マイページ <small>v3.13</small></h2><div id="body" class="card">読み込み中…</div><p><a class="btn" href="/instructor/discord/login">Discordでログイン</a> <a class="btn" href="/passkey/instructor">パスキー認証</a> <button onclick="logout()">ログアウト</button></p></main><script>
+function instructorPage(){return `<!doctype html><html lang="ja"><meta name="viewport" content="width=device-width,initial-scale=1"><meta charset="utf-8"><title>教官マイページ</title><style>body{font:16px system-ui;background:#f6f7fa;color:#182230;margin:0;padding:20px}main{max-width:720px;margin:auto}.card{background:white;border-radius:14px;padding:18px;margin:14px 0;box-shadow:0 1px 5px #ddd}button,a.btn{display:inline-block;background:#5865f2;color:white;border:0;padding:12px 18px;border-radius:9px;text-decoration:none}small{color:#667085}</style><main><h2>🚓 教官マイページ <small>v3.13.1</small></h2><div id="body" class="card">読み込み中…</div><p><a class="btn" href="/instructor/discord/login">Discordでログイン</a> <a class="btn" href="/passkey/instructor">パスキー認証</a> <button onclick="logout()">ログアウト</button></p></main><script>
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 async function load(){const r=await fetch('/api/instructor/me');const d=await r.json();const el=document.getElementById('body');if(!r.ok){el.textContent='教官として未連携です。管理者にDiscord IDの登録を依頼してください。';return;}el.innerHTML='<h3>'+esc(d.name)+'（'+esc(d.rank)+'）</h3><h4>担当研修・予約</h4>'+(d.reservations.length?d.reservations.map(x=>'<div class="card"><b>'+esc(x.title)+'</b><p>'+esc(x.confirmed_date)+' '+esc(x.confirmed_time)+' / '+esc(x.player_name)+'</p><small>状態：'+esc(x.status)+'</small></div>').join(''):'担当研修はありません。');}
 async function logout(){await fetch('/api/instructor/logout',{method:'POST'});location.href='/instructor';}load();</script></html>`}
@@ -5089,7 +5092,7 @@ const ADMIN_BODY = `
  <div id="msg"></div>
  <div class="card ownerOnly" id="updateAnnouncementPanel" style="margin:12px 0;padding:15px;display:none">
   <div class="title">📢 Discord更新履歴</div>
-  <div class="sub">Version 3.13｜投稿は確認ボタンを押した場合のみ実行します。重複投稿は防止します。</div>
+  <div class="sub">Version 3.13.1｜投稿は確認ボタンを押した場合のみ実行します。重複投稿は防止します。</div>
   <button type="button" class="btn small" onclick="postVersionAnnouncement()">Discordへ更新履歴を投稿</button>
   <div id="updateAnnouncementResult" role="status" style="margin-top:8px"></div>
  </div>
@@ -5588,7 +5591,7 @@ async function loadCurrentAdminRole(){
  if(currentAdminRole==='owner')await loadAdminAccounts();
 }
 async function postVersionAnnouncement(){
- if(!confirm('Version 3.13 の更新履歴をDiscordへ投稿しますか？'))return;
+ if(!confirm('Version 3.13.1 の更新履歴をDiscordへ投稿しますか？'))return;
  const out=document.getElementById('updateAnnouncementResult');
  out.textContent='送信中…';
  try{
@@ -8606,7 +8609,7 @@ async function handle(request, env, ctx) {
   const tk=await tr.json();const pr=await fetch('https://discord.com/api/v10/users/@me',{headers:{authorization:'Bearer '+tk.access_token}});
   if(!pr.ok)return json({error:'Discordユーザーを確認できません'},401);
   const profile=await pr.json();await ensureInstructorDiscord(env);
-  const i=await env.DB.prepare('SELECT id FROM instructors WHERE discord_user_id=?').bind(String(profile.id)).first();
+  const i=await env.DB.prepare('SELECT MIN(id) AS id FROM instructors WHERE discord_user_id=? HAVING COUNT(*)=1').bind(String(profile.id)).first();
   if(!i)return redirectAdmin('/instructor?unlinked=1',{'set-cookie':'lomita_instructor_state=; Max-Age=0; Path=/instructor/discord; HttpOnly; Secure; SameSite=Lax'});
   const token=adminRandomHex();await env.DB.prepare('INSERT INTO instructor_sessions(token_hash,instructor_id,expires_at) VALUES(?,?,?)').bind(await adminDigest(token),i.id,Date.now()+DISCORD_SESSION_MS).run();
   await pkTicket(env,'instructor',token);
@@ -10582,7 +10585,7 @@ if(path==="/api/admin/instructor-ranking" && method==="GET"){
   await ensureInstructorDiscord(env);const b=await request.json().catch(()=>({}));const id=Number(b.id),discordId=String(b.discord_user_id||'').trim();
   if(!Number.isSafeInteger(id)||id<1||(discordId&&!/^\d{15,25}$/.test(discordId)))return json({error:'教官IDまたはDiscord IDが不正です'},400);
   const existing=await env.DB.prepare('SELECT id FROM instructors WHERE id=?').bind(id).first();if(!existing)return json({error:'教官が見つかりません'},404);
-  try{await env.DB.prepare('UPDATE instructors SET discord_user_id=? WHERE id=?').bind(discordId||null,id).run();await env.DB.prepare('DELETE FROM instructor_sessions WHERE instructor_id=?').bind(id).run();return json({ok:true})}catch(_){return json({error:'Discord IDが他の教官と重複しています'},409)}
+  try{const linked=await env.DB.prepare('UPDATE instructors SET discord_user_id=? WHERE id=? AND (? IS NULL OR NOT EXISTS (SELECT 1 FROM instructors x WHERE x.discord_user_id=? AND x.id<>?))').bind(discordId||null,id,discordId||null,discordId||null,id).run();if(!linked.meta.changes)return json({error:'Discord IDが他の教官と重複しています'},409);await env.DB.prepare('DELETE FROM instructor_sessions WHERE instructor_id=?').bind(id).run();return json({ok:true})}catch(_){return json({error:'Discord IDが他の教官と重複しています'},409)}
  }
  if(path==="/api/admin/instructors" && method==="GET"){
    await ensureInstructors(env);
