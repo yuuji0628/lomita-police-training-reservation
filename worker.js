@@ -31,16 +31,15 @@ async function pkAPI(request,env,kind,action){
 function pkPage(kind){const home=kind==='admin'?'/admin':'/instructor';return new Response(`<!doctype html><html lang="ja"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>パスキー認証</title><style>body{font:16px system-ui;padding:24px;max-width:480px;margin:auto}button,a{display:block;margin:16px 0;padding:12px}button{width:100%}</style><h2>LOMITA POLICE パスキー</h2><p>初回はDiscord認証後に登録してください。Face IDなど端末の本人確認を使用します。</p><button onclick="run(false)">パスキーでログイン</button><button onclick="run(true)">パスキーを登録</button><a href="${home}/discord/login">Discordでログイン・再登録</a><a href="${home}">戻る</a><p id="msg" role="status"></p><script>
 const base='/api/passkey/${kind}/',home='${home}';const dec=s=>Uint8Array.from(atob(s.replace(/-/g,'+').replace(/_/g,'/')+'='.repeat((4-s.length%4)%4)),c=>c.charCodeAt(0));const enc=b=>btoa(String.fromCharCode(...new Uint8Array(b))).replace(/\\+/g,'-').replace(/\\//g,'_').replace(/=+$/,'');async function post(p,b){const r=await fetch(base+p,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(b)});const d=await r.json();if(!r.ok)throw Error(d.error);return d}async function run(reg){const msg=document.getElementById('msg');try{if(!window.PublicKeyCredential)throw Error('このブラウザはパスキー非対応です');const p=reg?'register':'login',o=await post(p+'-options',{});o.challenge=dec(o.challenge);if(reg)o.user.id=dec(o.user.id);const c=await navigator.credentials[reg?'create':'get']({publicKey:o}),r=c.response;const b={id:enc(c.rawId),clientDataJSON:enc(r.clientDataJSON),authenticatorData:enc(reg?r.getAuthenticatorData():r.authenticatorData)};if(reg){b.publicKey=enc(r.getPublicKey());b.algorithm=r.getPublicKeyAlgorithm()}else b.signature=enc(r.signature);await post(p+'-finish',b);location.href=home}catch(e){msg.textContent=e.message}}</script></html>`,{headers:{'content-type':'text/html; charset=utf-8','cache-control':'no-store'}})}
 
-const APP_VERSION="3.13.2";
+const APP_VERSION="3.13.3";
 // Discord administrator and instructor sessions: fixed 90-day lifetime.
 const DISCORD_SESSION_SECONDS = 90 * 24 * 60 * 60;
 const DISCORD_SESSION_MS = DISCORD_SESSION_SECONDS * 1000;
 
 
 const APP_CHANGELOG=[
-  "Discord更新履歴の手動投稿を復旧",
-  "自動投稿は行わず、システム管理者の確認操作による投稿のみ許可",
-  "バージョン単位の重複投稿防止を維持"
+  "教官の空き時間一覧が取得できない不具合を修正",
+  "日本時間の日付取得処理を修正"
 ];
 
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
@@ -125,7 +124,7 @@ async function instructorSession(request,env){
  if(!m)return null;
  return await env.DB.prepare('SELECT i.id,i.name,i.instructor_rank,i.discord_user_id FROM instructor_sessions s JOIN instructors i ON i.id=s.instructor_id WHERE s.token_hash=? AND s.expires_at>? AND i.discord_user_id IS NOT NULL AND length(trim(i.discord_user_id))>0 AND (SELECT COUNT(*) FROM instructors x WHERE x.discord_user_id=i.discord_user_id)=1').bind(await adminDigest(m[1]),Date.now()).first();
 }
-function instructorPage(){return `<!doctype html><html lang="ja"><meta name="viewport" content="width=device-width,initial-scale=1"><meta charset="utf-8"><title>教官マイページ</title><style>body{font:16px system-ui;background:#f6f7fa;color:#182230;margin:0;padding:20px}main{max-width:720px;margin:auto}.card{background:white;border-radius:14px;padding:18px;margin:14px 0;box-shadow:0 1px 5px #ddd}button,a.btn{display:inline-block;background:#5865f2;color:white;border:0;padding:12px 18px;border-radius:9px;text-decoration:none}small{color:#667085}</style><main><h2>🚓 教官マイページ <small>v3.13.2</small></h2><div id="body" class="card">読み込み中…</div><p><a class="btn" href="/instructor/discord/login">Discordでログイン</a> <a class="btn" href="/passkey/instructor">パスキー認証</a> <button onclick="logout()">ログアウト</button></p></main><script>
+function instructorPage(){return `<!doctype html><html lang="ja"><meta name="viewport" content="width=device-width,initial-scale=1"><meta charset="utf-8"><title>教官マイページ</title><style>body{font:16px system-ui;background:#f6f7fa;color:#182230;margin:0;padding:20px}main{max-width:720px;margin:auto}.card{background:white;border-radius:14px;padding:18px;margin:14px 0;box-shadow:0 1px 5px #ddd}button,a.btn{display:inline-block;background:#5865f2;color:white;border:0;padding:12px 18px;border-radius:9px;text-decoration:none}small{color:#667085}</style><main><h2>🚓 教官マイページ <small>v3.13.3</small></h2><div id="body" class="card">読み込み中…</div><p><a class="btn" href="/instructor/discord/login">Discordでログイン</a> <a class="btn" href="/passkey/instructor">パスキー認証</a> <button onclick="logout()">ログアウト</button></p></main><script>
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 async function load(){const r=await fetch('/api/instructor/me');const d=await r.json();const el=document.getElementById('body');if(!r.ok){el.textContent='教官として未連携です。管理者にDiscord IDの登録を依頼してください。';return;}el.innerHTML='<h3>'+esc(d.name)+'（'+esc(d.rank)+'）</h3><h4>担当研修・予約</h4>'+(d.reservations.length?d.reservations.map(x=>'<div class="card"><b>'+esc(x.title)+'</b><p>'+esc(x.confirmed_date)+' '+esc(x.confirmed_time)+' / '+esc(x.player_name)+'</p><small>状態：'+esc(x.status)+'</small></div>').join(''):'担当研修はありません。');}
 async function logout(){await fetch('/api/instructor/logout',{method:'POST'});location.href='/instructor';}load();</script></html>`}
@@ -5086,7 +5085,7 @@ const ADMIN_BODY = `
  <div id="msg"></div>
  <div class="card ownerOnly" id="updateAnnouncementPanel" style="margin:12px 0;padding:15px;display:none">
   <div class="title">📢 Discord更新履歴</div>
-  <div class="sub">Version 3.13.2｜投稿は確認ボタンを押した場合のみ実行します。重複投稿は防止します。</div>
+  <div class="sub">Version 3.13.3｜投稿は確認ボタンを押した場合のみ実行します。重複投稿は防止します。</div>
   <button type="button" class="btn small" onclick="postVersionAnnouncement()">Discordへ更新履歴を投稿</button>
   <div id="updateAnnouncementResult" role="status" style="margin-top:8px"></div>
  </div>
@@ -5585,7 +5584,7 @@ async function loadCurrentAdminRole(){
  if(currentAdminRole==='owner')await loadAdminAccounts();
 }
 async function postVersionAnnouncement(){
- if(!confirm('Version 3.13.2 の更新履歴をDiscordへ投稿しますか？'))return;
+ if(!confirm('Version 3.13.3 の更新履歴をDiscordへ投稿しますか？'))return;
  const out=document.getElementById('updateAnnouncementResult');
  out.textContent='送信中…';
  try{
@@ -5889,7 +5888,7 @@ async function setMaintenanceMode(enabled){
    const instructors=await insRes.json().catch(()=>[]);
    const availability=await avRes.json().catch(()=>[]);
    if(!insRes.ok)throw new Error('教官一覧を取得できませんでした');
-   if(!avRes.ok)throw new Error('空き時間一覧を取得できませんでした');
+   if(!avRes.ok)throw new Error('空き時間一覧を取得できませんでした（HTTP '+avRes.status+'）');
 
    const rows=Array.isArray(availability)?availability:(availability.availability||[]);
    const ins=Array.isArray(instructors)?instructors:(instructors.instructors||[]);
@@ -10492,7 +10491,7 @@ if(path==="/api/admin/instructor-ranking" && method==="GET"){
 
  if(path==="/api/admin/instructor-availability" && method==="GET"){
    await ensureInstructorAvailability(env);
-   const today=jstToday();
+   const today=jstTodayYmd();
    const {results}=await env.DB.prepare(`
      SELECT id,instructor_name,available_date,start_time,end_time,created_at
      FROM instructor_availability
